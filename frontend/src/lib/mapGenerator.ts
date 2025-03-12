@@ -16,6 +16,12 @@ const {
   planetTemplates
 } = Types;
 
+// Export the mapGenerator object for use in other files
+export const mapGenerator = {
+  generateMap: generatePlanetMap,
+  generateMars
+};
+
 // Helper function to initialize noise generators
 function initNoiseGenerators(seed: number) {
   // Create different noise generators for various map aspects using seedrandom
@@ -178,8 +184,26 @@ function determineResourceType(
 
 // Add special features to the map
 function addSpecialFeatures(map: PlanetMap, count: number): void {
-  const features: SpecialFeature[] = Object.values(SpecialFeature);
-  const selectedFeatures: SpecialFeature[] = [];
+  if (!map || !map.tiles || map.tiles.length === 0) {
+    console.warn("Cannot add special features: Map is not properly initialized");
+    return;
+  }
+
+  // Use string enum values directly
+  const features = [
+    'meteor_crater',
+    'volcano',
+    'canyon',
+    'cave_system',
+    'alien_ruins',
+    'geothermal_area',
+    'crystal_formation',
+    'abandoned_base',
+    'strange_signal',
+    'ancient_technology'
+  ];
+  
+  const selectedFeatures: string[] = [];
   
   // Randomly select features
   for (let i = 0; i < count; i++) {
@@ -195,8 +219,20 @@ function addSpecialFeatures(map: PlanetMap, count: number): void {
   
   // For each feature, modify the map (this would be expanded in a full implementation)
   for (const feature of selectedFeatures) {
+    // Make sure map dimensions are valid
+    if (!map.width || !map.height || map.width <= 0 || map.height <= 0) {
+      console.warn("Invalid map dimensions for feature placement");
+      continue;
+    }
+    
     const x = Math.floor(Math.random() * map.width);
     const y = Math.floor(Math.random() * map.height);
+    
+    // Make sure indices are valid
+    if (!map.tiles[y] || !map.tiles[y][x]) {
+      console.warn(`Invalid map coordinates (${x},${y}) for feature placement`);
+      continue;
+    }
     
     // Ensure we're not placing in deep water
     if (map.tiles[y][x].terrain === TerrainType.DEEP_WATER) {
@@ -205,16 +241,21 @@ function addSpecialFeatures(map: PlanetMap, count: number): void {
     
     // Create the feature based on type
     switch (feature) {
-      case SpecialFeature.METEOR_CRATER:
+      case 'meteor_crater':
         createMeteorCrater(map, x, y);
         break;
-      case SpecialFeature.VOLCANO:
+      case 'volcano':
         createVolcano(map, x, y);
         break;
-      case SpecialFeature.ALIEN_RUINS:
+      case 'alien_ruins':
         createAlienRuins(map, x, y);
         break;
-      // Add more feature creation methods as needed
+      // For other features, we'll add them in the future
+      default:
+        // Just add a basic decoration for now
+        if (map.tiles[y][x]) {
+          map.tiles[y][x].decorations = [Math.floor(Math.random() * 10)];
+        }
     }
   }
 }

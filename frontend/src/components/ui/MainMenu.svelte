@@ -44,13 +44,20 @@
     
     // Start game with current settings
     function startGame() {
-      dispatch('startGame', {
-        planetType: selectedPlanet,
-        mapWidth,
-        mapHeight,
-        resourceRichness
-      });
-    }
+    console.log("startGame function called in MainMenu");
+    const settings = {
+      planetType: selectedPlanet,
+      mapWidth,
+      mapHeight,
+      resourceRichness
+    };
+    console.log("Dispatching startGame event with settings:", settings);
+    dispatch('startGame', settings);
+    console.log("Event dispatched from MainMenu");
+    
+    // Log dispatch to help debug
+    console.log("IMPORTANT: If you don't see handleStartGame logs in App.svelte after this, the event handling is broken");
+  }
     
     // Load a saved game
     function loadGame() {
@@ -60,82 +67,88 @@
   </script>
   
   <div class="main-menu">
-    <div class="menu-container">
-      <div class="game-title">
-        <h1>FrankForge</h1>
-        <div class="tagline">Build, React, Evolve</div>
+  <div class="menu-container">
+    <div class="game-title">
+      <h1>FrankForge</h1>
+      <div class="tagline">Build, React, Evolve</div>
+    </div>
+    
+    <div class="menu-content">
+
+      <div class="planet-selection">
+        <h2>Select Planet</h2>
+        <div class="planet-grid">
+          {#each planetTypes as planet}
+            <button 
+              class="planet-card" 
+              class:selected={selectedPlanet === planet.id}
+              on:click={() => selectedPlanet = planet.id}
+              type="button"
+            >
+              <div class="planet-icon" style={`background-color: ${getPlanetColor(planet.id)};`}></div>
+              <div class="planet-details">
+                <div class="planet-name">{planet.name}</div>
+                <div class="planet-description">{planet.description}</div>
+              </div>
+            </button>
+          {/each}
+        </div>
       </div>
       
-      <div class="menu-content">
-        <div class="planet-selection">
-          <h2>Select Planet</h2>
-          <div class="planet-grid">
-            {#each planetTypes as planet}
-              <div 
-                class="planet-card" 
-                class:selected={selectedPlanet === planet.id}
-                on:click={() => selectedPlanet = planet.id}
-              >
-                <div class="planet-icon" style={`background-color: ${getPlanetColor(planet.id)};`}></div>
-                <div class="planet-details">
-                  <div class="planet-name">{planet.name}</div>
-                  <div class="planet-description">{planet.description}</div>
-                </div>
-              </div>
-            {/each}
+      <div class="game-settings">
+        <h2>Game Settings</h2>
+        
+        <!-- Map Size Selection -->
+        <div class="setting">
+          <label>Map Size:</label>
+          <div class="setting-options">
+            <button 
+              class:active={mapSize === "small"} 
+              on:click={() => updateMapSize("small")}
+            >
+              Small (50×50)
+            </button>
+            <button 
+              class:active={mapSize === "medium"} 
+              on:click={() => updateMapSize("medium")}
+            >
+              Medium (100×100)
+            </button>
+            <button 
+              class:active={mapSize === "large"} 
+              on:click={() => updateMapSize("large")}
+            >
+              Large (200×200)
+            </button>
           </div>
         </div>
         
-        <div class="game-settings">
-          <h2>Game Settings</h2>
-          
-          <div class="setting">
-            <label>Map Size:</label>
-            <div class="setting-options">
-              <button 
-                class:active={mapSize === "small"} 
-                on:click={() => updateMapSize("small")}
-              >
-                Small (50×50)
-              </button>
-              <button 
-                class:active={mapSize === "medium"} 
-                on:click={() => updateMapSize("medium")}
-              >
-                Medium (100×100)
-              </button>
-              <button 
-                class:active={mapSize === "large"} 
-                on:click={() => updateMapSize("large")}
-              >
-                Large (200×200)
-              </button>
-            </div>
-          </div>
-          
-          <div class="setting">
-            <label>Resource Richness: {Math.round(resourceRichness * 100)}%</label>
-            <input 
-              type="range" 
-              min="0.1" 
-              max="1" 
-              step="0.1" 
-              bind:value={resourceRichness} 
-            />
-          </div>
+        <!-- Resource Richness -->
+        <div class="setting">
+          <label for="resource-slider">Resource Richness: {Math.round(resourceRichness * 100)}%</label>
+          <input 
+            id="resource-slider"
+            type="range" 
+            min="0.1" 
+            max="1" 
+            step="0.1" 
+            bind:value={resourceRichness} 
+          />
         </div>
-        
-        <div class="menu-actions">
-          <button class="primary-button" on:click={startGame}>
-            Start New Game
-          </button>
-          <button class="secondary-button" on:click={loadGame}>
-            Load Saved Game
-          </button>
-        </div>
+      </div>
+      
+      <!-- Action Buttons - Moved to the top for visibility -->
+      <div class="menu-actions">
+        <button class="primary-button" on:click={startGame}>
+          Start New Game
+        </button>
+        <button class="secondary-button" on:click={loadGame}>
+          Load Saved Game
+        </button>
       </div>
     </div>
   </div>
+</div>
   
   <style>
     .main-menu {
@@ -152,20 +165,22 @@
     
     .menu-container {
       width: 90%;
-      max-width: 1200px;
+      max-width: 1080px;
+      height: 90vh;
+      overflow-y: auto;
       background-color: rgba(26, 26, 46, 0.8);
       border-radius: 8px;
       box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
-      padding: 2rem;
+      padding: 1.5rem;
     }
     
     .game-title {
       text-align: center;
-      margin-bottom: 2rem;
+      margin-bottom: 1.5rem;
     }
     
     h1 {
-      font-size: 3rem;
+      font-size: 2.5rem;
       margin: 0;
       background: linear-gradient(90deg, #3498db, #2ecc71, #e74c3c);
       -webkit-background-clip: text;
@@ -175,7 +190,7 @@
     }
     
     .tagline {
-      font-size: 1.2rem;
+      font-size: 1rem;
       margin-top: 0.5rem;
       color: #bdc3c7;
     }
@@ -183,67 +198,36 @@
     .menu-content {
       display: flex;
       flex-direction: column;
-      gap: 2rem;
+      gap: 1.2rem;
     }
     
-    h2 {
-      margin-top: 0;
-      border-bottom: 1px solid #34495e;
-      padding-bottom: 0.5rem;
-      color: #3498db;
+    .planet-selection {
+      margin-bottom: 0.5rem;
     }
     
-    .planet-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-      gap: 1rem;
-      margin-top: 1rem;
+    .planet-selection label {
+      display: block;
+      margin-bottom: 0.5rem;
+      font-weight: 500;
     }
     
-    .planet-card {
-      display: flex;
-      align-items: center;
+    .planet-selection select {
+      width: 100%;
+      padding: 0.6rem;
       background-color: #2c3e50;
-      border-radius: 6px;
-      padding: 1rem;
+      color: white;
+      border: none;
+      border-radius: 4px;
       cursor: pointer;
-      transition: all 0.2s ease;
     }
     
-    .planet-card:hover {
-      background-color: #34495e;
-      transform: translateY(-2px);
-    }
-    
-    .planet-card.selected {
-      background-color: #3498db;
-      box-shadow: 0 0 10px rgba(52, 152, 219, 0.5);
-    }
-    
-    .planet-icon {
-      width: 40px;
-      height: 40px;
-      border-radius: 50%;
-      margin-right: 1rem;
-      flex-shrink: 0;
-    }
-    
-    .planet-details {
-      flex: 1;
-    }
-    
-    .planet-name {
-      font-weight: bold;
-      margin-bottom: 0.25rem;
-    }
-    
-    .planet-description {
-      font-size: 0.8rem;
-      color: #bdc3c7;
+    .planet-selection select option {
+      background-color: #2c3e50;
+      color: white;
     }
     
     .setting {
-      margin-bottom: 1rem;
+      margin-bottom: 0.8rem;
     }
     
     .setting label {
@@ -286,8 +270,8 @@
     
     input[type="range"]::-webkit-slider-thumb {
       -webkit-appearance: none;
-      width: 20px;
-      height: 20px;
+      width: 16px;
+      height: 16px;
       border-radius: 50%;
       background-color: #3498db;
       cursor: pointer;
@@ -295,16 +279,16 @@
     
     .menu-actions {
       display: flex;
-      gap: 1rem;
-      margin-top: 1rem;
+      gap: 0.8rem;
+      margin-top: 1.5rem;
     }
     
     .primary-button, .secondary-button {
       flex: 1;
-      padding: 1rem;
+      padding: 0.8rem;
       border: none;
       border-radius: 6px;
-      font-size: 1.1rem;
+      font-size: 1rem;
       font-weight: 500;
       cursor: pointer;
       transition: all 0.2s ease;

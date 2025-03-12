@@ -17,6 +17,7 @@ export interface GameState {
   timeOfDay: number;    // 0-24 hour
 }
 
+
 export interface Building {
   id: string;
   type: string;

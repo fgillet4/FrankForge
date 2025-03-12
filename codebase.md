@@ -714,39 +714,96 @@ button:focus-visible {
 
 ```svelte
 <script lang="ts">
+  import { tick } from 'svelte';
   import { onMount } from 'svelte';
   import { gameState, startGameLoop } from '$lib/gameLoop';
   import { initWasm } from '$lib/wasm';
+  import { generatePlanetMap } from '$lib/mapGenerator';
+  import { PlanetType } from '$lib/types';
+  
   import GameCanvas from './components/world/GameCanvas.svelte';
   import BuildingControlPanel from './components/buildings/BuildingControlPanel.svelte';
   import ResourceDisplay from './components/ui/ResourceDisplay.svelte';
   import EnvironmentControlPanel from './components/ui/EnvironmentControlPanel.svelte';
   import BuildingEfficiencyDisplay from './components/ui/BuildingEfficiencyDisplay.svelte';
+  import MainMenu from './components/ui/MainMenu.svelte';
   
+  // Game state
+  let gameStarted = false;
+  let loadingGame = false;
   let gameCanvas = null;
-  let buildingControlReady = false;
   let gameLoopStop;
+  let loadingProgress = 0;
+  let loadingMessage = "Initializing...";
+  let currentRoute = 'menu'; // 'menu', 'loading', 'game'
 
-  onMount(async () => {
-    // Initialize WASM (commented out for now until we integrate it)
-    try {
-      // await initWasm();
-      console.log('WASM integration will be added later');
-    } catch (error) {
-      console.error('Failed to initialize WASM:', error);
-    }
-    
-    // Start game loop
-    gameLoopStop = startGameLoop();
-    
-    // Clean up on component destroy
-    return () => {
-      if (gameLoopStop) gameLoopStop();
-    };
-  });
+  function goToGame() {
+    currentRoute = 'game';
+  }
+
+
+  // Weather condition description
+  $: weatherDescription = $gameState.weather ? $gameState.weather : 'Clear';
+
+  // Map generation settings
+  let mapSettings = {
+    planetType: PlanetType.EARTH_LIKE,
+    mapWidth: 100,
+    mapHeight: 100,
+    resourceRichness: 0.5
+  };
   
-  // Handle pause toggle
-  // Handle pause toggle
+  // Handle load game request
+  function handleLoadGame() {
+    loadingGame = true;
+    
+    let progress = 0;
+    const loadingInterval = setInterval(() => {
+      progress += 10;
+      loadingProgress = progress;
+      loadingMessage = "Loading saved game...";
+      
+      if (progress >= 100) {
+        clearInterval(loadingInterval);
+        initializeGame(mapSettings);
+      }
+    }, 100);
+  }
+  
+  // Handle game start from menu
+  function handleGameStart(event) {
+    console.log("handleGameStart function called in App.svelte", event);
+    const settings = event.detail;
+    loadingGame = true;
+    mapSettings = settings;
+    console.log("Starting loading process...");
+    
+    let progress = 0;
+    const loadingInterval = setInterval(() => {
+      progress += 5;
+      loadingProgress = progress;
+      console.log(`Loading progress: ${progress}%`);
+      
+      if (progress <= 20) {
+        loadingMessage = "Generating planet terrain...";
+      } else if (progress <= 40) {
+        loadingMessage = "Calculating resource distribution...";
+      } else if (progress <= 60) {
+        loadingMessage = "Establishing atmospheric conditions...";
+      } else if (progress <= 80) {
+        loadingMessage = "Initializing simulation...";
+      } else {
+        loadingMessage = "Preparing interface...";
+      }
+      
+      if (progress >= 100) {
+        console.log("Loading complete, initializing game...");
+        clearInterval(loadingInterval);
+        initializeGame(settings);
+      }
+    }, 100);
+  }
+
   function togglePause() {
     gameState.update(state => ({
       ...state,
@@ -754,60 +811,188 @@ button:focus-visible {
     }));
   }
   
-  // Weather condition description
-  $: weatherDescription = $gameState.weather ? $gameState.weather : 'Clear';
+  // Return to main menu
+  function returnToMenu() {
+    if (gameLoopStop) {
+      gameLoopStop();
+      gameLoopStop = null;
+    }
+    
+    gameState.update(state => ({
+      ...state,
+      isPaused: true,
+      tick: 0
+    }));
+    
+    gameStarted = false;
+  }
   
+  // Initialize the game with given settings
+  async function initializeGame(settings) {
+    console.log("initializeGame called with settings:", settings);
+    
+    try {
+      const planetMap = generatePlanetMap({
+        width: settings.mapWidth,
+        height: settings.mapHeight,
+        planetType: settings.planetType,
+        resourceRichness: settings.resourceRichness,
+        oceanLevel: 0.4,
+        mountainLevel: 0.7,
+        smoothness: 0.5
+      });
+      
+      console.log("Planet generated:", planetMap);
+      
+      gameState.update(state => {
+        console.log("Updating game state...");
+        return {
+          ...state,
+          temperature: planetMap.baseTemperature,
+          pressure: planetMap.basePressure,
+          mapData: {
+            name: planetMap.name,
+            width: planetMap.width,
+            height: planetMap.height,
+            seed: planetMap.seed,
+            biomes: planetMap.biomes,
+            atmosphere: planetMap.atmosphere
+          }
+        };
+      });
+      
+      console.log("Setting final UI state flags...");
+      loadingGame = false;
+      gameStarted = true;
+      currentRoute = 'game'; // Use this for UI
+      localStorage.setItem('gameStarted', 'true');
+      // Reload the page
+      //window.location.reload();
+      //console.log("Game initialized successfully");
+      //console.log("State after initialization - gameStarted:", gameStarted, "loadingGame:", loadingGame);
+      
+      // Force a UI update
+      await tick();
+      console.log("UI should be updated now");
+      
+      setTimeout(() => {
+        console.log("CHECKING UI STATE AFTER DELAY:", 
+          document.querySelector('.game-container') ? "Game UI found" : "NO GAME UI FOUND",
+          "gameStarted =", gameStarted);
+      }, 500);
+    } catch (error) {
+      console.error("Error initializing game:", error);
+      loadingGame = false;
+    }
+  }
+
+  // Add reactive statement to track state changes
+  $: console.log("State changed - gameStarted:", gameStarted, "loadingGame:", loadingGame);
+
   // Time of day formatting
   $: timeString = formatTime($gameState.timeOfDay || 12);
   
-  function formatTime(hours: number): string {
+  function formatTime(hours) {
     const hour = Math.floor(hours);
     const minute = Math.floor((hours - hour) * 60);
     const ampm = hour >= 12 ? 'PM' : 'AM';
     const hour12 = hour % 12 || 12;
     return `${hour12}:${minute.toString().padStart(2, '0')} ${ampm}`;
   }
-
+  
+  onMount(async () => {
+    // Check if we're returning from a reload
+    if (localStorage.getItem('gameStarted') === 'true') {
+      // Restore the game state
+      gameStarted = true;
+      localStorage.removeItem('gameStarted'); // Clean up
+    }
+    try {
+      console.log('WASM integration will be added later');
+    } catch (error) {
+      console.error('Failed to initialize WASM:', error);
+    }
+    
+    if (gameStarted) {
+      gameLoopStop = startGameLoop();
+    }
+    
+    return () => {
+      if (gameLoopStop) gameLoopStop();
+    };
+  });
 </script>
 
-<main>
-  <div class="game-container">
-    <header>
-      <div class="title-area">
-        <h1>FrankForge</h1>
-        <div class="environment-status">
-          <div class="status-item">
-            <span class="status-label">Weather:</span>
-            <span class="status-value">{weatherDescription}</span>
-          </div>
-          <div class="status-item">
-            <span class="status-label">Time:</span>
-            <span class="status-value">{timeString}</span>
-          </div>
-        </div>
-      </div>
-      <div class="controls">
-        <button on:click={togglePause}>
-          {$gameState.isPaused ? 'Resume' : 'Pause'}
-        </button>
-      </div>
-    </header>
-    
-    <div class="game-content">
-      <div class="sidebar">
-        <BuildingControlPanel />
-        <ResourceDisplay />
-        <EnvironmentControlPanel />
-        <BuildingEfficiencyDisplay />
-      </div>
-      
-      <div class="canvas-container">
-        <GameCanvas />
+<div style="position: fixed; top: 0; left: 0; background: rgba(0,0,0,0.8); color: white; padding: 5px; z-index: 9999; font-size: 12px;">
+  gameStarted: {gameStarted}, loadingGame: {loadingGame}
+</div>
+
+{#if !gameStarted}
+  {#if loadingGame}
+    <!-- Loading screen -->
+    <div class="loading-screen">
+      <h2>Loading FrankForge</h2>
+      <div class="loading-message">{loadingMessage}</div>
+      <div class="progress-bar">
+        <div class="progress-fill" style="width: {loadingProgress}%"></div>
       </div>
     </div>
-  </div>
-</main>
-
+  {:else}
+    <!-- Main menu -->
+    <MainMenu 
+      on:startGame={handleGameStart} 
+      on:loadGame={handleLoadGame} 
+    />
+  {/if}
+  {:else}
+  <!-- Game interface -->
+  <main>
+    <div class="game-container">
+      <header>
+        <div class="title-area">
+          <h1>FrankForge</h1>
+          <div class="environment-status">
+            <div class="status-item">
+              <span class="status-label">Weather:</span>
+              <span class="status-value">{weatherDescription}</span>
+            </div>
+            <div class="status-item">
+              <span class="status-label">Time:</span>
+              <span class="status-value">{timeString}</span>
+            </div>
+            {#if $gameState.mapData}
+              <div class="status-item">
+                <span class="status-label">Planet:</span>
+                <span class="status-value">{$gameState.mapData.name}</span>
+              </div>
+            {/if}
+          </div>
+        </div>
+        <div class="controls">
+          <button on:click={togglePause}>
+            {$gameState.isPaused ? 'Resume' : 'Pause'}
+          </button>
+          <button class="menu-button" on:click={returnToMenu}>
+            Main Menu
+          </button>
+        </div>
+      </header>
+      
+      <div class="game-content">
+        <div class="sidebar">
+          <BuildingControlPanel />
+          <ResourceDisplay />
+          <EnvironmentControlPanel />
+          <BuildingEfficiencyDisplay />
+        </div>
+        
+        <div class="canvas-container">
+          <GameCanvas />
+        </div>
+      </div>
+    </div>
+  </main>
+{/if}
 <style>
   :global(body) {
     margin: 0;
@@ -815,6 +1000,43 @@ button:focus-visible {
     font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
     background-color: #1a1a2e;
     color: white;
+    overflow: hidden;
+  }
+  
+  .loading-screen {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    background-color: #0f0f1e;
+    background-image: radial-gradient(circle at 50% 50%, #1a1a2e 0%, #0f0f1e 100%);
+  }
+  
+  .loading-screen h2 {
+    font-size: 2rem;
+    margin-bottom: 2rem;
+    color: #3498db;
+  }
+  
+  .loading-message {
+    margin-bottom: 1rem;
+    color: #bdc3c7;
+  }
+  
+  .progress-bar {
+    width: 80%;
+    max-width: 600px;
+    height: 10px;
+    background-color: #2c3e50;
+    border-radius: 5px;
+    overflow: hidden;
+  }
+  
+  .progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #3498db, #2ecc71);
+    transition: width 0.3s ease;
   }
   
   .game-container {
@@ -867,6 +1089,11 @@ button:focus-visible {
     font-weight: 500;
   }
   
+  .controls {
+    display: flex;
+    gap: 0.5rem;
+  }
+  
   .controls button {
     background-color: #2c3e50;
     color: white;
@@ -879,6 +1106,14 @@ button:focus-visible {
   
   .controls button:hover {
     background-color: #3d566e;
+  }
+  
+  .menu-button {
+    background-color: #7f8c8d !important;
+  }
+  
+  .menu-button:hover {
+    background-color: #95a5a6 !important;
   }
   
   .game-content {
@@ -2557,6 +2792,367 @@ This is a file of the type: SVG Image
   </style>
 ```
 
+# frontend/src/components/ui/MainMenu.svelte
+
+```svelte
+<!-- frontend/src/components/ui/MainMenu.svelte -->
+<script lang="ts">
+    import { createEventDispatcher } from 'svelte';
+    import { PlanetType } from '$lib/types';
+    
+    const dispatch = createEventDispatcher();
+    
+    // Available planet types for selection
+    const planetTypes = [
+      { id: PlanetType.EARTH_LIKE, name: 'Earth-like', description: 'A planet with conditions similar to Earth' },
+      { id: PlanetType.MARS_LIKE, name: 'Mars-like', description: 'A dry, cold planet with thin atmosphere' },
+      { id: PlanetType.DESERT, name: 'Desert', description: 'A hot, arid world with vast wastelands' },
+      { id: PlanetType.ICE, name: 'Ice', description: 'A frozen world with freezing temperatures' },
+      { id: PlanetType.VOLCANIC, name: 'Volcanic', description: 'A world of lava and extreme heat' },
+      { id: PlanetType.ALIEN, name: 'Alien', description: 'A bizarre world with strange properties' },
+      { id: PlanetType.OCEAN, name: 'Ocean', description: 'A world covered mostly in water' }
+    ];
+    
+    // Game settings
+    let selectedPlanet = PlanetType.EARTH_LIKE;
+    let mapSize = "medium";
+    let resourceRichness = 0.5;
+    let mapWidth = 100;
+    let mapHeight = 100;
+    
+    // Update map size based on selection
+    function updateMapSize(size: string) {
+      mapSize = size;
+      switch (size) {
+        case "small":
+          mapWidth = 50;
+          mapHeight = 50;
+          break;
+        case "medium":
+          mapWidth = 100;
+          mapHeight = 100;
+          break;
+        case "large":
+          mapWidth = 200;
+          mapHeight = 200;
+          break;
+      }
+    }
+    
+    // Start game with current settings
+    function startGame() {
+      console.log("startGame function called in MainMenu");
+      dispatch('startGame', {
+        planetType: selectedPlanet,
+        mapWidth,
+        mapHeight,
+        resourceRichness
+      });
+      console.log("Event dispatched from MainMenu");
+    }
+    
+    // Load a saved game
+    function loadGame() {
+      // This would be expanded in a full implementation
+      dispatch('loadGame');
+    }
+  </script>
+  
+  <div class="main-menu">
+    <div class="menu-container">
+      <div class="game-title">
+        <h1>FrankForge</h1>
+        <div class="tagline">Build, React, Evolve</div>
+      </div>
+      
+      <div class="menu-content">
+        <div class="planet-selection">
+          <h2>Select Planet</h2>
+          <div class="planet-grid">
+            {#each planetTypes as planet}
+
+              <button 
+              class="planet-card" 
+              class:selected={selectedPlanet === planet.id}
+              on:click={() => selectedPlanet = planet.id}
+              type="button"
+              aria-pressed={selectedPlanet === planet.id}
+            >
+              <div class="planet-icon" style={`background-color: ${getPlanetColor(planet.id)};`}></div>
+              <div class="planet-details">
+                <div class="planet-name">{planet.name}</div>
+                <div class="planet-description">{planet.description}</div>
+              </div>
+              </button>
+
+            {/each}
+          </div>
+        </div>
+        
+        <div class="game-settings">
+          <h2>Game Settings</h2>
+          
+          <!-- For map size selection -->
+        <div class="setting">
+          <label id="map-size-label">Map Size:</label>
+          <div class="setting-options" role="radiogroup" aria-labelledby="map-size-label">
+            <button 
+              type="button"
+              role="radio"
+              aria-checked={mapSize === "small"}
+              class:active={mapSize === "small"} 
+              on:click={() => updateMapSize("small")}
+            >
+              Small (50×50)
+            </button>
+            <!-- Repeat for other map size buttons -->
+          </div>
+        </div>
+          
+          <!-- For resource richness slider -->
+        <div class="setting">
+          <label for="resource-slider">Resource Richness: {Math.round(resourceRichness * 100)}%</label>
+          <input 
+            id="resource-slider"
+            type="range" 
+            min="0.1" 
+            max="1" 
+            step="0.1" 
+            bind:value={resourceRichness} 
+          />
+        </div>
+        </div>
+        <div class="menu-actions">
+          <button class="primary-button" on:click={startGame}>
+            Start New Game
+          </button>
+          <button class="secondary-button" on:click={loadGame}>
+            Load Saved Game
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <style>
+    .main-menu {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      width: 100%;
+      height: 100vh;
+      background-color: #0f0f1e;
+      background-image: radial-gradient(circle at 50% 50%, #1a1a2e 0%, #0f0f1e 100%);
+      color: white;
+      overflow: auto;
+    }
+    
+    .menu-container {
+      width: 90%;
+      max-width: 1200px;
+      background-color: rgba(26, 26, 46, 0.8);
+      border-radius: 8px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+      padding: 2rem;
+    }
+    
+    .game-title {
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+    
+    h1 {
+      font-size: 3rem;
+      margin: 0;
+      background: linear-gradient(90deg, #3498db, #2ecc71, #e74c3c);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      text-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+    }
+    
+    .tagline {
+      font-size: 1.2rem;
+      margin-top: 0.5rem;
+      color: #bdc3c7;
+    }
+    
+    .menu-content {
+      display: flex;
+      flex-direction: column;
+      gap: 2rem;
+    }
+    
+    h2 {
+      margin-top: 0;
+      border-bottom: 1px solid #34495e;
+      padding-bottom: 0.5rem;
+      color: #3498db;
+    }
+    
+    .planet-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+      gap: 1rem;
+      margin-top: 1rem;
+    }
+    
+    .planet-card {
+      display: flex;
+      align-items: center;
+      background-color: #2c3e50;
+      border-radius: 6px;
+      padding: 1rem;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    
+    .planet-card:hover {
+      background-color: #34495e;
+      transform: translateY(-2px);
+    }
+    
+    .planet-card.selected {
+      background-color: #3498db;
+      box-shadow: 0 0 10px rgba(52, 152, 219, 0.5);
+    }
+    
+    .planet-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      margin-right: 1rem;
+      flex-shrink: 0;
+    }
+    
+    .planet-details {
+      flex: 1;
+    }
+    
+    .planet-name {
+      font-weight: bold;
+      margin-bottom: 0.25rem;
+    }
+    
+    .planet-description {
+      font-size: 0.8rem;
+      color: #bdc3c7;
+    }
+    
+    .setting {
+      margin-bottom: 1rem;
+    }
+    
+    .setting label {
+      display: block;
+      margin-bottom: 0.5rem;
+      font-weight: 500;
+    }
+    
+    .setting-options {
+      display: flex;
+      gap: 0.5rem;
+    }
+    
+    .setting-options button {
+      flex: 1;
+      background-color: #34495e;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      padding: 0.5rem;
+      cursor: pointer;
+      transition: background-color 0.2s;
+    }
+    
+    .setting-options button:hover {
+      background-color: #3d566e;
+    }
+    
+    .setting-options button.active {
+      background-color: #3498db;
+    }
+    
+    input[type="range"] {
+      width: 100%;
+      background-color: #34495e;
+      height: 8px;
+      border-radius: 4px;
+      -webkit-appearance: none;
+    }
+    
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background-color: #3498db;
+      cursor: pointer;
+    }
+    
+    .menu-actions {
+      display: flex;
+      gap: 1rem;
+      margin-top: 1rem;
+    }
+    
+    .primary-button, .secondary-button {
+      flex: 1;
+      padding: 1rem;
+      border: none;
+      border-radius: 6px;
+      font-size: 1.1rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    
+    .primary-button {
+      background-color: #2ecc71;
+      color: white;
+    }
+    
+    .primary-button:hover {
+      background-color: #27ae60;
+      transform: translateY(-2px);
+    }
+    
+    .secondary-button {
+      background-color: #7f8c8d;
+      color: white;
+    }
+    
+    .secondary-button:hover {
+      background-color: #95a5a6;
+      transform: translateY(-2px);
+    }
+  </style>
+  
+  <script context="module">
+    // Helper function to get a color for each planet type
+    function getPlanetColor(planetType: PlanetType): string {
+      switch (planetType) {
+        case PlanetType.EARTH_LIKE:
+          return '#27ae60'; // Green for Earth
+        case PlanetType.MARS_LIKE:
+          return '#d35400'; // Red-orange for Mars
+        case PlanetType.DESERT:
+          return '#f39c12'; // Yellow-orange for Desert
+        case PlanetType.ICE:
+          return '#3498db'; // Blue for Ice
+        case PlanetType.VOLCANIC:
+          return '#c0392b'; // Red for Volcanic
+        case PlanetType.ALIEN:
+          return '#8e44ad'; // Purple for Alien
+        case PlanetType.OCEAN:
+          return '#2980b9'; // Darker blue for Ocean
+        default:
+          return '#bdc3c7'; // Gray for unknown
+      }
+    }
+  </script>
+```
+
 # frontend/src/components/ui/ResourceDisplay.svelte
 
 ```svelte
@@ -3493,8 +4089,8 @@ This is a file of the type: SVG Image
   import { canvasActions, registerCanvasActions } from '$lib/canvasActions';
   import { gameState } from '$lib/gameLoop';
   import { TILE_SIZE, renderMap } from '$lib/mapRenderer';
-  import { generatePlanetMap, PlanetType } from '$lib/types';
-
+  import { generatePlanetMap } from '$lib/mapGenerator';
+  import { PlanetType } from '$lib/types';
   // Canvas properties
   let canvas: HTMLCanvasElement;
   let ctx: CanvasRenderingContext2D;
@@ -5080,6 +5676,7 @@ export interface GameState {
   weather: WeatherCondition;
   timeOfDay: number;    // 0-24 hour
 }
+
 
 export interface Building {
   id: string;
@@ -6733,8 +7330,87 @@ export async function deleteSave(saveId: string) {
 
 ```ts
 // src/lib/types.ts
+  
+  // Biome distribution - percentage of map covered by each biome
+  export interface BiomeDistribution {
+    water: number;
+    plains: number;
+    forest: number;
+    mountains: number;
+    desert: number;
+    tundra: number;
+    volcanic: number;
+    alienFeatures: number;
+  }
+  
+  // Map generator parameters
+  export interface MapGeneratorParams {
+    width: number;
+    height: number;
+    seed?: number;
+    oceanLevel?: number; // 0-1, default 0.4
+    mountainLevel?: number; // 0-1, default 0.7
+    resourceRichness?: number; // 0-1, default 0.5
+    alienness?: number; // 0-1, how "alien" the landscape is, default 0.3
+    smoothness?: number; // 0-1, terrain smoothness, default 0.5
+    moistureScale?: number; // Scale for moisture noise, default 0.01
+    heightScale?: number; // Scale for height noise, default 0.005
+    temperatureScale?: number; // Scale for temperature noise, default 0.008
+    biomeScale?: number; // Scale for biome noise, default 0.02
+    specialFeatureCount?: number; // Number of special features, default 5
+    planetType?: PlanetType; // Planet template to use
+  }
+  
 
-export enum TerrainType {
+  export enum AssetType {
+        SOUND_EFFECT = 'sound_effect',
+        MUSIC = 'music',
+        AMBIENCE = 'ambience',
+        FOLEY = 'foley',
+        SPRITE = 'sprite',
+        TILESET = 'tileset',
+        ANIMATION = 'animation',
+        BUILDING = 'building',
+        CHARACTER = 'character',
+        TERRAIN = 'terrain',
+        DECORATION = 'decoration',
+        UI = 'ui'
+    }
+  
+  // Basic Asset Metadata
+  export interface AssetMetadata {
+    id: string;
+    type: AssetType;
+    path: string;
+    name: string;
+    description?: string;
+    tags?: string[];
+    frameCount?: number;
+    frameRate?: number;
+    loop?: boolean;
+    volume?: number;
+    dimensions?: {
+      width: number;
+      height: number;
+    };
+    variants?: string[];
+    author?: string;
+    license?: string;
+  }
+  
+  // Tileset Asset
+  export interface TilesetAsset extends AssetMetadata {
+    type: AssetType.TILESET | AssetType.TERRAIN;
+    tileWidth: number;
+    tileHeight: number;
+    columns: number;
+    rows: number;
+    terrainTypes?: string[];
+    tileProperties?: Record<number, any>;
+  }
+  
+  // Terrain types
+  export enum TerrainType {
     DEEP_WATER = 0,
     SHALLOW_WATER = 1,
     SAND = 2,
@@ -6752,6 +7428,8 @@ export enum TerrainType {
     METHANE_LAKE = 14,
     ICE = 15
   }
+  
+  // Resource deposits
   export enum ResourceType {
     NONE = 0,
     METHANE = 1,
@@ -6765,6 +7443,8 @@ export enum TerrainType {
     RARE_METALS = 9,
     XENOCRYSTALS = 10
   }
+  
+  // Map tile interface
   export interface MapTile {
     terrain: TerrainType;
     resource: ResourceType;
@@ -6777,6 +7457,8 @@ export enum TerrainType {
     traversable: boolean;
     decorations: number[]; // IDs of decorative elements
   }
+  
+  // Planet map
   export interface PlanetMap {
     name: string;
     width: number;
@@ -6973,9 +7655,7 @@ export enum TerrainType {
         alienFeatures: 0 // No alien features (yet!)
       }
     }
-    
   };
-  console.log("Types exports:", Object.keys(module.exports));
 ```
 
 # frontend/src/lib/wasm.ts
@@ -8776,7 +9456,8 @@ export default defineConfig({
 
 ## 🚀 Welcome to the Strange New World
 
-On a distant alien planet rich with exotic resources, you've crash-landed with nothing but your wits and engineering knowledge. **FrankForge** challenges you to master the mysterious elements of this world, building industrial marvels that would make even Dr. Frankenstein proud! 
+On a distant alien planet rich with exotic resources, you've crash-landed with nothing but your wits and engineering knowledge. **FrankForge** challenges you to master the mysterious elements of this world, building industrial solutions to real world problems!
+Want to experience the engineering challenge of life on mars? 
 
 Will you tame the volatile xenocrystals? Can you harness the planet's corrosive atmosphere? The future of this world—and your survival—depends on your chemical genius!
 
@@ -10077,111 +10758,6 @@ cd ..
 # Set up frontend
 echo -e "${YELLOW}Setting up frontend components...${NC}"
 cd frontend
-
-# Fix Game.svelte
-echo -e "${YELLOW}Fixing Game.svelte...${NC}"
-cat > src/routes/Game.svelte << 'EOL'
-<script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
-  import GameCanvas from '../components/world/GameCanvas.svelte';
-  import BuildingControlPanel from '../components/ui/BuildingControlPanel.svelte';
-  import { gameState, startGameLoop } from '../stores/gameState';
-  import { initWasm } from '../wasm';
-  
-  let gameLoopStop: () => void;
-  
-  onMount(async () => {
-    // Initialize WASM
-    await initWasm();
-    
-    // Start game loop
-    gameLoopStop = startGameLoop();
-    
-    return () => {
-      if (gameLoopStop) gameLoopStop();
-    };
-  });
-</script>
-
-<div class="game-page">
-  <header class="game-header">
-    <h1>FrankForge</h1>
-    <div class="controls">
-      <button
-        class="control-button"
-        on:click={() => {
-          gameState.update(state => ({
-            ...state,
-            isPaused: !state.isPaused
-          }));
-        }}
-      >
-        {$gameState.isPaused ? 'Resume' : 'Pause'}
-      </button>
-    </div>
-  </header>
-  
-  <main class="game-content">
-    <div class="sidebar">
-      <BuildingControlPanel />
-    </div>
-    
-    <div class="game-canvas-container">
-      <GameCanvas />
-    </div>
-  </main>
-</div>
-
-<style>
-  .game-page {
-    display: flex;
-    flex-direction: column;
-    height: 100vh;
-    background-color: #0f0f1e;
-    color: white;
-  }
-  
-  .game-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 12px 24px;
-    background-color: #1a1a2e;
-  }
-  
-  h1 {
-    margin: 0;
-    font-size: 24px;
-    color: #3498db;
-  }
-  
-  .control-button {
-    background-color: #2c3e50;
-    color: white;
-    border: none;
-    padding: 8px 16px;
-    border-radius: 4px;
-    cursor: pointer;
-  }
-  
-  .game-content {
-    display: flex;
-    flex: 1;
-    overflow: hidden;
-  }
-  
-  .sidebar {
-    width: 320px;
-    padding: 16px;
-    background-color: rgba(26, 26, 46, 0.9);
-  }
-  
-  .game-canvas-container {
-    flex: 1;
-    overflow: hidden;
-  }
-</style>
-EOL
 
 # Install dependencies and start dev server
 npm install

@@ -7,6 +7,9 @@ export interface GameState {
   resources: Record<string, number>;
   buildings: Building[];
   energy: number;
+  map?: any;
+  planetType?: number;
+  lastUpdated?: number;
 }
 
 export interface Building {

@@ -6,7 +6,8 @@
 
 ## 🚀 Welcome to the Strange New World
 
-On a distant alien planet rich with exotic resources, you've crash-landed with nothing but your wits and engineering knowledge. **FrankForge** challenges you to master the mysterious elements of this world, building industrial marvels that would make even Dr. Frankenstein proud! 
+On a distant alien planet rich with exotic resources, you've crash-landed with nothing but your wits and engineering knowledge. **FrankForge** challenges you to master the mysterious elements of this world, building industrial solutions to real world problems!
+Want to experience the engineering challenge of life on mars? 
 
 Will you tame the volatile xenocrystals? Can you harness the planet's corrosive atmosphere? The future of this world—and your survival—depends on your chemical genius!
 
