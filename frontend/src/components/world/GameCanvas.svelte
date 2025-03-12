@@ -1,7 +1,10 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount } from 'svelte';
+  import { canvasActions, registerCanvasActions } from '$lib/canvasActions';
   import { gameState } from '$lib/gameLoop';
-  
+  import { TILE_SIZE, renderMap } from '$lib/mapRenderer';
+  import { generatePlanetMap } from '$lib/mapGenerator';
+  import { PlanetType } from '$lib/types';
   // Canvas properties
   let canvas: HTMLCanvasElement;
   let ctx: CanvasRenderingContext2D;
@@ -12,9 +15,6 @@
   let cameraX = 0;
   let cameraY = 0;
   const cameraSpeed = 10;
-  
-  // Grid properties
-  const TILE_SIZE = 32;
   
   // Mouse state
   let mouseX = 0;
@@ -29,38 +29,43 @@
   let showHeatMap = false;
   let showPressureMap = false;
   
-  // Tile types
-  const tileTypes = {
-    ground: { color: '#394764' },
-    resource: { color: '#3498db' },
-    methane: { color: '#27ae60' },
-    water: { color: '#00bcd4' }
+  // Map and tileset
+  let planetMap;
+  let tileset: HTMLImageElement;
+  let tilesetInfo = {
+    tileWidth: TILE_SIZE,
+    tileHeight: TILE_SIZE,
+    columns: 16,
+    rows: 16
   };
   
-  // World grid - for now a simple array
-  let worldGrid = [];
-  const GRID_SIZE = 50; // 50x50 grid
-  
-  // Initialize the world grid
+  // Method to start building placement - will be called via store
+  function startPlacementInternal(type) {
+    console.log("GameCanvas.startPlacement called with:", type);
+    placementMode = true;
+    placementType = type;
+  }
+
+  // Initialize the world map
   function initializeWorld() {
-    worldGrid = [];
+    // Generate a map for testing (would eventually load from save or generate based on seed)
+    planetMap = generatePlanetMap({
+      width: 50,
+      height: 50,
+      planetType: PlanetType.EARTH_LIKE,
+      oceanLevel: 0.35,
+      mountainLevel: 0.7,
+      resourceRichness: 0.6,
+      alienness: 0.2
+    });
     
-    for (let y = 0; y < GRID_SIZE; y++) {
-      let row = [];
-      for (let x = 0; x < GRID_SIZE; x++) {
-        // Add some random resource patches
-        if (Math.random() < 0.03) {
-          if (Math.random() < 0.5) {
-            row.push('methane');
-          } else {
-            row.push('water');
-          }
-        } else {
-          row.push('ground');
-        }
-      }
-      worldGrid.push(row);
-    }
+    // Load tileset image
+    tileset = new Image();
+    tileset.src = 'assets/sprites/terrain/terrain_tileset.png'; // Placeholder path
+    tileset.onload = () => {
+      // Force a redraw when tileset is loaded
+      renderLoop();
+    };
   }
   
   // Handle keyboard input for camera movement
@@ -79,38 +84,45 @@
     // Toggle pressure map with 'p'
     if (event.key === 'p') showPressureMap = !showPressureMap;
     
+    // Cancel placement with Escape
+    if (event.key === 'Escape' && placementMode) {
+      placementMode = false;
+    }
+    
     // Prevent scrolling the page
     if (['w', 's', 'a', 'd', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'h', 'p'].includes(event.key)) {
       event.preventDefault();
     }
   }
-  
-  onMount(() => {
-    // Initialize canvas
-    ctx = canvas.getContext('2d');
-    
-    // Initialize world
-    initializeWorld();
-    
-    // Add keyboard listener
-    window.addEventListener('keydown', handleKeyDown);
-    
-    // Start render loop
-    const renderFrame = requestAnimationFrame(renderLoop);
-    
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      cancelAnimationFrame(renderFrame);
-    };
-  });
-  
+
   function renderLoop() {
     // Clear canvas
     ctx.fillStyle = '#1a1a2e';
     ctx.fillRect(0, 0, width, height);
     
-    // Render world grid
-    renderTiles();
+    // Render map if available
+    if (planetMap && tileset && tileset.complete) {
+      renderMap(
+        ctx, 
+        planetMap, 
+        tileset, 
+        tilesetInfo, 
+        cameraX, 
+        cameraY, 
+        width, 
+        height, 
+        false // debug mode
+      );
+    } else {
+      // Render loading message
+      ctx.fillStyle = 'white';
+      ctx.font = '24px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Loading map...', width / 2, height / 2);
+      
+      // Render a simple grid as placeholder
+      renderTiles();
+    }
     
     // Render environmental effects if enabled
     if (showHeatMap) {
@@ -141,21 +153,25 @@
     const startY = Math.floor(cameraY / TILE_SIZE);
     const endY = startY + Math.ceil(height / TILE_SIZE) + 1;
     
-    // Render visible tiles
-    for (let y = Math.max(0, startY); y < Math.min(worldGrid.length, endY); y++) {
-      for (let x = Math.max(0, startX); x < Math.min(worldGrid[0].length, endX); x++) {
-        const tileType = worldGrid[y][x];
+    // Render visible tiles (simplified placeholder grid)
+    ctx.strokeStyle = '#2a2a3e';
+    ctx.lineWidth = 1;
+    
+    for (let y = startY; y < endY; y++) {
+      for (let x = startX; x < endX; x++) {
         const screenX = Math.floor(x * TILE_SIZE - cameraX);
         const screenY = Math.floor(y * TILE_SIZE - cameraY);
         
-        // Draw tile
-        ctx.fillStyle = tileTypes[tileType].color;
-        ctx.fillRect(screenX, screenY, TILE_SIZE, TILE_SIZE);
-        
-        // Draw grid lines
-        ctx.strokeStyle = '#1a1a2e';
-        ctx.lineWidth = 1;
+        // Draw grid cell
         ctx.strokeRect(screenX, screenY, TILE_SIZE, TILE_SIZE);
+        
+        // Draw checkerboard pattern for visibility
+        if ((x + y) % 2 === 0) {
+          ctx.fillStyle = '#1a1a2e';
+        } else {
+          ctx.fillStyle = '#232342';
+        }
+        ctx.fillRect(screenX, screenY, TILE_SIZE, TILE_SIZE);
       }
     }
   }
@@ -163,42 +179,44 @@
   function renderHeatMap() {
     // Overlay heat visualization on the world
     ctx.globalAlpha = 0.4; // Semi-transparent
-    
+
     // Buildings and their heat influence
-    $gameState.buildings.forEach(building => {
-      const screenX = Math.floor(building.position.x * TILE_SIZE - cameraX);
-      const screenY = Math.floor(building.position.y * TILE_SIZE - cameraY);
-      
-      // Only render if on screen
-      if (screenX > -TILE_SIZE * 5 && screenX < width + TILE_SIZE * 5 &&
-          screenY > -TILE_SIZE * 5 && screenY < height + TILE_SIZE * 5) {
+    if ($gameState && $gameState.buildings) {
+      $gameState.buildings.forEach(building => {
+        const screenX = Math.floor(building.position.x * TILE_SIZE - cameraX);
+        const screenY = Math.floor(building.position.y * TILE_SIZE - cameraY);
         
-        // Heat radius depends on temperature difference from ambient
-        const tempDiff = building.temperature - $gameState.temperature;
-        const radius = Math.abs(tempDiff) / 10 * TILE_SIZE * 3;
-        
-        // Create radial gradient for heat effect
-        const gradient = ctx.createRadialGradient(
-          screenX + TILE_SIZE/2, screenY + TILE_SIZE/2, 0,
-          screenX + TILE_SIZE/2, screenY + TILE_SIZE/2, radius
-        );
-        
-        if (tempDiff > 0) {
-          // Hot buildings (red)
-          gradient.addColorStop(0, 'rgba(255, 0, 0, 0.7)');
-          gradient.addColorStop(1, 'rgba(255, 0, 0, 0)');
-        } else {
-          // Cold buildings (blue)
-          gradient.addColorStop(0, 'rgba(0, 0, 255, 0.7)');
-          gradient.addColorStop(1, 'rgba(0, 0, 255, 0)');
+        // Only render if on screen
+        if (screenX > -TILE_SIZE * 5 && screenX < width + TILE_SIZE * 5 &&
+            screenY > -TILE_SIZE * 5 && screenY < height + TILE_SIZE * 5) {
+          
+          // Heat radius depends on temperature difference from ambient
+          const tempDiff = building.temperature - $gameState.temperature;
+          const radius = Math.abs(tempDiff) / 10 * TILE_SIZE * 3;
+          
+          // Create radial gradient for heat effect
+          const gradient = ctx.createRadialGradient(
+            screenX + TILE_SIZE/2, screenY + TILE_SIZE/2, 0,
+            screenX + TILE_SIZE/2, screenY + TILE_SIZE/2, radius
+          );
+          
+          if (tempDiff > 0) {
+            // Hot buildings (red)
+            gradient.addColorStop(0, 'rgba(255, 0, 0, 0.7)');
+            gradient.addColorStop(1, 'rgba(255, 0, 0, 0)');
+          } else {
+            // Cold buildings (blue)
+            gradient.addColorStop(0, 'rgba(0, 0, 255, 0.7)');
+            gradient.addColorStop(1, 'rgba(0, 0, 255, 0)');
+          }
+          
+          ctx.fillStyle = gradient;
+          ctx.beginPath();
+          ctx.arc(screenX + TILE_SIZE/2, screenY + TILE_SIZE/2, radius, 0, Math.PI * 2);
+          ctx.fill();
         }
-        
-        ctx.fillStyle = gradient;
-        ctx.beginPath();
-        ctx.arc(screenX + TILE_SIZE/2, screenY + TILE_SIZE/2, radius, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    });
+      });
+    }
     
     ctx.globalAlpha = 1.0; // Reset transparency
   }
@@ -410,6 +428,7 @@
     // Draw mode indicators
     ctx.fillStyle = '#fff';
     ctx.font = '14px sans-serif';
+    ctx.textAlign = 'left';
     
     if (showHeatMap) {
       ctx.fillText('Heat Map Active (H to toggle)', 10, 20);
@@ -422,7 +441,7 @@
       const gridX = Math.floor((mouseX + cameraX) / TILE_SIZE);
       const gridY = Math.floor((mouseY + cameraY) / TILE_SIZE);
       
-      if (gridX >= 0 && gridX < GRID_SIZE && gridY >= 0 && gridY < GRID_SIZE) {
+      if (gridX >= 0 && gridY >= 0) {
         ctx.fillText(`Coordinates: (${gridX}, ${gridY})`, 10, height - 10);
       }
     }
@@ -463,26 +482,31 @@
     // Display info about placement
     ctx.fillStyle = '#fff';
     ctx.font = '14px sans-serif';
+    ctx.textAlign = 'left';
     ctx.fillText(`Placing: ${placementType}`, 10, 40);
     
     // Show resource at placement location
-    if (gridX >= 0 && gridX < GRID_SIZE && gridY >= 0 && gridY < GRID_SIZE) {
-      const tileType = worldGrid[gridY][gridX];
-      ctx.fillText(`Resource: ${tileType}`, 10, 60);
+    if (gridX >= 0 && gridY >= 0 && planetMap && gridY < planetMap.height && gridX < planetMap.width) {
+      const tile = planetMap.tiles[gridY][gridX];
+      ctx.fillText(`Terrain: ${TerrainType[tile.terrain]}`, 10, 60);
+      
+      if (tile.resource !== ResourceType.NONE) {
+        ctx.fillText(`Resource: ${ResourceType[tile.resource]} (${Math.round(tile.resourceDensity * 100)}%)`, 10, 80);
+      }
       
       // Show efficiency prediction based on environment
       const predictedEfficiency = predictBuildingEfficiency(placementType, $gameState.temperature, $gameState.pressure);
-      ctx.fillText(`Predicted Efficiency: ${Math.round(predictedEfficiency * 100)}%`, 10, 80);
+      ctx.fillText(`Predicted Efficiency: ${Math.round(predictedEfficiency * 100)}%`, 10, 100);
     }
   }
   
   function handleMouseMove(event) {
-  if (!canvas) return; // Add this check
-  
-  const rect = canvas.getBoundingClientRect();
-  mouseX = event.clientX - rect.left;
-  mouseY = event.clientY - rect.top;
-}
+    if (!canvas) return;
+    
+    const rect = canvas.getBoundingClientRect();
+    mouseX = event.clientX - rect.left;
+    mouseY = event.clientY - rect.top;
+  }
   
   function handleMouseDown(event) {
     isMouseDown = true;
@@ -492,7 +516,7 @@
       const gridY = Math.floor((mouseY + cameraY) / TILE_SIZE);
       
       // Check if within grid bounds
-      if (gridX >= 0 && gridX < GRID_SIZE && gridY >= 0 && gridY < GRID_SIZE) {
+      if (gridX >= 0 && gridY >= 0 && planetMap && gridY < planetMap.height && gridX < planetMap.width) {
         // Check if we can place on this tile (not occupied)
         const canPlace = !$gameState.buildings.some(
           b => b.position.x === gridX && b.position.y === gridY
@@ -555,12 +579,6 @@
     });
   }
   
-  // Method to start building placement - will be called from BuildingControlPanel
-  export function startPlacement(type) {
-    placementMode = true;
-    placementType = type;
-  }
-  
   // Predict building efficiency based on placement environment
   function predictBuildingEfficiency(type, temperature, pressure) {
     // Different building types have different optimal conditions
@@ -594,6 +612,77 @@
     // Combined efficiency with more weight on temperature
     return tempEfficiency * 0.7 + pressureEfficiency * 0.3;
   }
+
+  onMount(() => {
+    // Initialize canvas
+    ctx = canvas.getContext('2d');
+    
+    // Register canvas actions with the store
+    registerCanvasActions({
+      startPlacement: startPlacementInternal,
+      selectBuilding: (id) => {
+        // Implementation for selecting a building by ID
+        gameState.update(state => {
+          state.buildings.forEach(b => b.selected = b.id === id);
+          return state;
+        });
+      },
+      deleteSelectedBuilding: () => {
+        // Implementation for deleting the selected building
+        gameState.update(state => {
+          state.buildings = state.buildings.filter(b => !b.selected);
+          return state;
+        });
+      },
+      rotateSelectedBuilding: () => {
+        // Rotation implementation (if needed)
+        console.log("Rotate building - to be implemented");
+      },
+      cancelPlacement: () => {
+        // Cancel building placement
+        placementMode = false;
+      }
+    });
+    
+    // Initialize world
+    initializeWorld();
+    
+    // Add keyboard listener
+    window.addEventListener('keydown', handleKeyDown);
+    
+    // Start render loop
+    const renderFrame = requestAnimationFrame(renderLoop);
+    
+    // Handle canvas resizing
+    const resizeObserver = new ResizeObserver(entries => {
+      for (const entry of entries) {
+        if (entry.target === canvas.parentElement) {
+          width = entry.contentRect.width;
+          height = entry.contentRect.height;
+          canvas.width = width;
+          canvas.height = height;
+        }
+      }
+    });
+    
+    if (canvas.parentElement) {
+      resizeObserver.observe(canvas.parentElement);
+    }
+    
+    return () => {
+      // Clean up when component is destroyed
+      registerCanvasActions({
+        startPlacement: null,
+        selectBuilding: null,
+        deleteSelectedBuilding: null,
+        rotateSelectedBuilding: null,
+        cancelPlacement: null
+      });
+      window.removeEventListener('keydown', handleKeyDown);
+      cancelAnimationFrame(renderFrame);
+      resizeObserver.disconnect();
+    };
+  });
 </script>
 
 <div class="game-container">
@@ -635,10 +724,14 @@
     position: relative;
     overflow: hidden;
     background-color: #1a1a2e;
+    width: 100%;
+    height: 100%;
   }
   
   canvas {
     display: block;
+    width: 100%;
+    height: 100%;
   }
   
   .view-controls {

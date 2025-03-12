@@ -8,9 +8,10 @@
   import EnvironmentControlPanel from './components/ui/EnvironmentControlPanel.svelte';
   import BuildingEfficiencyDisplay from './components/ui/BuildingEfficiencyDisplay.svelte';
   
-  let gameCanvas;
+  let gameCanvas = null;
+  let buildingControlReady = false;
   let gameLoopStop;
-  
+
   onMount(async () => {
     // Initialize WASM (commented out for now until we integrate it)
     try {
@@ -29,6 +30,7 @@
     };
   });
   
+  // Handle pause toggle
   // Handle pause toggle
   function togglePause() {
     gameState.update(state => ({
@@ -50,6 +52,7 @@
     const hour12 = hour % 12 || 12;
     return `${hour12}:${minute.toString().padStart(2, '0')} ${ampm}`;
   }
+
 </script>
 
 <main>
@@ -77,14 +80,14 @@
     
     <div class="game-content">
       <div class="sidebar">
-        <BuildingControlPanel {gameCanvas} />
+        <BuildingControlPanel />
         <ResourceDisplay />
         <EnvironmentControlPanel />
         <BuildingEfficiencyDisplay />
       </div>
       
       <div class="canvas-container">
-        <GameCanvas bind:this={gameCanvas} />
+        <GameCanvas />
       </div>
     </div>
   </div>

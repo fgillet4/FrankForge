@@ -2,6 +2,8 @@
 import { writable, derived } from 'svelte/store';
 import type { Writable } from 'svelte/store';
 
+
+
 // Game state interface
 export interface GameState {
   tick: number;
