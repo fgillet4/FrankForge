@@ -9,10 +9,17 @@
   ];
   
   // Start building placement
-  function startPlacement(buildingType: string) {
-    console.log('Starting placement of:', buildingType);
-    // Building placement logic will go here
+  function startPlacement(buildingType) {
+  // Check if we can afford it
+  if (!canBuild(buildingType)) return;
+  
+  // Start placement mode in the game canvas
+  if (gameCanvas && gameCanvas.startPlacement) {
+    gameCanvas.startPlacement(buildingType);
+  } else {
+    console.error('GameCanvas reference not available');
   }
+}
 </script>
 
 <div class="control-panel">

@@ -347,6 +347,181 @@ pub fn process_reaction(
     }).to_string()
 }
 
+
+// Calculate the temperature effect on reaction rate using the Arrhenius equation
+pub fn calculate_temperature_effect(temperature: f64, activation_energy: f64) -> f64 {
+    // Gas constant in kJ/(mol·K)
+    const R: f64 = 0.008314;
+    
+    // Reference temperature (standard conditions) in Kelvin
+    const T_REF: f64 = 298.15; // 25°C
+    
+    // Arrhenius equation: k = A * exp(-Ea/RT)
+    // We're calculating the ratio of rates at different temperatures
+    // k2/k1 = exp[-Ea/R * (1/T2 - 1/T1)]
+    let exponent = -activation_energy / R * (1.0 / temperature - 1.0 / T_REF);
+    exponent.exp()
+}
+
+// Calculate the pressure effect on reaction rate
+pub fn calculate_pressure_effect(pressure: f64, reaction_order: f64, base_pressure: f64) -> f64 {
+    // For a gas-phase reaction, rate is generally proportional to P^n
+    // where n is the order of reaction with respect to total pressure
+    // P_ratio^n gives us how much faster/slower the reaction is at current pressure
+    let pressure_ratio = pressure / base_pressure;
+    pressure_ratio.powf(reaction_order)
+}
+
+// Enhanced reaction result with temperature and pressure effects
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct EnhancedReactionResult {
+    pub reaction_name: String,
+    pub reaction_amount: f64,
+    pub consumed: HashMap<String, f64>,
+    pub produced: HashMap<String, f64>,
+    pub energy_change: f64,
+    pub temperature_factor: f64,
+    pub pressure_factor: f64,
+    pub final_temperature: f64,
+    pub reaction_rate: f64,
+    pub catalyst_used: bool,
+    pub catalyst_name: Option<String>,
+}
+
+// Enhanced process_reaction function with better temperature and pressure effects
+#[wasm_bindgen]
+pub fn process_reaction_enhanced(
+    reaction_json: &str,
+    available_resources_json: &str,
+    temperature: f64,
+    pressure: f64,
+    delta_time: f64,
+    catalyst_present: bool
+) -> String {
+    // Parse inputs
+    let reaction: Reaction = match serde_json::from_str(reaction_json) {
+        Ok(r) => r,
+        Err(_) => return json!({ "error": "Invalid reaction JSON" }).to_string(),
+    };
+    
+    let available_resources: HashMap<String, f64> = match serde_json::from_str(available_resources_json) {
+        Ok(r) => r,
+        Err(_) => return json!({ "error": "Invalid resources JSON" }).to_string(),
+    };
+    
+    // Check if reaction can occur at current temperature and pressure
+    if temperature < reaction.min_temperature || temperature > reaction.max_temperature {
+        return json!({ 
+            "error": "Temperature out of range",
+            "current": temperature,
+            "range": { "min": reaction.min_temperature, "max": reaction.max_temperature }
+        }).to_string();
+    }
+    
+    if pressure < reaction.min_pressure || pressure > reaction.max_pressure {
+        return json!({ 
+            "error": "Pressure out of range",
+            "current": pressure,
+            "range": { "min": reaction.min_pressure, "max": reaction.max_pressure }
+        }).to_string();
+    }
+    
+    // Calculate limiting reactant
+    let mut limiting_factor = f64::MAX;
+    for (reactant, required_amount) in &reaction.reactants {
+        let available = match available_resources.get(reactant) {
+            Some(amount) => *amount,
+            None => 0.0,
+        };
+        
+        if available <= 0.0 {
+            return json!({ 
+                "error": "Missing reactant",
+                "reactant": reactant 
+            }).to_string();
+        }
+        
+        let possible_reactions = available / required_amount;
+        limiting_factor = limiting_factor.min(possible_reactions);
+    }
+    
+    // Calculate advanced temperature effect
+    // Use order of reaction with respect to temperature
+    // (simplified as 1.0 here, could be molecule-specific)
+    let temperature_order = 1.0;
+    let temperature_factor = calculate_temperature_effect(temperature, reaction.activation_energy);
+    
+    // Calculate pressure effect based on reaction type
+    // Gas-phase reactions are most affected by pressure
+    // Determine reaction phase based on reactants
+    let is_gas_phase = true; // Simplified, could be determined from molecule states
+    let pressure_order = if is_gas_phase { 
+        // Count total moles of gas in reaction
+        let reactant_moles: f64 = reaction.reactants.values().sum();
+        let product_moles: f64 = reaction.products.values().sum();
+        // Reaction order with respect to pressure is related to change in moles
+        product_moles - reactant_moles
+    } else {
+        0.0 // Negligible pressure effect for liquid/solid reactions
+    };
+    
+    let standard_pressure = 101325.0; // Pa (1 atm)
+    let pressure_factor = calculate_pressure_effect(pressure, pressure_order, standard_pressure);
+    
+    // Catalyst effect
+    let catalyst_factor = if catalyst_present && reaction.catalyst.is_some() {
+        reaction.catalyst_effect
+    } else {
+        1.0
+    };
+    
+    // Calculate actual reaction rate
+    let base_rate = reaction.rate_constant;
+    let modified_rate = base_rate * temperature_factor * pressure_factor * catalyst_factor;
+    
+    // Calculate actual reaction amount
+    let max_possible = limiting_factor;
+    let reaction_amount = max_possible.min(modified_rate * delta_time);
+    
+    // Calculate consumed reactants
+    let mut consumed = HashMap::new();
+    for (reactant, amount) in &reaction.reactants {
+        consumed.insert(reactant.clone(), amount * reaction_amount);
+    }
+    
+    // Calculate produced products
+    let mut produced = HashMap::new();
+    for (product, amount) in &reaction.products {
+        produced.insert(product.clone(), amount * reaction_amount);
+    }
+    
+    // Calculate energy change
+    let energy_change = reaction.energy_delta * reaction_amount;
+    
+    // Calculate final temperature based on energy release/consumption
+    // This is a simplified model - in reality, would need heat capacity of the system
+    let system_heat_capacity = 10.0; // J/K (placeholder, could be calculated based on molecules present)
+    let final_temperature = temperature + energy_change / system_heat_capacity;
+    
+    // Prepare enhanced result
+    json!({
+        "reaction_name": reaction.name,
+        "reaction_amount": reaction_amount,
+        "consumed": consumed,
+        "produced": produced,
+        "energy_change": energy_change,
+        "temperature_factor": temperature_factor,
+        "pressure_factor": pressure_factor,
+        "final_temperature": final_temperature,
+        "reaction_rate": modified_rate,
+        "catalyst_used": catalyst_present && reaction.catalyst.is_some(),
+        "catalyst_name": reaction.catalyst,
+        "temperature": temperature,
+        "pressure": pressure
+    }).to_string()
+}
+
+
 // Helper function to create JSON
 #[macro_export]
 macro_rules! json {

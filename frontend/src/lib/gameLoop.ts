@@ -10,7 +10,9 @@ export interface GameState {
   resources: Record<string, number>;
   buildings: Building[];
   temperature: number;
-  // ... other state properties
+  pressure: number;
+  weather: WeatherCondition;
+  timeOfDay: number;    // 0-24 hour
 }
 
 export interface Building {
@@ -20,6 +22,14 @@ export interface Building {
   connections: string[];
   // Building-specific properties
 }
+// Weather conditions that affect temperature and pressure
+export enum WeatherCondition {
+    Clear = "Clear",
+    Cloudy = "Cloudy",
+    Stormy = "Stormy",
+    Cold = "Cold",
+    Hot = "Hot"
+  }
 
 // Initialize default game state
 const createGameState = (): Writable<GameState> => {
@@ -38,7 +48,10 @@ const createGameState = (): Writable<GameState> => {
     },
     buildings: [],
     temperature: 293.15, // 20°C in Kelvin
-  });
+  pressure: 101325,    // 1 atm in Pascal
+  weather: WeatherCondition.Clear,
+  timeOfDay: 12,       // Noon
+});
 };
 
 export const gameState = createGameState();

@@ -12,3 +12,4 @@ pkg/
 wasm-pack.log
 dist/
 .DS_Store
+codebase.md

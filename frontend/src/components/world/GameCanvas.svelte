@@ -25,6 +25,10 @@
   let placementMode = false;
   let placementType = '';
   
+  // Environmental visualization
+  let showHeatMap = false;
+  let showPressureMap = false;
+  
   // Tile types
   const tileTypes = {
     ground: { color: '#394764' },
@@ -69,8 +73,14 @@
     if (event.key === 'a' || event.key === 'ArrowLeft') cameraX -= cameraSpeed;
     if (event.key === 'd' || event.key === 'ArrowRight') cameraX += cameraSpeed;
     
+    // Toggle heat map with 'h'
+    if (event.key === 'h') showHeatMap = !showHeatMap;
+    
+    // Toggle pressure map with 'p'
+    if (event.key === 'p') showPressureMap = !showPressureMap;
+    
     // Prevent scrolling the page
-    if (['w', 's', 'a', 'd', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) {
+    if (['w', 's', 'a', 'd', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'h', 'p'].includes(event.key)) {
       event.preventDefault();
     }
   }
@@ -102,6 +112,13 @@
     // Render world grid
     renderTiles();
     
+    // Render environmental effects if enabled
+    if (showHeatMap) {
+      renderHeatMap();
+    } else if (showPressureMap) {
+      renderPressureMap();
+    }
+    
     // Render buildings
     renderBuildings();
     
@@ -109,6 +126,9 @@
     if (placementMode) {
       renderPlacementPreview();
     }
+    
+    // Render UI overlays
+    renderUIOverlays();
     
     // Continue the loop
     requestAnimationFrame(renderLoop);
@@ -140,6 +160,92 @@
     }
   }
   
+  function renderHeatMap() {
+    // Overlay heat visualization on the world
+    ctx.globalAlpha = 0.4; // Semi-transparent
+    
+    // Buildings and their heat influence
+    $gameState.buildings.forEach(building => {
+      const screenX = Math.floor(building.position.x * TILE_SIZE - cameraX);
+      const screenY = Math.floor(building.position.y * TILE_SIZE - cameraY);
+      
+      // Only render if on screen
+      if (screenX > -TILE_SIZE * 5 && screenX < width + TILE_SIZE * 5 &&
+          screenY > -TILE_SIZE * 5 && screenY < height + TILE_SIZE * 5) {
+        
+        // Heat radius depends on temperature difference from ambient
+        const tempDiff = building.temperature - $gameState.temperature;
+        const radius = Math.abs(tempDiff) / 10 * TILE_SIZE * 3;
+        
+        // Create radial gradient for heat effect
+        const gradient = ctx.createRadialGradient(
+          screenX + TILE_SIZE/2, screenY + TILE_SIZE/2, 0,
+          screenX + TILE_SIZE/2, screenY + TILE_SIZE/2, radius
+        );
+        
+        if (tempDiff > 0) {
+          // Hot buildings (red)
+          gradient.addColorStop(0, 'rgba(255, 0, 0, 0.7)');
+          gradient.addColorStop(1, 'rgba(255, 0, 0, 0)');
+        } else {
+          // Cold buildings (blue)
+          gradient.addColorStop(0, 'rgba(0, 0, 255, 0.7)');
+          gradient.addColorStop(1, 'rgba(0, 0, 255, 0)');
+        }
+        
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.arc(screenX + TILE_SIZE/2, screenY + TILE_SIZE/2, radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    });
+    
+    ctx.globalAlpha = 1.0; // Reset transparency
+  }
+  
+  function renderPressureMap() {
+    // Overlay pressure visualization
+    ctx.globalAlpha = 0.3; // Semi-transparent
+    
+    // Buildings and their pressure influence
+    $gameState.buildings.forEach(building => {
+      const screenX = Math.floor(building.position.x * TILE_SIZE - cameraX);
+      const screenY = Math.floor(building.position.y * TILE_SIZE - cameraY);
+      
+      // Only render if on screen
+      if (screenX > -TILE_SIZE * 5 && screenX < width + TILE_SIZE * 5 &&
+          screenY > -TILE_SIZE * 5 && screenY < height + TILE_SIZE * 5) {
+        
+        // Pressure radius depends on pressure difference from ambient
+        const pressureDiff = building.pressure - $gameState.pressure;
+        const radius = Math.abs(pressureDiff) / 10000 * TILE_SIZE * 3;
+        
+        // Create radial gradient for pressure effect
+        const gradient = ctx.createRadialGradient(
+          screenX + TILE_SIZE/2, screenY + TILE_SIZE/2, 0,
+          screenX + TILE_SIZE/2, screenY + TILE_SIZE/2, radius
+        );
+        
+        if (pressureDiff > 0) {
+          // High pressure (purple)
+          gradient.addColorStop(0, 'rgba(128, 0, 128, 0.7)');
+          gradient.addColorStop(1, 'rgba(128, 0, 128, 0)');
+        } else {
+          // Low pressure (green)
+          gradient.addColorStop(0, 'rgba(0, 128, 0, 0.7)');
+          gradient.addColorStop(1, 'rgba(0, 128, 0, 0)');
+        }
+        
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.arc(screenX + TILE_SIZE/2, screenY + TILE_SIZE/2, radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    });
+    
+    ctx.globalAlpha = 1.0; // Reset transparency
+  }
+  
   function renderBuildings() {
     $gameState.buildings.forEach(building => {
       const screenX = Math.floor(building.position.x * TILE_SIZE - cameraX);
@@ -152,13 +258,13 @@
         // Draw building based on type
         switch (building.type) {
           case 'extractor':
-            drawExtractor(screenX, screenY);
+            drawExtractor(screenX, screenY, building);
             break;
           case 'reactor':
-            drawReactor(screenX, screenY);
+            drawReactor(screenX, screenY, building);
             break;
           case 'powerPlant':
-            drawPowerPlant(screenX, screenY);
+            drawPowerPlant(screenX, screenY, building);
             break;
           default:
             // Default building shape
@@ -169,9 +275,16 @@
     });
   }
   
-  function drawExtractor(x, y) {
+  function drawExtractor(x, y, building) {
     // Blue circular extractor
     ctx.fillStyle = '#3498db';
+    
+    // Apply efficiency visual effect
+    if (building && building.efficiency) {
+      const opacity = Math.max(0.3, building.efficiency);
+      ctx.fillStyle = `rgba(52, 152, 219, ${opacity})`;
+    }
+    
     ctx.beginPath();
     ctx.arc(x + TILE_SIZE/2, y + TILE_SIZE/2, TILE_SIZE/2, 0, Math.PI * 2);
     ctx.fill();
@@ -181,27 +294,138 @@
     ctx.beginPath();
     ctx.arc(x + TILE_SIZE/2, y + TILE_SIZE/2, TILE_SIZE/4, 0, Math.PI * 2);
     ctx.fill();
+    
+    // Show building is selected
+    if (building && building.selected) {
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x - 2, y - 2, TILE_SIZE + 4, TILE_SIZE + 4);
+    }
+    
+    // Display efficiency indicator if very low
+    if (building && building.efficiency < 0.5) {
+      drawWarningIndicator(x, y);
+    }
   }
   
-  function drawReactor(x, y) {
+  function drawReactor(x, y, building) {
     // Red square reactor
     ctx.fillStyle = '#e74c3c';
+    
+    // Apply efficiency visual effect
+    if (building && building.efficiency) {
+      const opacity = Math.max(0.3, building.efficiency);
+      ctx.fillStyle = `rgba(231, 76, 60, ${opacity})`;
+    }
+    
     ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
     
     // Inner details (warning stripes)
     ctx.fillStyle = '#c0392b';
     ctx.fillRect(x + TILE_SIZE/4, y + TILE_SIZE/4, TILE_SIZE/2, TILE_SIZE/2);
+    
+    // Show building is selected
+    if (building && building.selected) {
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x - 2, y - 2, TILE_SIZE + 4, TILE_SIZE + 4);
+    }
+    
+    // Display efficiency indicator if very low
+    if (building && building.efficiency < 0.5) {
+      drawWarningIndicator(x, y);
+    }
+    
+    // Show heat effect for reactors (they tend to be hot)
+    if (building && building.temperature > 400) {
+      drawHeatIndicator(x, y);
+    }
   }
   
-  function drawPowerPlant(x, y) {
+  function drawPowerPlant(x, y, building) {
     // Green power plant (triangle shape)
     ctx.fillStyle = '#2ecc71';
+    
+    // Apply efficiency visual effect
+    if (building && building.efficiency) {
+      const opacity = Math.max(0.3, building.efficiency);
+      ctx.fillStyle = `rgba(46, 204, 113, ${opacity})`;
+    }
+    
     ctx.beginPath();
     ctx.moveTo(x + TILE_SIZE/2, y);
     ctx.lineTo(x + TILE_SIZE, y + TILE_SIZE);
     ctx.lineTo(x, y + TILE_SIZE);
     ctx.closePath();
     ctx.fill();
+    
+    // Show building is selected
+    if (building && building.selected) {
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x - 2, y - 2, TILE_SIZE + 4, TILE_SIZE + 4);
+    }
+    
+    // Display efficiency indicator if very low
+    if (building && building.efficiency < 0.5) {
+      drawWarningIndicator(x, y);
+    }
+    
+    // Show heat effect for power plants (they tend to be hot)
+    if (building && building.temperature > 450) {
+      drawHeatIndicator(x, y);
+    }
+  }
+  
+  function drawWarningIndicator(x, y) {
+    // Draw a warning triangle
+    ctx.fillStyle = '#f39c12';
+    ctx.beginPath();
+    ctx.moveTo(x + TILE_SIZE - 4, y + 4);
+    ctx.lineTo(x + TILE_SIZE - 4, y + 14);
+    ctx.lineTo(x + TILE_SIZE - 14, y + 4);
+    ctx.closePath();
+    ctx.fill();
+    
+    // Exclamation mark
+    ctx.fillStyle = '#000';
+    ctx.fillRect(x + TILE_SIZE - 9, y + 6, 2, 4);
+    ctx.fillRect(x + TILE_SIZE - 9, y + 11, 2, 2);
+  }
+  
+  function drawHeatIndicator(x, y) {
+    // Small flame indicator
+    ctx.fillStyle = '#f39c12';
+    
+    // Flame base
+    ctx.beginPath();
+    ctx.moveTo(x + 4, y + TILE_SIZE - 4);
+    ctx.lineTo(x + 12, y + TILE_SIZE - 14);
+    ctx.lineTo(x + 20, y + TILE_SIZE - 4);
+    ctx.closePath();
+    ctx.fill();
+  }
+  
+  function renderUIOverlays() {
+    // Draw mode indicators
+    ctx.fillStyle = '#fff';
+    ctx.font = '14px sans-serif';
+    
+    if (showHeatMap) {
+      ctx.fillText('Heat Map Active (H to toggle)', 10, 20);
+    } else if (showPressureMap) {
+      ctx.fillText('Pressure Map Active (P to toggle)', 10, 20);
+    }
+    
+    // Display current coordinates under mouse
+    if (mouseX > 0 && mouseY > 0) {
+      const gridX = Math.floor((mouseX + cameraX) / TILE_SIZE);
+      const gridY = Math.floor((mouseY + cameraY) / TILE_SIZE);
+      
+      if (gridX >= 0 && gridX < GRID_SIZE && gridY >= 0 && gridY < GRID_SIZE) {
+        ctx.fillText(`Coordinates: (${gridX}, ${gridY})`, 10, height - 10);
+      }
+    }
   }
   
   function renderPlacementPreview() {
@@ -216,13 +440,13 @@
     
     switch (placementType) {
       case 'extractor':
-        drawExtractor(screenX, screenY);
+        drawExtractor(screenX, screenY, null);
         break;
       case 'reactor':
-        drawReactor(screenX, screenY);
+        drawReactor(screenX, screenY, null);
         break;
       case 'powerPlant':
-        drawPowerPlant(screenX, screenY);
+        drawPowerPlant(screenX, screenY, null);
         break;
       default:
         ctx.fillStyle = '#bdc3c7';
@@ -235,13 +459,30 @@
     ctx.strokeStyle = '#ffffff';
     ctx.lineWidth = 2;
     ctx.strokeRect(screenX, screenY, TILE_SIZE, TILE_SIZE);
+    
+    // Display info about placement
+    ctx.fillStyle = '#fff';
+    ctx.font = '14px sans-serif';
+    ctx.fillText(`Placing: ${placementType}`, 10, 40);
+    
+    // Show resource at placement location
+    if (gridX >= 0 && gridX < GRID_SIZE && gridY >= 0 && gridY < GRID_SIZE) {
+      const tileType = worldGrid[gridY][gridX];
+      ctx.fillText(`Resource: ${tileType}`, 10, 60);
+      
+      // Show efficiency prediction based on environment
+      const predictedEfficiency = predictBuildingEfficiency(placementType, $gameState.temperature, $gameState.pressure);
+      ctx.fillText(`Predicted Efficiency: ${Math.round(predictedEfficiency * 100)}%`, 10, 80);
+    }
   }
   
   function handleMouseMove(event) {
-    const rect = canvas.getBoundingClientRect();
-    mouseX = event.clientX - rect.left;
-    mouseY = event.clientY - rect.top;
-  }
+  if (!canvas) return; // Add this check
+  
+  const rect = canvas.getBoundingClientRect();
+  mouseX = event.clientX - rect.left;
+  mouseY = event.clientY - rect.top;
+}
   
   function handleMouseDown(event) {
     isMouseDown = true;
@@ -263,7 +504,10 @@
             id: crypto.randomUUID(),
             type: placementType,
             position: { x: gridX, y: gridY },
-            connections: []
+            connections: [],
+            temperature: $gameState.temperature, // Initialize with ambient temperature
+            pressure: $gameState.pressure,       // Initialize with ambient pressure
+            efficiency: predictBuildingEfficiency(placementType, $gameState.temperature, $gameState.pressure)
           };
           
           gameState.update(state => {
@@ -280,6 +524,9 @@
       
       // Exit placement mode after placing
       placementMode = false;
+    } else {
+      // Select building under cursor
+      selectBuildingUnderCursor();
     }
   }
   
@@ -287,10 +534,65 @@
     isMouseDown = false;
   }
   
+  function selectBuildingUnderCursor() {
+    const gridX = Math.floor((mouseX + cameraX) / TILE_SIZE);
+    const gridY = Math.floor((mouseY + cameraY) / TILE_SIZE);
+    
+    // Deselect all buildings first
+    gameState.update(state => {
+      state.buildings.forEach(b => b.selected = false);
+      
+      // Find and select the building under cursor
+      const building = state.buildings.find(
+        b => b.position.x === gridX && b.position.y === gridY
+      );
+      
+      if (building) {
+        building.selected = true;
+      }
+      
+      return state;
+    });
+  }
+  
   // Method to start building placement - will be called from BuildingControlPanel
   export function startPlacement(type) {
     placementMode = true;
     placementType = type;
+  }
+  
+  // Predict building efficiency based on placement environment
+  function predictBuildingEfficiency(type, temperature, pressure) {
+    // Different building types have different optimal conditions
+    let optimalTemp = 293.15; // Default 20°C
+    let optimalPressure = 101325; // Default 1 atm
+    
+    // Set optimal conditions based on building type
+    switch (type) {
+      case 'extractor':
+        optimalTemp = 283.15; // 10°C
+        optimalPressure = 101325; // 1 atm
+        break;
+      case 'reactor':
+        optimalTemp = 450; // Higher temperature for reactions
+        optimalPressure = 200000; // ~2 atm for better reaction rates
+        break;
+      case 'powerPlant':
+        optimalTemp = 500; // High temperature for power generation
+        optimalPressure = 101325; // Standard pressure
+        break;
+    }
+    
+    // Calculate temperature efficiency component (drop off as we move from optimal)
+    const tempDeviation = Math.abs(temperature - optimalTemp) / optimalTemp;
+    const tempEfficiency = Math.max(0.3, 1 - tempDeviation);
+    
+    // Calculate pressure efficiency component
+    const pressureDeviation = Math.abs(pressure - optimalPressure) / optimalPressure;
+    const pressureEfficiency = Math.max(0.5, 1 - pressureDeviation);
+    
+    // Combined efficiency with more weight on temperature
+    return tempEfficiency * 0.7 + pressureEfficiency * 0.3;
   }
 </script>
 
@@ -303,6 +605,29 @@
     on:mousedown={handleMouseDown}
     on:mouseup={handleMouseUp}
   ></canvas>
+  
+  <div class="view-controls">
+    <button 
+      class:active={showHeatMap} 
+      on:click={() => {
+        showHeatMap = !showHeatMap;
+        if (showHeatMap) showPressureMap = false;
+      }}
+      title="Toggle Heat Map (H)"
+    >
+      Heat Map
+    </button>
+    <button 
+      class:active={showPressureMap} 
+      on:click={() => {
+        showPressureMap = !showPressureMap;
+        if (showPressureMap) showHeatMap = false;
+      }}
+      title="Toggle Pressure Map (P)"
+    >
+      Pressure Map
+    </button>
+  </div>
 </div>
 
 <style>
@@ -314,5 +639,32 @@
   
   canvas {
     display: block;
+  }
+  
+  .view-controls {
+    position: absolute;
+    bottom: 16px;
+    right: 16px;
+    display: flex;
+    gap: 8px;
+  }
+  
+  .view-controls button {
+    background-color: rgba(44, 62, 80, 0.8);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 8px 12px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+  }
+  
+  .view-controls button:hover {
+    background-color: rgba(52, 73, 94, 0.8);
+  }
+  
+  .view-controls button.active {
+    background-color: rgba(41, 128, 185, 0.8);
   }
 </style>
