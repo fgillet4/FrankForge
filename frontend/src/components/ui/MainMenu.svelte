@@ -52,17 +52,26 @@
       resourceRichness
     };
     console.log("Dispatching startGame event with settings:", settings);
-    dispatch('startGame', settings);
-    console.log("Event dispatched from MainMenu");
+    
+    // Force event to dispatch synchronously to parent
+    setTimeout(() => {
+      dispatch('startGame', settings);
+      console.log("Event dispatched from MainMenu");
+    }, 0);
     
     // Log dispatch to help debug
-    console.log("IMPORTANT: If you don't see handleStartGame logs in App.svelte after this, the event handling is broken");
+    console.log("IMPORTANT: If you don't see handleStartGame logs in App.svelte within a second, the event handling is broken");
   }
     
     // Load a saved game
     function loadGame() {
-      // This would be expanded in a full implementation
-      dispatch('loadGame');
+      console.log("loadGame function called in MainMenu");
+      
+      // Force event to dispatch synchronously to parent
+      setTimeout(() => {
+        dispatch('loadGame');
+        console.log("loadGame event dispatched from MainMenu");
+      }, 0);
     }
   </script>
   

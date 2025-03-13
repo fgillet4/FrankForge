@@ -1,28 +1,18 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, afterUpdate } from 'svelte';
   import MainMenu from './components/ui/MainMenu.svelte';
   import { mapGenerator } from './lib/mapGenerator';
   import { gameState } from './stores/gameState';
   import { PlanetType } from './lib/types';
   
-  // Application state
-  let showMainMenu = true;
-  let showGame = false;
-  let gameSettings: {
-    planetType: PlanetType;
-    mapWidth: number;
-    mapHeight: number;
-    resourceRichness: number;
-  } | null = null;
+  // For debugging purposes
+  console.log("App.svelte is being evaluated");
   
   // Building interaction state
   let selectedBuildingType: string | null = null;
   let isPlacementMode = false;
   let selectedBuilding: any = null;
   let hoverPosition = { x: 0, y: 0 };
-  
-  // Debug flags
-  let debugMode = true;
   
   // Helper functions for map rendering
   function getTileColor(terrainType: number): string {
@@ -66,6 +56,19 @@
     }
   }
   
+  // Application state
+  let showMainMenu = true;
+  let showGame = false;
+  let gameSettings: {
+    planetType: PlanetType;
+    mapWidth: number;
+    mapHeight: number;
+    resourceRichness: number;
+  } | null = null;
+  
+  // Debug flags
+  let debugMode = true;
+  
   // Handle game start from main menu
   function handleStartGame(event: CustomEvent) {
     console.log("handleStartGame triggered in App.svelte");
@@ -88,68 +91,41 @@
       console.log("Map generated successfully, updating game state");
       
       // Update the game state with the new map
-      gameState.update(state => {
-        console.log("Updating game state with map:", generatedMap.name);
-        return {
-          ...state,
-          map: generatedMap,
-          planetType: gameSettings.planetType,
-          tick: 0,
-          buildings: [],
-          lastUpdated: Date.now()
-        };
-      });
+      gameState.update(state => ({
+        ...state,
+        map: generatedMap,
+        planetType: gameSettings.planetType,
+        tick: 0,
+        buildings: [],
+        lastUpdated: Date.now()
+      }));
       
       console.log("Game state updated, transitioning to game view");
       
-      // Initialize the game container first
-      const gameContainer = document.getElementById('game-container');
-      if (gameContainer) {
-        // Make sure it exists and is visible
-        gameContainer.style.visibility = 'visible';
-        gameContainer.style.display = 'flex';
-      }
-      
-      // First, hide the menu
+      // Switch scenes: hide menu, show game
       showMainMenu = false;
-      
-      // Then immediately show the game view
       showGame = true;
+      console.log("Transitioning from menu to game scene");
       
-      console.log("Game view shown, waiting for DOM update");
-      
-      // Short delay to ensure DOM is updated
+      // Initialize canvas after DOM update
+      // Use a slightly longer delay to ensure DOM is fully updated
       setTimeout(() => {
-        // Verify game container exists and is visible
-        const gameContainer = document.getElementById('game-container');
-        console.log("Game container found:", !!gameContainer);
+        // Try to find the canvas element
+        const canvas = document.getElementById('basic-canvas');
+        console.log("Looking for canvas element after delay:", !!canvas);
         
-        if (gameContainer) {
-          // Ensure container is fully visible
-          gameContainer.style.visibility = 'visible';
-          gameContainer.style.display = 'flex';
-          
-          // Check for canvas
-          const canvasElement = document.getElementById('basic-canvas');
-          console.log("Canvas element found:", !!canvasElement);
-          
-          if (canvasElement) {
-            // Initialize canvas now
-            console.log("Initializing canvas now");
-            initializeCanvas();
-          } else {
-            console.error("Canvas not found but will be created in initializeCanvas");
-            initializeCanvas();
-          }
+        if (canvas) {
+          initializeCanvas();
         } else {
-          console.error("Game container not found after transition!");
+          console.error("Canvas element still not found after delay");
         }
-      }, 50);
+      }, 1000);
     }
   }
   
   // Handle load game
   function handleLoadGame() {
+    // Placeholder for load game functionality
     console.log("Load game requested");
     
     // Example of loading a saved game - would come from storage in reality
@@ -167,104 +143,22 @@
       lastUpdated: Date.now()
     }));
     
-    // First, hide the menu
+    // Switch scenes: hide menu, show game
     showMainMenu = false;
+    showGame = true;
     
-    // Small delay after hiding menu
-    setTimeout(() => {
-      // Then show the game view
-      showGame = true;
-      
-      console.log("Game view shown after load, waiting for DOM update");
-      
-      // Wait a bit longer to initialize canvas
-      setTimeout(() => {
-        // Verify game container exists and is visible
-        const gameContainer = document.getElementById('game-container');
-        console.log("Game container found after load:", !!gameContainer);
-        
-        if (gameContainer) {
-          // Ensure container is fully visible
-          gameContainer.style.visibility = 'visible';
-          gameContainer.style.display = 'flex';
-          
-          // Initialize canvas now
-          console.log("Initializing canvas after load game");
-          initializeCanvas();
-        } else {
-          console.error("Game container not found after load!");
-        }
-      }, 200);
-    }, 100);
+    // Initialize canvas after a delay
+    setTimeout(initializeCanvas, 500);
   }
+  
+  let canvasElement: HTMLCanvasElement;
+  let savedGameState: any = null;
   
   // Scene transition functions
   function handleBackToMenu() {
-    console.log("Transitioning back to main menu");
-    
-    // Prepare the menu first
+    showGame = false;
     showMainMenu = true;
-    
-    // Short delay to get the menu ready
-    setTimeout(() => {
-      // Then hide the game view
-      showGame = false;
-      
-      // Log completion
-      console.log("Returned to main menu - game hidden, menu visible");
-      
-      // Force UI update
-      const gameContainer = document.getElementById('game-container');
-      if (gameContainer) {
-        gameContainer.style.display = 'none';
-        gameContainer.style.visibility = 'hidden';
-      }
-      
-      // Focus on menu
-      const menuContainer = document.querySelector('.main-menu-container');
-      if (menuContainer) {
-        (menuContainer as HTMLElement).style.visibility = 'visible';
-        (menuContainer as HTMLElement).style.display = 'block';
-      }
-    }, 50);
-  }
-  
-  // Handle toggling buttons in debug panel
-  function handleToggleMenu() {
-    showMainMenu = !showMainMenu;
-    console.log("Toggled menu visibility:", showMainMenu);
-  }
-  
-  function handleToggleGame() {
-    console.log("Toggling game visibility from", showGame, "to", !showGame);
-    
-    // If switching to game view
-    if (!showGame) {
-      // First show game
-      showGame = true;
-      
-      // Short delay to ensure DOM is updated
-      setTimeout(() => {
-        // Verify game container exists and is visible
-        const gameContainer = document.getElementById('game-container');
-        console.log("Game container found:", !!gameContainer);
-        
-        if (gameContainer) {
-          // Make sure container is visible
-          gameContainer.style.visibility = 'visible';
-          gameContainer.style.display = 'flex';
-          
-          // Initialize canvas after elements are in DOM
-          console.log("Initializing canvas after toggle");
-          initializeCanvas();
-        } else {
-          console.error("Game container not found!");
-        }
-      }, 200); // Increased delay to ensure DOM updates
-    } else {
-      // Simply hide game if hiding
-      showGame = false;
-    }
+    console.log("Returning to main menu");
   }
   
   // Building interaction functions
@@ -319,17 +213,16 @@
     
     // Get mouse position relative to canvas
     const rect = canvas.getBoundingClientRect();
-    const x = Math.round(event.clientX - rect.left);
-    const y = Math.round(event.clientY - rect.top);
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
     
     // Update hover position
     hoverPosition = { x, y };
     
-    // No need to redraw here as it's handled by the game loop
-    // Just update hover position
+    // Only redraw if in placement mode to show preview
     if (isPlacementMode && selectedBuildingType) {
-      // The game loop will handle the actual rendering
-      console.log(`Hovering at ${x},${y}`);
+      // Use requestAnimationFrame to avoid too many redraws
+      requestAnimationFrame(initializeCanvas);
     }
   }
   
@@ -389,75 +282,72 @@
     initializeCanvas();
   }
   
-  // Initialize and draw on the canvas
-  function initializeCanvas() {
-    try {
-      console.log("Initializing canvas...");
-      
-      // Make sure the game-container is visible first
-      const gameContainer = document.getElementById('game-container');
-      console.log("Game container exists:", !!gameContainer);
-      if (gameContainer) {
-        console.log("Game container visibility:", window.getComputedStyle(gameContainer).visibility);
-        console.log("Game container display:", window.getComputedStyle(gameContainer).display);
-        // Ensure it's visible
-        gameContainer.style.visibility = 'visible';
-        gameContainer.style.display = 'flex';
-      }
-      
-      // Log all available canvas elements in the document
-      const allCanvases = document.getElementsByTagName('canvas');
-      console.log(`Found ${allCanvases.length} canvas elements in document`);
-      
-      // Wait a tiny bit to ensure DOM is ready
-      setTimeout(() => {
-        // Try to find the canvas multiple ways
-        let canvas = document.getElementById('basic-canvas') as HTMLCanvasElement;
-        
-        if (!canvas) {
-          console.log("Canvas not found by ID, trying to find by tag name");
-          const canvases = document.getElementsByTagName('canvas');
-          if (canvases.length > 0) {
-            canvas = canvases[0] as HTMLCanvasElement;
-            console.log("Found canvas by tag name");
-          }
-        }
-        
-        if (!canvas) {
-          console.error("Canvas element not found by any method");
-          
-          // Create canvas element if needed
-          console.log("Trying to create canvas dynamically");
-          const gameContainer = document.getElementById('game-container');
-          if (gameContainer) {
-            // Create canvas element
-            canvas = document.createElement('canvas');
-            canvas.id = 'basic-canvas';
-            canvas.width = 1000;
-            canvas.height = 800;
-            canvas.addEventListener('click', handleCanvasClick);
-            canvas.addEventListener('mousemove', handleCanvasHover);
-            
-            // Insert as first child of game container
-            gameContainer.insertBefore(canvas, gameContainer.firstChild);
-            console.log("Canvas created dynamically");
-          } else {
-            console.log("DOM content:", document.body.innerHTML);
-            return;
-          }
-        }
-        
-        drawCanvas(canvas);
-      }, 100); // Increased delay to ensure DOM updates have processed
-    } catch (err) {
-      console.error("Error initializing canvas:", err);
+  // Handle toggling buttons in debug panel
+  function handleToggleMenu() {
+    showMainMenu = !showMainMenu;
+    console.log("Toggled menu visibility:", showMainMenu);
+    
+    // Make sure we're in a valid state
+    if (showMainMenu && showGame) {
+      showGame = false;
+    } else if (!showMainMenu && !showGame) {
+      showGame = true;
     }
   }
   
-  // Separate drawing function to make the code cleaner
-  function drawCanvas(canvas: HTMLCanvasElement) {
+  function handleToggleGame() {
+    showGame = !showGame;
+    console.log("Toggled game visibility:", showGame);
+    
+    // Make sure we're in a valid state
+    if (showGame && showMainMenu) {
+      showMainMenu = false;
+    }
+    
+    // If showing game, make sure canvas is initialized
+    if (showGame) {
+      // Small delay to ensure DOM is updated
+      setTimeout(() => {
+        initializeCanvas();
+      }, 100);
+    }
+  }
+  
+  // For debugging - save current game state
+  function forceSaveGame() {
+    savedGameState = JSON.parse(JSON.stringify($gameState));
+    console.log("Game state saved:", savedGameState);
+    alert("Game state saved (see console)");
+  }
+  
+  // For debugging - restore saved game state
+  function forceLoadGame() {
+    if (!savedGameState) {
+      console.error("No saved game state to load");
+      alert("No saved game state to load");
+      return;
+    }
+    
+    gameState.set(savedGameState);
+    console.log("Game state restored from saved state");
+    
+    if (showGame) {
+      setTimeout(() => {
+        initializeCanvas();
+      }, 100);
+    }
+    
+    alert("Game state restored - map should appear when game is visible");
+  }
+  
+  // Initialize and draw on the canvas
+  function initializeCanvas() {
     try {
-      console.log("Canvas found, dimensions:", canvas.width, "x", canvas.height);
+      const canvas = document.getElementById('basic-canvas') as HTMLCanvasElement;
+      if (!canvas) {
+        console.error("Canvas element not found");
+        return;
+      }
       
       const ctx = canvas.getContext('2d');
       if (!ctx) {
@@ -469,81 +359,41 @@
       ctx.fillStyle = '#0a0a18';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       
-      // Draw a quick test pattern to see if canvas is working at all
-      ctx.fillStyle = '#3498db';  
-      ctx.fillRect(10, 10, 50, 50);
-      ctx.fillStyle = '#e74c3c';
-      ctx.fillRect(70, 10, 50, 50);
-      ctx.fillStyle = '#2ecc71';
-      ctx.fillRect(130, 10, 50, 50);
-      
       // Draw map if available
       if ($gameState.map && $gameState.map.tiles) {
-        console.log("Drawing map with dimensions:", $gameState.map.width, "x", $gameState.map.height);
-        console.log("Map object keys:", Object.keys($gameState.map));
-        console.log("Map tiles array length:", $gameState.map.tiles.length);
-        console.log("Map name:", $gameState.map.name);
-        
-        // Inspect tile structure
-        console.log("Map tiles array type:", Array.isArray($gameState.map.tiles) ? "Array" : typeof $gameState.map.tiles);
-        if ($gameState.map.tiles.length > 0) {
-          console.log("First row type:", Array.isArray($gameState.map.tiles[0]) ? "Array" : typeof $gameState.map.tiles[0]);
-          console.log("First row length:", $gameState.map.tiles[0]?.length);
-        }
-        
-        // If width/height are missing, try to get them from the tiles array
-        const mapWidth = $gameState.map.width || $gameState.map.tiles[0].length;
-        const mapHeight = $gameState.map.height || $gameState.map.tiles.length;
-        
-        console.log("Using dimensions:", mapWidth, "x", mapHeight);
-        
         // Calculate tile size to fit the map on screen
         const tileSize = Math.min(
-          Math.floor(canvas.width / mapWidth),
-          Math.floor(canvas.height / mapHeight)
+          Math.floor(canvas.width / $gameState.map.width),
+          Math.floor(canvas.height / $gameState.map.height)
         );
         
-        console.log("Calculated tile size:", tileSize);
-        
         // Maximum dimensions to render
-        const maxTilesX = Math.min(mapWidth, Math.floor(canvas.width / tileSize));
-        const maxTilesY = Math.min(mapHeight, Math.floor(canvas.height / tileSize));
+        const maxTilesX = Math.min($gameState.map.width, Math.floor(canvas.width / tileSize));
+        const maxTilesY = Math.min($gameState.map.height, Math.floor(canvas.height / tileSize));
         
         // Draw each map tile
-        try {
-          // Log the first tile for debugging
-          console.log("First tile sample:", $gameState.map.tiles[0][0]);
-          
-          for (let y = 0; y < maxTilesY; y++) {
-            for (let x = 0; x < maxTilesX; x++) {
-              if (!$gameState.map.tiles[y] || !$gameState.map.tiles[y][x]) {
-                console.error(`Missing tile at ${x},${y}`);
-                continue;
-              }
-              
-              const tile = $gameState.map.tiles[y][x];
-              
-              // Get color based on terrain type
-              const tileColor = getTileColor(tile.terrain);
-              
-              // Draw tile
-              ctx.fillStyle = tileColor;
-              ctx.fillRect(x * tileSize, y * tileSize, tileSize, tileSize);
-              
-              // Draw resource indicator if present
-              if (tile.resource > 0) {
-                ctx.fillStyle = getResourceColor(tile.resource);
-                ctx.fillRect(
-                  x * tileSize + tileSize/4, 
-                  y * tileSize + tileSize/4, 
-                  tileSize/2, 
-                  tileSize/2
-                );
-              }
+        for (let y = 0; y < maxTilesY; y++) {
+          for (let x = 0; x < maxTilesX; x++) {
+            const tile = $gameState.map.tiles[y][x];
+            
+            // Get color based on terrain type
+            const tileColor = getTileColor(tile.terrain);
+            
+            // Draw tile
+            ctx.fillStyle = tileColor;
+            ctx.fillRect(x * tileSize, y * tileSize, tileSize, tileSize);
+            
+            // Draw resource indicator if present
+            if (tile.resource > 0) {
+              ctx.fillStyle = getResourceColor(tile.resource);
+              ctx.fillRect(
+                x * tileSize + tileSize/4, 
+                y * tileSize + tileSize/4, 
+                tileSize/2, 
+                tileSize/2
+              );
             }
           }
-        } catch (err) {
-          console.error("Error drawing map tiles:", err);
         }
         
         // Draw grid lines
@@ -591,7 +441,7 @@
         ctx.font = '18px Arial';
         ctx.fillText(`Planet: ${$gameState.map.name}`, 10, maxTilesY * tileSize + 25);
         ctx.fillText(`Type: ${$gameState.planetType}`, 10, maxTilesY * tileSize + 45);
-        ctx.fillText(`Size: ${mapWidth}x${mapHeight}`, 10, maxTilesY * tileSize + 65);
+        ctx.fillText(`Size: ${$gameState.map.width}x${$gameState.map.height}`, 10, maxTilesY * tileSize + 65);
         
         // Draw building info if selected
         if (selectedBuilding) {
@@ -757,108 +607,64 @@
     }
   }
   
-  // Add a simple game loop architecture to handle physics and rendering
-let lastFrameTime = 0;
-const PHYSICS_RATE = 1000 / 60; // 60 FPS for physics
-let physicsAccumulator = 0;
-
-function gameLoop(timestamp) {
-  if (!lastFrameTime) {
-    lastFrameTime = timestamp;
-  }
-  
-  // Calculate delta time
-  const deltaTime = timestamp - lastFrameTime;
-  lastFrameTime = timestamp;
-  
-  // Update physics at fixed rate
-  physicsAccumulator += deltaTime;
-  while (physicsAccumulator >= PHYSICS_RATE) {
-    updatePhysics(PHYSICS_RATE);
-    physicsAccumulator -= PHYSICS_RATE;
-  }
-  
-  // Always render at display refresh rate
-  if (showGame) {
-    // Only redraw when game is visible
-    const canvas = document.getElementById('basic-canvas');
-    if (canvas) {
-      drawCanvas(canvas);
+  onMount(() => {
+    console.log("App component mounted");
+    
+    // Check if we should initialize the canvas if game is already visible
+    if (showGame) {
+      console.log("Game is visible on mount, initializing canvas");
+      // Small delay to ensure DOM is ready
+      setTimeout(() => {
+        const canvas = document.getElementById('basic-canvas');
+        if (canvas) {
+          console.log("Canvas found on mount, initializing");
+          initializeCanvas();
+        } else {
+          console.error("Canvas not found on mount");
+        }
+      }, 500);
     }
-  }
-  
-  // Continue the loop
-  requestAnimationFrame(gameLoop);
-}
-
-function updatePhysics(deltaTime) {
-  // Update game physics here - will be expanded later
-  // For now, we're just incrementing the game tick
-  gameState.update(state => {
-    if (state.tick !== undefined) {
-      return { ...state, tick: state.tick + 1 };
-    }
-    return state;
   });
   
-  // Here we would update:
-  // - Building processing rates
-  // - Resource flows
-  // - Environmental changes
-  // - etc.
-}
-
-onMount(() => {
-  console.log("App component mounted");
-  
-  // Create the canvas on initial mount
-  setTimeout(() => {
-    // Try to initialize the canvas if it exists
-    const canvas = document.getElementById('basic-canvas');
-    if (canvas) {
-      console.log("Canvas found on mount, initializing");
+  afterUpdate(() => {
+    console.log("App component updated, checking for canvas");
+    canvasElement = document.getElementById('basic-canvas') as HTMLCanvasElement;
+    if (canvasElement && showGame) {
+      console.log("Canvas found after update:", canvasElement.id);
       initializeCanvas();
-    } else {
-      console.log("No canvas found on initial mount");
     }
-    
-    // Start the game loop
-    requestAnimationFrame(gameLoop);
-  }, 100);
-});
+  });
 </script>
 
 <main class="app">
-  <!-- Menu container always exists in DOM, but is hidden when not active -->
-  <div class="main-menu-container" style="display: {showMainMenu ? 'block' : 'none'}; opacity: {showMainMenu ? '1' : '0'};">
+  <!-- MENU SCENE - Always render, control visibility with CSS -->
+  <div class="scene menu-scene" style="display: {showMainMenu ? 'block' : 'none'}">
     <MainMenu 
       on:startGame={handleStartGame}
       on:loadGame={handleLoadGame}
     />
   </div>
   
-  <!-- Game view always exists in DOM, but is hidden when not active -->
-  <div class="game-container" id="game-container" style="display: {showGame ? 'flex' : 'none'}; visibility: {showGame ? 'visible' : 'hidden'}; opacity: {showGame ? '1' : '0'};">
-    <!-- Canvas goes first -->
-    <canvas 
-      id="basic-canvas"
-      width="1000" 
-      height="800"
-      on:click={handleCanvasClick}
-      on:mousemove={handleCanvasHover}
-    ></canvas>
+  <!-- GAME SCENE - Always render, control visibility with CSS -->
+  <div class="scene game-scene" style="display: {showGame ? 'flex' : 'none'}">
+    <div class="game-content">
+      <canvas 
+        id="basic-canvas" 
+        width="1000" 
+        height="800"
+        on:click={handleCanvasClick}
+        on:mousemove={handleCanvasHover}
+      ></canvas>
       
-    <!-- Game UI Overlay -->
-    <div class="game-ui">
-      <div class="top-bar">
-        <h2 class="planet-name">
-          {$gameState?.map?.name || 'Unknown Planet'} 
-          ({gameSettings?.planetType || 'unknown'})
-        </h2>
-        <div class="ui-buttons">
+      <!-- Game UI Overlay -->
+      <div class="game-ui">
+        <div class="top-bar">
+          <h2 class="planet-name">
+            {$gameState.map?.name || 'Unknown Planet'} 
+            ({gameSettings?.planetType || 'unknown'})
+          </h2>
           <button class="menu-button" on:click={handleBackToMenu}>Back to Menu</button>
         </div>
-      </div>
         
         <!-- Building Selection Toolbar -->
         <div class="building-toolbar">
@@ -941,6 +747,7 @@ onMount(() => {
         </div>
       </div>
     </div>
+  </div>
   
   {#if debugMode}
     <div class="debug-panel">
@@ -950,9 +757,6 @@ onMount(() => {
       </button>
       <button on:click={handleToggleGame}>
         Toggle Game
-      </button>
-      <button on:click={() => initializeCanvas()}>
-        Reinitialize Canvas
       </button>
       <pre>
         State: 
@@ -968,6 +772,11 @@ onMount(() => {
         Map Tiles: {$gameState.map?.tiles ? 'Yes (' + $gameState.map.tiles.length + ' rows)' : 'No'}
         Resources: {JSON.stringify($gameState.resources, null, 2)}
       </pre>
+      
+      <div class="debug-actions">
+        <button on:click={() => forceSaveGame()}>Force Save Game State</button>
+        <button on:click={() => forceLoadGame()}>Force Restore Game State</button>
+      </div>
     </div>
   {/if}
 </main>
@@ -989,41 +798,36 @@ onMount(() => {
     position: relative;
   }
   
-  .main-menu-container {
+  /* Scene Management */
+  .scene {
     width: 100%;
     height: 100vh;
     position: fixed;
     top: 0;
     left: 0;
-    background-color: #0f0f1e;
-    z-index: 20; /* Higher than game container to ensure it's on top */
-    display: block;
-    visibility: visible;
+    z-index: 10;
     transition: opacity 0.3s ease;
   }
   
-  .game-container {
-    width: 100%;
-    height: 100vh;
-    position: fixed;
-    top: 0;
-    left: 0;
+  .menu-scene {
+    background-color: #0f0f1e;
+    opacity: 1;
+  }
+  
+  .game-scene {
     background-color: #1a1a2e;
+    display: flex;
+    flex-direction: column;
+    opacity: 1;
+  }
+  
+  .game-content {
+    flex: 1;
     display: flex;
     flex-direction: column;
     justify-content: center;
     align-items: center;
-    z-index: 10; /* Lower than menu so menu appears on top */
-    visibility: visible;
-    transition: visibility 0.2s, opacity 0.2s;
-  }
-  
-  canvas {
-    border: 2px solid #3498db;
-    background-color: #0f0f1e;
-    max-width: 90vw;
-    max-height: 70vh;
-    box-shadow: 0 0 20px rgba(52, 152, 219, 0.5);
+    position: relative;
   }
   
   /* Game UI */
@@ -1032,33 +836,22 @@ onMount(() => {
     top: 0;
     left: 0;
     width: 100%;
-    height: 100%;
     pointer-events: none;
-    z-index: 10; /* Ensure UI is above canvas */
   }
   
-  .top-bar {
+  .game-ui .top-bar {
     display: flex;
     justify-content: space-between;
     align-items: center;
     padding: 10px 20px;
-    background-color: rgba(0, 0, 0, 0.7);
+    background-color: rgba(0, 0, 0, 0.5);
     backdrop-filter: blur(5px);
-    width: 100%;
-    box-sizing: border-box;
   }
   
   .planet-name {
     margin: 0;
     font-size: 1.2rem;
     color: #3498db;
-    font-weight: bold;
-    text-shadow: 0 0 5px rgba(0, 0, 0, 0.5);
-  }
-  
-  .ui-buttons {
-    display: flex;
-    gap: 10px;
   }
   
   .menu-button {
@@ -1069,13 +862,6 @@ onMount(() => {
     padding: 8px 16px;
     border-radius: 4px;
     cursor: pointer;
-    font-weight: bold;
-    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
-  }
-  
-  .menu-button:hover {
-    background-color: #c0392b;
-    transform: translateY(-2px);
   }
   
   /* Building toolbar */
@@ -1194,7 +980,27 @@ onMount(() => {
   .mode-button.active {
     background-color: #2ecc71;
   }
-
+  
+  canvas {
+    border: 2px solid #3498db;
+    background-color: #0f0f1e;
+    max-width: 90vw;
+    max-height: 70vh;
+    box-shadow: 0 0 20px rgba(52, 152, 219, 0.5);
+  }
+  
+  .canvas-text, .planet-info {
+    color: white;
+    font-size: 16px;
+    margin-top: 10px;
+    text-align: center;
+  }
+  
+  .planet-info {
+    color: #3498db;
+    font-weight: bold;
+  }
+  
   .debug-panel {
     position: fixed;
     bottom: 0;
@@ -1229,5 +1035,17 @@ onMount(() => {
     background-color: rgba(0, 0, 0, 0.3);
     padding: 8px;
     border-radius: 3px;
+  }
+  
+  .debug-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin-top: 10px;
+  }
+  
+  .debug-actions button {
+    background-color: #27ae60;
+    flex: 1;
   }
 </style>
