@@ -1,972 +1,268 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import MainMenu from './components/ui/MainMenu.svelte';
-  import { mapGenerator } from './lib/mapGenerator';
+  import { fade } from 'svelte/transition';
+  import BuildingControlPanel from './components/ui/BuildingControlPanel.svelte';
   import { gameState } from './stores/gameState';
   import { PlanetType } from './lib/types';
   
-  // Application state
-  let showMainMenu = true;
-  let showGame = false;
-  let gameSettings: {
-    planetType: PlanetType;
-    mapWidth: number;
-    mapHeight: number;
-    resourceRichness: number;
-  } | null = null;
-  
-  // Building interaction state
-  let selectedBuildingType: string | null = null;
-  let isPlacementMode = false;
-  let selectedBuilding: any = null;
-  let hoverPosition = { x: 0, y: 0 };
-  
-  // Debug flags
+  // Game state
+  let isPaused = false;
+  let selectedBuilding = null;
   let debugMode = true;
   
-  // Helper functions for map rendering
-  function getTileColor(terrainType: number): string {
-    // Colors for different terrain types
-    switch(terrainType) {
-      case 0: return '#0a3b5c'; // DEEP_WATER
-      case 1: return '#0e6ba8'; // SHALLOW_WATER
-      case 2: return '#e4d6a7'; // SAND
-      case 3: return '#7ab317'; // GRASS
-      case 4: return '#3e7924'; // FOREST
-      case 5: return '#6d8383'; // HILLS
-      case 6: return '#8d8778'; // MOUNTAINS
-      case 7: return '#ffffff'; // SNOW
-      case 8: return '#7c3626'; // VOLCANIC
-      case 9: return '#e25822'; // LAVA
-      case 10: return '#3c2c3e'; // CAVE
-      case 11: return '#a2d6a2'; // ALIEN_GRASS
-      case 12: return '#5eaa5e'; // ALIEN_FOREST
-      case 13: return '#bf62a6'; // ALIEN_CRYSTAL
-      case 14: return '#39848b'; // METHANE_LAKE
-      case 15: return '#c9e1ff'; // ICE
-      default: return '#555555'; // DEFAULT
-    }
-  }
+  // Game world settings
+  let mapWidth = 60;
+  let mapHeight = 40;
+  let tileSize = 24;
+  let tiles = [];
   
-  function getResourceColor(resourceType: number): string {
-    // Colors for different resource types
-    switch(resourceType) {
-      case 0: return 'transparent'; // NONE
-      case 1: return '#39848b'; // METHANE
-      case 2: return '#f5f5f5'; // OXYGEN
-      case 3: return '#43aada'; // WATER
-      case 4: return '#b77333'; // IRON
-      case 5: return '#d4a276'; // COPPER
-      case 6: return '#f0e68c'; // SILICON
-      case 7: return '#fff44f'; // SULFUR
-      case 8: return '#9bc400'; // URANIUM
-      case 9: return '#c0c0c0'; // RARE_METALS
-      case 10: return '#bf62a6'; // XENOCRYSTALS
-      default: return '#888888'; // DEFAULT
-    }
-  }
-  
-  // Handle game start from main menu
-  function handleStartGame(event: CustomEvent) {
-    console.log("handleStartGame triggered in App.svelte");
+  // Generate map
+  function generateMap() {
+    // Create an empty map
+    tiles = [];
     
-    // Get settings from the event
-    gameSettings = event.detail;
-    console.log("Game settings received:", gameSettings);
-    
-    // Generate the map based on settings
-    if (gameSettings) {
-      console.log("Generating map for", gameSettings.planetType);
-      const generatedMap = mapGenerator.generateMap({
-        planetType: gameSettings.planetType,
-        width: gameSettings.mapWidth,
-        height: gameSettings.mapHeight,
-        resourceRichness: gameSettings.resourceRichness,
-        specialFeatureCount: 3 // Reduce for safety
-      });
-      
-      console.log("Map generated successfully, updating game state");
-      
-      // Update the game state with the new map
-      gameState.update(state => {
-        console.log("Updating game state with map:", generatedMap.name);
-        return {
-          ...state,
-          map: generatedMap,
-          planetType: gameSettings.planetType,
-          tick: 0,
-          buildings: [],
-          lastUpdated: Date.now()
-        };
-      });
-      
-      console.log("Game state updated, transitioning to game view");
-      
-      // Initialize the game container first
-      const gameContainer = document.getElementById('game-container');
-      if (gameContainer) {
-        // Make sure it exists and is visible
-        gameContainer.style.visibility = 'visible';
-        gameContainer.style.display = 'flex';
-      }
-      
-      // First, hide the menu
-      showMainMenu = false;
-      
-      // Then immediately show the game view
-      showGame = true;
-      
-      console.log("Game view shown, waiting for DOM update");
-      
-      // Short delay to ensure DOM is updated
-      setTimeout(() => {
-        // Verify game container exists and is visible
-        const gameContainer = document.getElementById('game-container');
-        console.log("Game container found:", !!gameContainer);
+    // Generate tiles with interesting pattern
+    for (let y = 0; y < mapHeight; y++) {
+      let row = [];
+      for (let x = 0; x < mapWidth; x++) {
+        // Create varied terrain
+        let tileType;
         
-        if (gameContainer) {
-          // Ensure container is fully visible
-          gameContainer.style.visibility = 'visible';
-          gameContainer.style.display = 'flex';
-          
-          // Check for canvas
-          const canvasElement = document.getElementById('basic-canvas');
-          console.log("Canvas element found:", !!canvasElement);
-          
-          if (canvasElement) {
-            // Initialize canvas now
-            console.log("Initializing canvas now");
-            initializeCanvas();
-          } else {
-            console.error("Canvas not found but will be created in initializeCanvas");
-            initializeCanvas();
-          }
-        } else {
-          console.error("Game container not found after transition!");
-        }
-      }, 50);
-    }
-  }
-  
-  // Handle load game
-  function handleLoadGame() {
-    console.log("Load game requested");
-    
-    // Example of loading a saved game - would come from storage in reality
-    const savedGame = {
-      planetType: PlanetType.EARTH_LIKE,
-      buildings: [],
-      resources: {},
-      tick: 0
-    };
-    
-    // Update game state with saved game
-    gameState.update(state => ({
-      ...state,
-      ...savedGame,
-      lastUpdated: Date.now()
-    }));
-    
-    // First, hide the menu
-    showMainMenu = false;
-    
-    // Small delay after hiding menu
-    setTimeout(() => {
-      // Then show the game view
-      showGame = true;
-      
-      console.log("Game view shown after load, waiting for DOM update");
-      
-      // Wait a bit longer to initialize canvas
-      setTimeout(() => {
-        // Verify game container exists and is visible
-        const gameContainer = document.getElementById('game-container');
-        console.log("Game container found after load:", !!gameContainer);
-        
-        if (gameContainer) {
-          // Ensure container is fully visible
-          gameContainer.style.visibility = 'visible';
-          gameContainer.style.display = 'flex';
-          
-          // Initialize canvas now
-          console.log("Initializing canvas after load game");
-          initializeCanvas();
-        } else {
-          console.error("Game container not found after load!");
-        }
-      }, 200);
-    }, 100);
-  }
-  
-  // Scene transition functions
-  function handleBackToMenu() {
-    console.log("Transitioning back to main menu");
-    
-    // Prepare the menu first
-    showMainMenu = true;
-    
-    // Short delay to get the menu ready
-    setTimeout(() => {
-      // Then hide the game view
-      showGame = false;
-      
-      // Log completion
-      console.log("Returned to main menu - game hidden, menu visible");
-      
-      // Force UI update
-      const gameContainer = document.getElementById('game-container');
-      if (gameContainer) {
-        gameContainer.style.display = 'none';
-        gameContainer.style.visibility = 'hidden';
-      }
-      
-      // Focus on menu
-      const menuContainer = document.querySelector('.main-menu-container');
-      if (menuContainer) {
-        (menuContainer as HTMLElement).style.visibility = 'visible';
-        (menuContainer as HTMLElement).style.display = 'block';
-      }
-    }, 50);
-  }
-  
-  // Handle toggling buttons in debug panel
-  function handleToggleMenu() {
-    showMainMenu = !showMainMenu;
-    console.log("Toggled menu visibility:", showMainMenu);
-  }
-  
-  function handleToggleGame() {
-    console.log("Toggling game visibility from", showGame, "to", !showGame);
-    
-    // If switching to game view
-    if (!showGame) {
-      // First show game
-      showGame = true;
-      
-      // Short delay to ensure DOM is updated
-      setTimeout(() => {
-        // Verify game container exists and is visible
-        const gameContainer = document.getElementById('game-container');
-        console.log("Game container found:", !!gameContainer);
-        
-        if (gameContainer) {
-          // Make sure container is visible
-          gameContainer.style.visibility = 'visible';
-          gameContainer.style.display = 'flex';
-          
-          // Initialize canvas after elements are in DOM
-          console.log("Initializing canvas after toggle");
-          initializeCanvas();
-        } else {
-          console.error("Game container not found!");
-        }
-      }, 200); // Increased delay to ensure DOM updates
-    } else {
-      // Simply hide game if hiding
-      showGame = false;
-    }
-  }
-  
-  // Building interaction functions
-  function selectBuildingType(type: string) {
-    selectedBuildingType = type;
-    console.log(`Selected building type: ${type}`);
-    
-    // Automatically enter placement mode when selecting a building type
-    if (!isPlacementMode) {
-      setPlacementMode(true);
-    }
-  }
-  
-  function setPlacementMode(enabled: boolean) {
-    isPlacementMode = enabled;
-    console.log(`Placement mode: ${enabled ? 'enabled' : 'disabled'}`);
-    
-    // Clear selection when entering placement mode
-    if (enabled) {
-      selectedBuilding = null;
-    }
-    
-    // Re-initialize canvas to update cursor and preview
-    initializeCanvas();
-  }
-  
-  function handleCanvasClick(event: MouseEvent) {
-    const canvas = document.getElementById('basic-canvas') as HTMLCanvasElement;
-    if (!canvas) return;
-    
-    // Get click position relative to canvas
-    const rect = canvas.getBoundingClientRect();
-    const clickX = event.clientX - rect.left;
-    const clickY = event.clientY - rect.top;
-    
-    // Convert to world coordinates (accounting for any zoom/pan later)
-    const worldX = clickX;
-    const worldY = clickY;
-    
-    console.log(`Canvas click at (${clickX}, ${clickY})`);
-    
-    if (isPlacementMode && selectedBuildingType) {
-      placeBuilding(worldX, worldY);
-    } else {
-      selectBuildingAtPosition(worldX, worldY);
-    }
-  }
-  
-  function handleCanvasHover(event: MouseEvent) {
-    const canvas = document.getElementById('basic-canvas') as HTMLCanvasElement;
-    if (!canvas) return;
-    
-    // Get mouse position relative to canvas
-    const rect = canvas.getBoundingClientRect();
-    const x = Math.round(event.clientX - rect.left);
-    const y = Math.round(event.clientY - rect.top);
-    
-    // Update hover position
-    hoverPosition = { x, y };
-    
-    // No need to redraw here as it's handled by the game loop
-    // Just update hover position
-    if (isPlacementMode && selectedBuildingType) {
-      // The game loop will handle the actual rendering
-      console.log(`Hovering at ${x},${y}`);
-    }
-  }
-  
-  function placeBuilding(x: number, y: number) {
-    if (!selectedBuildingType) return;
-    
-    // Create a new building object
-    const building = {
-      id: crypto.randomUUID(),
-      type: selectedBuildingType,
-      position: { x, y },
-      connections: [],
-      efficiency: 1.0,
-      isActive: true
-    };
-    
-    // Add to game state
-    gameState.update(state => {
-      return {
-        ...state,
-        buildings: [...state.buildings, building]
-      };
-    });
-    
-    console.log(`Placed ${selectedBuildingType} at (${x}, ${y})`);
-    
-    // Redraw canvas to show new building
-    initializeCanvas();
-  }
-  
-  function selectBuildingAtPosition(x: number, y: number) {
-    // Find if there's a building at the clicked position
-    selectedBuilding = null;
-    
-    const buildings = $gameState.buildings || [];
-    for (const building of buildings) {
-      // Simple distance check (can be improved with proper hitbox)
-      const distance = Math.sqrt(
-        Math.pow(building.position.x - x, 2) + 
-        Math.pow(building.position.y - y, 2)
-      );
-      
-      // If within 20 pixels, select this building
-      if (distance < 20) {
-        selectedBuilding = building;
-        console.log(`Selected building: ${building.type} (ID: ${building.id})`);
-        break;
-      }
-    }
-    
-    // If nothing was selected, log it
-    if (!selectedBuilding) {
-      console.log("No building selected");
-    }
-    
-    // Redraw to show selection
-    initializeCanvas();
-  }
-  
-  // Initialize and draw on the canvas
-  function initializeCanvas() {
-    try {
-      console.log("Initializing canvas...");
-      
-      // Make sure the game-container is visible first
-      const gameContainer = document.getElementById('game-container');
-      console.log("Game container exists:", !!gameContainer);
-      if (gameContainer) {
-        console.log("Game container visibility:", window.getComputedStyle(gameContainer).visibility);
-        console.log("Game container display:", window.getComputedStyle(gameContainer).display);
-        // Ensure it's visible
-        gameContainer.style.visibility = 'visible';
-        gameContainer.style.display = 'flex';
-      }
-      
-      // Log all available canvas elements in the document
-      const allCanvases = document.getElementsByTagName('canvas');
-      console.log(`Found ${allCanvases.length} canvas elements in document`);
-      
-      // Wait a tiny bit to ensure DOM is ready
-      setTimeout(() => {
-        // Try to find the canvas multiple ways
-        let canvas = document.getElementById('basic-canvas') as HTMLCanvasElement;
-        
-        if (!canvas) {
-          console.log("Canvas not found by ID, trying to find by tag name");
-          const canvases = document.getElementsByTagName('canvas');
-          if (canvases.length > 0) {
-            canvas = canvases[0] as HTMLCanvasElement;
-            console.log("Found canvas by tag name");
-          }
-        }
-        
-        if (!canvas) {
-          console.error("Canvas element not found by any method");
-          
-          // Create canvas element if needed
-          console.log("Trying to create canvas dynamically");
-          const gameContainer = document.getElementById('game-container');
-          if (gameContainer) {
-            // Create canvas element
-            canvas = document.createElement('canvas');
-            canvas.id = 'basic-canvas';
-            canvas.width = 1000;
-            canvas.height = 800;
-            canvas.addEventListener('click', handleCanvasClick);
-            canvas.addEventListener('mousemove', handleCanvasHover);
-            
-            // Insert as first child of game container
-            gameContainer.insertBefore(canvas, gameContainer.firstChild);
-            console.log("Canvas created dynamically");
-          } else {
-            console.log("DOM content:", document.body.innerHTML);
-            return;
-          }
-        }
-        
-        drawCanvas(canvas);
-      }, 100); // Increased delay to ensure DOM updates have processed
-    } catch (err) {
-      console.error("Error initializing canvas:", err);
-    }
-  }
-  
-  // Separate drawing function to make the code cleaner
-  function drawCanvas(canvas: HTMLCanvasElement) {
-    try {
-      console.log("Canvas found, dimensions:", canvas.width, "x", canvas.height);
-      
-      const ctx = canvas.getContext('2d');
-      if (!ctx) {
-        console.error("Could not get canvas context");
-        return;
-      }
-      
-      // Clear the canvas
-      ctx.fillStyle = '#0a0a18';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      
-      // Draw a quick test pattern to see if canvas is working at all
-      ctx.fillStyle = '#3498db';  
-      ctx.fillRect(10, 10, 50, 50);
-      ctx.fillStyle = '#e74c3c';
-      ctx.fillRect(70, 10, 50, 50);
-      ctx.fillStyle = '#2ecc71';
-      ctx.fillRect(130, 10, 50, 50);
-      
-      // Draw map if available
-      if ($gameState.map && $gameState.map.tiles) {
-        console.log("Drawing map with dimensions:", $gameState.map.width, "x", $gameState.map.height);
-        console.log("Map object keys:", Object.keys($gameState.map));
-        console.log("Map tiles array length:", $gameState.map.tiles.length);
-        console.log("Map name:", $gameState.map.name);
-        
-        // Inspect tile structure
-        console.log("Map tiles array type:", Array.isArray($gameState.map.tiles) ? "Array" : typeof $gameState.map.tiles);
-        if ($gameState.map.tiles.length > 0) {
-          console.log("First row type:", Array.isArray($gameState.map.tiles[0]) ? "Array" : typeof $gameState.map.tiles[0]);
-          console.log("First row length:", $gameState.map.tiles[0]?.length);
-        }
-        
-        // If width/height are missing, try to get them from the tiles array
-        const mapWidth = $gameState.map.width || $gameState.map.tiles[0].length;
-        const mapHeight = $gameState.map.height || $gameState.map.tiles.length;
-        
-        console.log("Using dimensions:", mapWidth, "x", mapHeight);
-        
-        // Calculate tile size to fit the map on screen
-        const tileSize = Math.min(
-          Math.floor(canvas.width / mapWidth),
-          Math.floor(canvas.height / mapHeight)
+        // Create some large water bodies
+        const distanceFromCenter = Math.sqrt(
+          Math.pow(x - mapWidth/2, 2) + 
+          Math.pow(y - mapHeight/2, 2)
         );
         
-        console.log("Calculated tile size:", tileSize);
-        
-        // Maximum dimensions to render
-        const maxTilesX = Math.min(mapWidth, Math.floor(canvas.width / tileSize));
-        const maxTilesY = Math.min(mapHeight, Math.floor(canvas.height / tileSize));
-        
-        // Draw each map tile
-        try {
-          // Log the first tile for debugging
-          console.log("First tile sample:", $gameState.map.tiles[0][0]);
-          
-          for (let y = 0; y < maxTilesY; y++) {
-            for (let x = 0; x < maxTilesX; x++) {
-              if (!$gameState.map.tiles[y] || !$gameState.map.tiles[y][x]) {
-                console.error(`Missing tile at ${x},${y}`);
-                continue;
-              }
-              
-              const tile = $gameState.map.tiles[y][x];
-              
-              // Get color based on terrain type
-              const tileColor = getTileColor(tile.terrain);
-              
-              // Draw tile
-              ctx.fillStyle = tileColor;
-              ctx.fillRect(x * tileSize, y * tileSize, tileSize, tileSize);
-              
-              // Draw resource indicator if present
-              if (tile.resource > 0) {
-                ctx.fillStyle = getResourceColor(tile.resource);
-                ctx.fillRect(
-                  x * tileSize + tileSize/4, 
-                  y * tileSize + tileSize/4, 
-                  tileSize/2, 
-                  tileSize/2
-                );
-              }
-            }
-          }
-        } catch (err) {
-          console.error("Error drawing map tiles:", err);
+        if (distanceFromCenter < 10) {
+          // Deep water in center
+          tileType = 1;
+        } else if (distanceFromCenter < 15) {
+          // Shallow water surrounding
+          tileType = 2;
+        } else if (x < 10 || x > mapWidth - 10 || y < 10 || y > mapHeight - 10) {
+          // Mountains around edges
+          tileType = 3;
+        } else if (Math.random() < 0.1) {
+          // Random forest patches
+          tileType = 4;
+        } else {
+          // Grassland for most of the map
+          tileType = 0;
         }
         
-        // Draw grid lines
-        ctx.strokeStyle = 'rgba(52, 152, 219, 0.3)';
-        ctx.lineWidth = 0.5;
+        // Add some resources
+        let resource = Math.random() < 0.05 ? Math.floor(Math.random() * 3) + 1 : 0;
         
-        for (let x = 0; x <= maxTilesX; x++) {
-          ctx.beginPath();
-          ctx.moveTo(x * tileSize, 0);
-          ctx.lineTo(x * tileSize, maxTilesY * tileSize);
-          ctx.stroke();
-        }
-        
-        for (let y = 0; y <= maxTilesY; y++) {
-          ctx.beginPath();
-          ctx.moveTo(0, y * tileSize);
-          ctx.lineTo(maxTilesX * tileSize, y * tileSize);
-          ctx.stroke();
-        }
-        
-        // Draw buildings
-        if ($gameState.buildings && $gameState.buildings.length > 0) {
-          for (const building of $gameState.buildings) {
-            drawBuilding(ctx, building, selectedBuilding === building);
-          }
-        }
-        
-        // Draw building placement preview
-        if (isPlacementMode && selectedBuildingType) {
-          // Draw a preview of the building at hover position
-          const previewBuilding = {
-            type: selectedBuildingType,
-            position: hoverPosition,
-            isPreview: true
-          };
-          
-          // Show placement preview with semi-transparency
-          ctx.globalAlpha = 0.6;
-          drawBuilding(ctx, previewBuilding, false);
-          ctx.globalAlpha = 1.0;
-        }
-        
-        // Draw planet information
-        ctx.fillStyle = 'white';
-        ctx.font = '18px Arial';
-        ctx.fillText(`Planet: ${$gameState.map.name}`, 10, maxTilesY * tileSize + 25);
-        ctx.fillText(`Type: ${$gameState.planetType}`, 10, maxTilesY * tileSize + 45);
-        ctx.fillText(`Size: ${mapWidth}x${mapHeight}`, 10, maxTilesY * tileSize + 65);
-        
-        // Draw building info if selected
-        if (selectedBuilding) {
-          const infoX = 10;
-          const infoY = maxTilesY * tileSize + 100;
-          
-          ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-          ctx.fillRect(infoX - 5, infoY - 20, 250, 100);
-          
-          ctx.fillStyle = '#3498db';
-          ctx.font = '16px Arial';
-          ctx.fillText(`Selected: ${selectedBuilding.type}`, infoX, infoY);
-          ctx.fillStyle = 'white';
-          ctx.font = '14px Arial';
-          ctx.fillText(`ID: ${selectedBuilding.id}`, infoX, infoY + 20);
-          ctx.fillText(`Position: (${Math.round(selectedBuilding.position.x)}, ${Math.round(selectedBuilding.position.y)})`, infoX, infoY + 40);
-          ctx.fillText(`Status: ${selectedBuilding.isActive ? 'Active' : 'Inactive'}`, infoX, infoY + 60);
-        }
-        
-        // Draw mode indicator
-        const modeText = isPlacementMode ? `Placement Mode: ${selectedBuildingType || 'None'}` : 'Selection Mode';
-        ctx.fillStyle = 'white';
-        ctx.font = '16px Arial';
-        ctx.fillText(modeText, canvas.width - 250, 30);
-        
-      } else {
-        // Draw a test pattern if no map is available
-        console.log("No map data available, drawing test pattern");
-        
-        // Draw a grid
-        ctx.strokeStyle = '#3498db';
-        ctx.lineWidth = 1;
-        
-        const gridSize = 32;
-        for (let x = 0; x < canvas.width; x += gridSize) {
-          ctx.beginPath();
-          ctx.moveTo(x, 0);
-          ctx.lineTo(x, canvas.height);
-          ctx.stroke();
-        }
-        
-        for (let y = 0; y < canvas.height; y += gridSize) {
-          ctx.beginPath();
-          ctx.moveTo(0, y);
-          ctx.lineTo(canvas.width, y);
-          ctx.stroke();
-        }
-        
-        // Draw text
-        ctx.fillStyle = 'white';
-        ctx.font = '24px Arial';
-        ctx.fillText('Debug Canvas View', 50, 50);
-        ctx.fillText('No map data available', 50, 100);
-        
-        if (gameSettings) {
-          ctx.fillText(`Attempted Planet Type: ${gameSettings.planetType}`, 50, 150);
-        }
+        row.push({
+          type: tileType,
+          resource: resource,
+          building: null
+        });
       }
+      tiles.push(row);
+    }
+    
+    // Update game state
+    gameState.update(state => ({
+      ...state,
+      map: { 
+        name: "Beautiful Planet", 
+        width: mapWidth, 
+        height: mapHeight,
+        tiles: tiles
+      },
+      resources: {
+        energy: 1000,
+        water: 500,
+        oxygen: 200,
+        methane: 300
+      }
+    }));
+    
+    console.log("Beautiful map generated!");
+  }
+  
+  // Toggle pause
+  function togglePause() {
+    isPaused = !isPaused;
+    console.log("Game " + (isPaused ? "paused" : "resumed"));
+  }
+  
+  // Place building
+  function placeBuilding(type, x, y) {
+    // Check if cell is empty
+    if (x >= 0 && x < mapWidth && y >= 0 && y < mapHeight) {
+      if (tiles[y][x].building === null) {
+        // Place building
+        tiles[y][x].building = type;
+        
+        // Update resources
+        gameState.update(state => {
+          const resources = {...state.resources};
+          resources.energy -= 50;
+          return {...state, resources};
+        });
+        
+        console.log(`Building ${type} placed at (${x},${y})`);
+      }
+    }
+  }
+  
+  // Get tile color based on type
+  function getTileColor(tile) {
+    // Base terrain colors
+    const colors = {
+      0: '#27ae60', // Grass - green
+      1: '#2980b9', // Deep water - blue
+      2: '#3498db', // Shallow water - light blue
+      3: '#7f8c8d', // Mountains - gray
+      4: '#2ecc71'  // Forest - dark green
+    };
+    
+    // Resource indicator
+    if (tile.resource > 0) {
+      const resourceColors = [
+        '#f1c40f', // Gold - energy
+        '#3498db', // Blue - water
+        '#e74c3c'  // Red - oxygen
+      ];
       
-      console.log("Canvas initialized and drawn");
-    } catch (err) {
-      console.error("Error initializing canvas:", err);
-    }
-  }
-  
-  // Helper function to draw a building
-  function drawBuilding(ctx: CanvasRenderingContext2D, building: any, isSelected: boolean) {
-    const size = 30;
-    const x = building.position.x;
-    const y = building.position.y;
-    
-    // Get color based on building type
-    let color = '#3498db'; // default blue
-    switch (building.type) {
-      case 'extractor':
-        color = '#3498db'; // blue
-        break;
-      case 'storage':
-        color = '#f1c40f'; // yellow
-        break;
-      case 'powerPlant':
-        color = '#2ecc71'; // green
-        break;
-      case 'reactor':
-        color = '#e74c3c'; // red
-        break;
-      case 'pipe':
-        color = '#95a5a6'; // gray
-        break;
+      // Return resource color
+      return resourceColors[tile.resource - 1];
     }
     
-    // Draw different shapes based on building type
-    ctx.fillStyle = color;
-    
-    switch (building.type) {
-      case 'extractor':
-        // Circle
-        ctx.beginPath();
-        ctx.arc(x, y, size/2, 0, Math.PI * 2);
-        ctx.fill();
-        break;
-      case 'storage':
-        // Square
-        ctx.fillRect(x - size/2, y - size/2, size, size);
-        break;
-      case 'powerPlant':
-        // Triangle
-        ctx.beginPath();
-        ctx.moveTo(x, y - size/2);
-        ctx.lineTo(x + size/2, y + size/2);
-        ctx.lineTo(x - size/2, y + size/2);
-        ctx.closePath();
-        ctx.fill();
-        break;
-      case 'reactor':
-        // Diamond
-        ctx.beginPath();
-        ctx.moveTo(x, y - size/2);
-        ctx.lineTo(x + size/2, y);
-        ctx.lineTo(x, y + size/2);
-        ctx.lineTo(x - size/2, y);
-        ctx.closePath();
-        ctx.fill();
-        break;
-      case 'pipe':
-        // Line (would connect to other buildings)
-        ctx.lineWidth = 6;
-        ctx.strokeStyle = color;
-        ctx.beginPath();
-        ctx.moveTo(x - size/2, y);
-        ctx.lineTo(x + size/2, y);
-        ctx.stroke();
-        break;
-      default:
-        // Default square
-        ctx.fillRect(x - size/2, y - size/2, size, size);
-    }
-    
-    // Draw selection outline if selected
-    if (isSelected) {
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.arc(x, y, size/2 + 5, 0, Math.PI * 2);
-      ctx.stroke();
-    }
-    
-    // Draw inactive indicator if building is not active
-    if (building.isActive === false) {
-      ctx.strokeStyle = '#e74c3c';
-      ctx.lineWidth = 2;
+    // Building colors
+    if (tile.building !== null) {
+      const buildingColors = {
+        'extractor': '#e67e22',
+        'storage': '#f39c12',
+        'reactor': '#c0392b',
+        'powerPlant': '#d35400',
+        'pipe': '#7f8c8d'
+      };
       
-      // Draw X over building
-      ctx.beginPath();
-      ctx.moveTo(x - size/2, y - size/2);
-      ctx.lineTo(x + size/2, y + size/2);
-      ctx.stroke();
-      
-      ctx.beginPath();
-      ctx.moveTo(x + size/2, y - size/2);
-      ctx.lineTo(x - size/2, y + size/2);
-      ctx.stroke();
+      return buildingColors[tile.building] || '#9b59b6';
     }
+    
+    // Otherwise return terrain color
+    return colors[tile.type] || '#2c3e50';
   }
   
-  // Add a simple game loop architecture to handle physics and rendering
-let lastFrameTime = 0;
-const PHYSICS_RATE = 1000 / 60; // 60 FPS for physics
-let physicsAccumulator = 0;
-
-function gameLoop(timestamp) {
-  if (!lastFrameTime) {
-    lastFrameTime = timestamp;
-  }
-  
-  // Calculate delta time
-  const deltaTime = timestamp - lastFrameTime;
-  lastFrameTime = timestamp;
-  
-  // Update physics at fixed rate
-  physicsAccumulator += deltaTime;
-  while (physicsAccumulator >= PHYSICS_RATE) {
-    updatePhysics(PHYSICS_RATE);
-    physicsAccumulator -= PHYSICS_RATE;
-  }
-  
-  // Always render at display refresh rate
-  if (showGame) {
-    // Only redraw when game is visible
-    const canvas = document.getElementById('basic-canvas');
-    if (canvas) {
-      drawCanvas(canvas);
-    }
-  }
-  
-  // Continue the loop
-  requestAnimationFrame(gameLoop);
-}
-
-function updatePhysics(deltaTime) {
-  // Update game physics here - will be expanded later
-  // For now, we're just incrementing the game tick
-  gameState.update(state => {
-    if (state.tick !== undefined) {
-      return { ...state, tick: state.tick + 1 };
-    }
-    return state;
+  // Initialize on mount
+  onMount(() => {
+    console.log("Game initialized");
+    
+    // Generate map
+    generateMap();
+    
+    // Add keyboard controls
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        togglePause();
+      }
+    });
+    
+    // Return cleanup function
+    return () => {
+      document.removeEventListener('keydown', togglePause);
+    };
   });
-  
-  // Here we would update:
-  // - Building processing rates
-  // - Resource flows
-  // - Environmental changes
-  // - etc.
-}
-
-onMount(() => {
-  console.log("App component mounted");
-  
-  // Create the canvas on initial mount
-  setTimeout(() => {
-    // Try to initialize the canvas if it exists
-    const canvas = document.getElementById('basic-canvas');
-    if (canvas) {
-      console.log("Canvas found on mount, initializing");
-      initializeCanvas();
-    } else {
-      console.log("No canvas found on initial mount");
-    }
-    
-    // Start the game loop
-    requestAnimationFrame(gameLoop);
-  }, 100);
-});
 </script>
 
-<main class="app">
-  <!-- Menu container always exists in DOM, but is hidden when not active -->
-  <div class="main-menu-container" style="display: {showMainMenu ? 'block' : 'none'}; opacity: {showMainMenu ? '1' : '0'};">
-    <MainMenu 
-      on:startGame={handleStartGame}
-      on:loadGame={handleLoadGame}
-    />
+<main class="game-container">
+  <!-- Header -->
+  <header class="game-header">
+    <h1>FrankForge</h1>
+    <div class="resources">
+      <div class="resource">Energy: {$gameState.resources?.energy || 0}</div>
+      <div class="resource">Water: {$gameState.resources?.water || 0}</div>
+      <div class="resource">Oxygen: {$gameState.resources?.oxygen || 0}</div>
+      <div class="resource">Methane: {$gameState.resources?.methane || 0}</div>
+    </div>
+    <button class="pause-button" on:click={togglePause}>
+      {isPaused ? 'Resume Game' : 'Pause Game'}
+    </button>
+  </header>
+  
+  <!-- Game Content -->
+  <div class="game-content">
+    <!-- Sidebar with building controls -->
+    <aside class="sidebar">
+      <BuildingControlPanel />
+    </aside>
+    
+    <!-- Main game area with map -->
+    <div class="game-area">
+      <div class="game-map">
+        {#each tiles as row, y}
+          <div class="map-row">
+            {#each row as tile, x}
+              <div
+                class="map-tile"
+                style="background-color: {getTileColor(tile)}; width: {tileSize}px; height: {tileSize}px;"
+                on:click={() => placeBuilding('extractor', x, y)}
+              >
+                {#if tile.resource > 0}
+                  <div class="resource-indicator"></div>
+                {/if}
+              </div>
+            {/each}
+          </div>
+        {/each}
+      </div>
+    </div>
   </div>
   
-  <!-- Game view always exists in DOM, but is hidden when not active -->
-  <div class="game-container" id="game-container" style="display: {showGame ? 'flex' : 'none'}; visibility: {showGame ? 'visible' : 'hidden'}; opacity: {showGame ? '1' : '0'};">
-    <!-- Canvas goes first -->
-    <canvas 
-      id="basic-canvas"
-      width="1000" 
-      height="800"
-      on:click={handleCanvasClick}
-      on:mousemove={handleCanvasHover}
-    ></canvas>
-      
-    <!-- Game UI Overlay -->
-    <div class="game-ui">
-      <div class="top-bar">
-        <h2 class="planet-name">
-          {$gameState?.map?.name || 'Unknown Planet'} 
-          ({gameSettings?.planetType || 'unknown'})
-        </h2>
-        <div class="ui-buttons">
-          <button class="menu-button" on:click={handleBackToMenu}>Back to Menu</button>
-        </div>
-      </div>
+  <!-- Floating Action Button for pause -->
+  <button class="floating-button" on:click={togglePause}>
+    {isPaused ? '▶️' : '⏸️'}
+  </button>
+  
+  <!-- Controls Info -->
+  <div class="controls-info">
+    Click on tiles to place extractors | ESC: Toggle Pause Menu
+  </div>
+  
+  <!-- Pause Menu -->
+  {#if isPaused}
+    <div class="pause-overlay" transition:fade={{duration: 300}}>
+      <div class="pause-menu">
+        <h2>Game Paused</h2>
         
-        <!-- Building Selection Toolbar -->
-        <div class="building-toolbar">
-          <div class="building-category">Basic</div>
-          <div class="building-buttons">
-            <button 
-              class="building-button" 
-              class:selected={selectedBuildingType === 'extractor'}
-              on:click={() => selectBuildingType('extractor')}
-              title="Extractor - Mines resources"
-            >
-              <div class="building-icon extractor"></div>
-              <span>Extractor</span>
-            </button>
-            
-            <button 
-              class="building-button" 
-              class:selected={selectedBuildingType === 'storage'}
-              on:click={() => selectBuildingType('storage')}
-              title="Storage - Stores resources"
-            >
-              <div class="building-icon storage"></div>
-              <span>Storage</span>
-            </button>
-            
-            <button 
-              class="building-button" 
-              class:selected={selectedBuildingType === 'powerPlant'}
-              on:click={() => selectBuildingType('powerPlant')}
-              title="Power Plant - Generates energy"
-            >
-              <div class="building-icon power-plant"></div>
-              <span>Power</span>
-            </button>
-          </div>
-          
-          <div class="building-category">Production</div>
-          <div class="building-buttons">
-            <button 
-              class="building-button" 
-              class:selected={selectedBuildingType === 'reactor'}
-              on:click={() => selectBuildingType('reactor')}
-              title="Reactor - Processes resources"
-            >
-              <div class="building-icon reactor"></div>
-              <span>Reactor</span>
-            </button>
-            
-            <button 
-              class="building-button" 
-              class:selected={selectedBuildingType === 'pipe'}
-              on:click={() => selectBuildingType('pipe')}
-              title="Pipe - Transfers resources"
-            >
-              <div class="building-icon pipe"></div>
-              <span>Pipe</span>
-            </button>
-          </div>
-          
-          <!-- Mode Controls -->
-          <div class="mode-controls">
-            <button 
-              class="mode-button" 
-              class:active={!isPlacementMode}
-              on:click={() => setPlacementMode(false)}
-              title="Select buildings"
-            >
-              <span>Select</span>
-            </button>
-            
-            <button 
-              class="mode-button" 
-              class:active={isPlacementMode}
-              on:click={() => setPlacementMode(true)}
-              title="Place buildings"
-            >
-              <span>Place</span>
-            </button>
-          </div>
+        <div class="menu-buttons">
+          <button class="resume-button" on:click={togglePause}>Resume Game</button>
+          <button class="new-game-button" on:click={generateMap}>New Game</button>
+          <button class="settings-button">Game Settings</button>
+          <button class="save-button">Save Game</button>
+        </div>
+        
+        <div class="menu-footer">
+          <p>Press ESC to resume game</p>
         </div>
       </div>
     </div>
+  {/if}
   
+  <!-- Debug Panel -->
   {#if debugMode}
     <div class="debug-panel">
       <h3>Debug Panel</h3>
-      <button on:click={handleToggleMenu}>
-        Toggle Menu
-      </button>
-      <button on:click={handleToggleGame}>
-        Toggle Game
-      </button>
-      <button on:click={() => initializeCanvas()}>
-        Reinitialize Canvas
-      </button>
+      <button on:click={togglePause}>Toggle Pause</button>
+      <button on:click={generateMap}>Regen Map</button>
+      <div>
+        <label>
+          Tile Size: 
+          <input type="range" min="10" max="40" bind:value={tileSize}>
+          {tileSize}px
+        </label>
+      </div>
       <pre>
-        State: 
-        showMainMenu: {showMainMenu}
-        showGame: {showGame}
-        settings: {JSON.stringify(gameSettings, null, 2)}
-        
-        Game State:
-        Map Name: {$gameState.map?.name || 'Not generated yet'}
-        Planet Type: {$gameState.planetType || 'None'}
-        Buildings: {$gameState.buildings?.length || 0}
-        Map Available: {$gameState.map ? 'Yes' : 'No'}
-        Map Tiles: {$gameState.map?.tiles ? 'Yes (' + $gameState.map.tiles.length + ' rows)' : 'No'}
-        Resources: {JSON.stringify($gameState.resources, null, 2)}
+Game State:
+Paused: {isPaused}
+Map Size: {mapWidth}x{mapHeight}
+Map Name: {$gameState.map?.name || 'None'}
+Resources: {JSON.stringify($gameState.resources, null, 2)}
       </pre>
     </div>
   {/if}
@@ -976,258 +272,301 @@ onMount(() => {
   :global(body) {
     margin: 0;
     padding: 0;
-    font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-    background-color: #0f0f1e;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background-color: #0f1924;
     color: white;
     overflow: hidden;
   }
   
-  .app {
-    width: 100%;
-    height: 100vh;
-    overflow: hidden;
-    position: relative;
-  }
-  
-  .main-menu-container {
-    width: 100%;
-    height: 100vh;
-    position: fixed;
-    top: 0;
-    left: 0;
-    background-color: #0f0f1e;
-    z-index: 20; /* Higher than game container to ensure it's on top */
-    display: block;
-    visibility: visible;
-    transition: opacity 0.3s ease;
-  }
-  
   .game-container {
-    width: 100%;
-    height: 100vh;
-    position: fixed;
-    top: 0;
-    left: 0;
-    background-color: #1a1a2e;
     display: flex;
     flex-direction: column;
-    justify-content: center;
-    align-items: center;
-    z-index: 10; /* Lower than menu so menu appears on top */
-    visibility: visible;
-    transition: visibility 0.2s, opacity 0.2s;
+    height: 100vh;
+    width: 100vw;
+    overflow: hidden;
   }
   
-  canvas {
-    border: 2px solid #3498db;
-    background-color: #0f0f1e;
-    max-width: 90vw;
-    max-height: 70vh;
-    box-shadow: 0 0 20px rgba(52, 152, 219, 0.5);
-  }
-  
-  /* Game UI */
-  .game-ui {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    pointer-events: none;
-    z-index: 10; /* Ensure UI is above canvas */
-  }
-  
-  .top-bar {
+  /* Header Styles */
+  .game-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    background: linear-gradient(to right, #1a2a3a, #2c3e50);
     padding: 10px 20px;
-    background-color: rgba(0, 0, 0, 0.7);
-    backdrop-filter: blur(5px);
-    width: 100%;
-    box-sizing: border-box;
+    height: 60px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+    z-index: 100;
   }
   
-  .planet-name {
+  .game-header h1 {
     margin: 0;
-    font-size: 1.2rem;
-    color: #3498db;
-    font-weight: bold;
-    text-shadow: 0 0 5px rgba(0, 0, 0, 0.5);
+    font-size: 24px;
+    background: linear-gradient(to right, #3498db, #2ecc71);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
   }
   
-  .ui-buttons {
+  .resources {
     display: flex;
-    gap: 10px;
+    gap: 15px;
   }
   
-  .menu-button {
-    pointer-events: auto;
+  .resource {
+    background-color: rgba(0, 0, 0, 0.3);
+    padding: 8px 12px;
+    border-radius: 20px;
+    font-size: 14px;
+    box-shadow: inset 0 0 5px rgba(0, 0, 0, 0.5);
+  }
+  
+  .pause-button {
     background-color: #e74c3c;
     color: white;
     border: none;
     padding: 8px 16px;
-    border-radius: 4px;
+    border-radius: 20px;
     cursor: pointer;
     font-weight: bold;
+    transition: all 0.2s ease;
     box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
   }
   
-  .menu-button:hover {
+  .pause-button:hover {
     background-color: #c0392b;
     transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.4);
   }
   
-  /* Building toolbar */
-  .building-toolbar {
-    position: absolute;
-    left: 10px;
-    top: 60px;
-    width: 200px;
-    background-color: rgba(0, 0, 0, 0.7);
-    border-radius: 8px;
-    padding: 10px;
-    color: white;
-    backdrop-filter: blur(5px);
-    pointer-events: auto;
-  }
-  
-  .building-category {
-    font-weight: bold;
-    color: #3498db;
-    margin: 5px 0;
-    padding-bottom: 3px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.2);
-  }
-  
-  .building-buttons {
+  /* Game Content */
+  .game-content {
     display: flex;
-    flex-wrap: wrap;
-    gap: 5px;
-    margin-bottom: 15px;
+    flex: 1;
+    position: relative;
+    overflow: hidden;
   }
   
-  .building-button {
-    background-color: rgba(52, 73, 94, 0.7);
-    border: 1px solid #2c3e50;
-    border-radius: 4px;
-    padding: 5px;
-    cursor: pointer;
+  .sidebar {
+    width: 250px;
+    background-color: rgba(26, 37, 47, 0.9);
+    padding: 15px;
+    overflow-y: auto;
+    z-index: 50;
+    box-shadow: 2px 0 10px rgba(0, 0, 0, 0.5);
+  }
+  
+  .game-area {
+    flex: 1;
+    position: relative;
+    overflow: auto;
+    background-color: #0a1016;
+  }
+  
+  .game-map {
+    padding: 20px;
     display: flex;
     flex-direction: column;
-    align-items: center;
-    width: 60px;
-    height: 70px;
-    font-size: 11px;
-    transition: all 0.2s ease;
   }
   
-  .building-button:hover {
-    background-color: rgba(52, 73, 94, 0.9);
-    transform: translateY(-2px);
-  }
-  
-  .building-button.selected {
-    background-color: #3498db;
-    box-shadow: 0 0 10px rgba(52, 152, 219, 0.7);
-  }
-  
-  .building-icon {
-    width: 30px;
-    height: 30px;
-    margin-bottom: 5px;
+  .map-row {
     display: flex;
-    align-items: center;
-    justify-content: center;
   }
   
-  /* Building icons */
-  .extractor {
-    background-color: #3498db;
-    border-radius: 50%;
+  .map-tile {
+    position: relative;
+    border: 1px solid rgba(0, 0, 0, 0.3);
+    box-sizing: border-box;
+    transition: all 0.1s ease;
+    cursor: pointer;
   }
   
-  .storage {
-    background-color: #f1c40f;
+  .map-tile:hover {
+    transform: scale(1.1);
+    z-index: 10;
+    box-shadow: 0 0 10px rgba(255, 255, 255, 0.3);
   }
   
-  .power-plant {
-    width: 0;
-    height: 0;
-    border-left: 15px solid transparent;
-    border-right: 15px solid transparent;
-    border-bottom: 30px solid #2ecc71;
-    margin-bottom: -5px;
-  }
-  
-  .reactor {
-    width: 30px;
-    height: 30px;
-    background-color: #e74c3c;
-    transform: rotate(45deg);
-  }
-  
-  .pipe {
-    width: 30px;
+  .resource-indicator {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 6px;
     height: 6px;
-    background-color: #95a5a6;
+    background-color: white;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    box-shadow: 0 0 5px rgba(255, 255, 255, 0.8);
+    animation: pulse 2s infinite;
   }
   
-  /* Mode controls */
-  .mode-controls {
-    display: flex;
-    justify-content: space-between;
-    gap: 5px;
+  /* Controls Info */
+  .controls-info {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: rgba(0, 0, 0, 0.6);
+    color: white;
+    padding: 8px 16px;
+    border-radius: 20px;
+    font-size: 14px;
+    z-index: 200;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(5px);
   }
   
-  .mode-button {
-    flex: 1;
-    background-color: #34495e;
+  /* Floating Button */
+  .floating-button {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    background: linear-gradient(145deg, #e74c3c, #c0392b);
     color: white;
     border: none;
-    padding: 8px 0;
-    border-radius: 4px;
+    font-size: 24px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
     cursor: pointer;
-    font-size: 12px;
+    z-index: 200;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
+    transition: all 0.3s ease;
   }
   
-  .mode-button.active {
-    background-color: #2ecc71;
+  .floating-button:hover {
+    transform: scale(1.1) rotate(10deg);
+    box-shadow: 0 6px 15px rgba(0, 0, 0, 0.6);
   }
-
+  
+  /* Pause Menu */
+  .pause-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background-color: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(5px);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+  }
+  
+  .pause-menu {
+    background: linear-gradient(145deg, #1a2a3a, #2c3e50);
+    border-radius: 20px;
+    padding: 30px;
+    width: 90%;
+    max-width: 400px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    text-align: center;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+  }
+  
+  .pause-menu h2 {
+    margin-top: 0;
+    margin-bottom: 30px;
+    color: #3498db;
+    font-size: 28px;
+    text-shadow: 0 2px 5px rgba(0, 0, 0, 0.5);
+  }
+  
+  .menu-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+  }
+  
+  .menu-buttons button {
+    padding: 15px;
+    border: none;
+    border-radius: 10px;
+    background-color: #34495e;
+    color: white;
+    cursor: pointer;
+    font-size: 16px;
+    transition: all 0.2s ease;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+  }
+  
+  .menu-buttons button:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.4);
+  }
+  
+  .resume-button {
+    background: linear-gradient(145deg, #2ecc71, #27ae60) !important;
+  }
+  
+  .new-game-button {
+    background: linear-gradient(145deg, #3498db, #2980b9) !important;
+  }
+  
+  .menu-footer {
+    margin-top: 30px;
+    font-size: 14px;
+    color: #bdc3c7;
+  }
+  
+  /* Debug Panel */
   .debug-panel {
     position: fixed;
     bottom: 0;
     right: 0;
     background-color: rgba(0, 0, 0, 0.8);
     padding: 10px;
-    border-top-left-radius: 5px;
-    z-index: 1000;
-    max-width: 400px;
-    font-size: 12px;
+    border-top-left-radius: 10px;
+    z-index: 2000;
+    max-width: 300px;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(5px);
+  }
+  
+  .debug-panel h3 {
+    margin-top: 0;
+    color: #3498db;
   }
   
   .debug-panel button {
     margin: 5px;
-    padding: 4px 8px;
-    font-size: 12px;
-    background-color: #2c3e50;
+    padding: 5px 10px;
+    background-color: #3498db;
     color: white;
     border: none;
-    border-radius: 3px;
+    border-radius: 4px;
     cursor: pointer;
   }
   
   .debug-panel button:hover {
-    background-color: #3498db;
+    background-color: #2980b9;
   }
   
   .debug-panel pre {
-    max-height: 250px;
-    overflow: auto;
-    font-size: 10px;
+    font-size: 12px;
     background-color: rgba(0, 0, 0, 0.3);
     padding: 8px;
-    border-radius: 3px;
+    border-radius: 5px;
+    max-height: 200px;
+    overflow: auto;
+  }
+  
+  /* Animations */
+  @keyframes pulse {
+    0% {
+      transform: translate(-50%, -50%) scale(1);
+      opacity: 1;
+    }
+    50% {
+      transform: translate(-50%, -50%) scale(1.5);
+      opacity: 0.7;
+    }
+    100% {
+      transform: translate(-50%, -50%) scale(1);
+      opacity: 1;
+    }
   }
 </style>

@@ -1,13 +1,17 @@
-// In frontend/src/components/buildings/BuildingControlPanel.svelte
 <script lang="ts">
-    import { gameState } from '$lib/gameLoop';
-    import { canvasActions } from '$lib/canvasActions';
+    import { createEventDispatcher } from 'svelte';
+    import { gameState } from '../../stores/gameState';
+    
+    // Event dispatcher
+    const dispatch = createEventDispatcher();
     
     // Available building types
     const buildingTypes = [
       { id: 'extractor', name: 'Extractor', description: 'Extracts resources from the environment', cost: { energy: 100 } },
+      { id: 'storage', name: 'Storage', description: 'Stores resources for later use', cost: { energy: 80 } },
       { id: 'reactor', name: 'Chemical Reactor', description: 'Combines chemicals to create reactions', cost: { energy: 200, methane: 50 } },
-      { id: 'powerPlant', name: 'Power Plant', description: 'Generates energy from fuel', cost: { energy: 150 } }
+      { id: 'powerPlant', name: 'Power Plant', description: 'Generates energy from fuel', cost: { energy: 150 } },
+      { id: 'pipe', name: 'Pipe', description: 'Connects buildings to transfer resources', cost: { energy: 20 } }
     ];
     
     // Resources required to build
@@ -17,7 +21,7 @@
       
       // Check if we have enough resources
       for (const [resource, amount] of Object.entries(building.cost)) {
-        if ($gameState.resources[resource] < amount) {
+        if (!$gameState.resources || $gameState.resources[resource] < amount) {
           return false;
         }
       }
@@ -26,25 +30,27 @@
     }
     
     // Start building placement
-    function startPlacement(buildingType) {
+    function selectBuilding(buildingType) {
       // Check if we can afford it
-      if (!canBuild(buildingType)) return;
-      
-      // Use the store to call the startPlacement function
-      if ($canvasActions.startPlacement) {
-        $canvasActions.startPlacement(buildingType);
-      } else {
-        console.error('Placement function not available');
-        alert("Building placement isn't ready yet. Please try again in a moment.");
+      if (!canBuild(buildingType)) {
+        console.warn(`Not enough resources to build ${buildingType}`);
+        return;
       }
+      
+      // Dispatch the select event to parent
+      dispatch('select', { type: buildingType });
+      
+      console.log(`Selected building type: ${buildingType}`);
     }
     
     // Function to get color for building icon
     function getBuildingColor(buildingType) {
       switch (buildingType) {
         case 'extractor': return '#3498db';
+        case 'storage': return '#f1c40f';
         case 'reactor': return '#e74c3c';
         case 'powerPlant': return '#2ecc71';
+        case 'pipe': return '#95a5a6';
         default: return '#bdc3c7';
       }
     }
@@ -58,7 +64,7 @@
       <button 
         class="building-button" 
         class:disabled={!canBuild(building.id)}
-        on:click={() => startPlacement(building.id)}
+        on:click={() => selectBuilding(building.id)}
       >
         <div class="building-icon" style="background-color: {getBuildingColor(building.id)}"></div>
         <div class="building-info">

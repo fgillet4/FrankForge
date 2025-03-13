@@ -1,7 +1,7 @@
 <!-- frontend/src/components/ui/MainMenu.svelte -->
 <script lang="ts">
     import { createEventDispatcher } from 'svelte';
-    import { PlanetType } from '$lib/types';
+    import { PlanetType } from '../../lib/types';
     
     const dispatch = createEventDispatcher();
     
@@ -148,10 +148,11 @@
       
       <!-- Action Buttons - Moved to the top for visibility -->
       <div class="menu-actions">
-        <button class="primary-button" on:click={startGame}>
+        <!-- Added type="button" to prevent form submission behavior -->
+        <button type="button" class="primary-button" on:click={startGame}>
           Start New Game
         </button>
-        <button class="secondary-button" on:click={loadGame}>
+        <button type="button" class="secondary-button" on:click={loadGame}>
           Load Saved Game
         </button>
       </div>
@@ -301,6 +302,7 @@
       font-weight: 500;
       cursor: pointer;
       transition: all 0.2s ease;
+      position: relative; /* For the active state effect */
     }
     
     .primary-button {
@@ -311,6 +313,12 @@
     .primary-button:hover {
       background-color: #27ae60;
       transform: translateY(-2px);
+      box-shadow: 0 4px 8px rgba(39, 174, 96, 0.3);
+    }
+    
+    .primary-button:active {
+      transform: translateY(1px);
+      box-shadow: 0 2px 3px rgba(39, 174, 96, 0.3);
     }
     
     .secondary-button {
@@ -321,6 +329,12 @@
     .secondary-button:hover {
       background-color: #95a5a6;
       transform: translateY(-2px);
+      box-shadow: 0 4px 8px rgba(127, 140, 141, 0.3);
+    }
+    
+    .secondary-button:active {
+      transform: translateY(1px);
+      box-shadow: 0 2px 3px rgba(127, 140, 141, 0.3);
     }
   </style>
   

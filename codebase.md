@@ -105,6 +105,7 @@ dist-ssr
   "dependencies": {
     "@supabase/supabase-js": "^2.49.1",
     "canvas": "^3.1.0",
+    "pixi.js": "^8.8.1",
     "seedrandom": "^3.0.5",
     "simplex-noise": "^4.0.3"
   }
@@ -714,329 +715,283 @@ button:focus-visible {
 
 ```svelte
 <script lang="ts">
-  import { tick } from 'svelte';
   import { onMount } from 'svelte';
-  import { gameState, startGameLoop } from '$lib/gameLoop';
-  import { initWasm } from '$lib/wasm';
-  import { generatePlanetMap } from '$lib/mapGenerator';
-  import { PlanetType } from '$lib/types';
-  
-  import GameCanvas from './components/world/GameCanvas.svelte';
-  import BuildingControlPanel from './components/buildings/BuildingControlPanel.svelte';
-  import ResourceDisplay from './components/ui/ResourceDisplay.svelte';
-  import EnvironmentControlPanel from './components/ui/EnvironmentControlPanel.svelte';
-  import BuildingEfficiencyDisplay from './components/ui/BuildingEfficiencyDisplay.svelte';
-  import MainMenu from './components/ui/MainMenu.svelte';
+  import { fade } from 'svelte/transition';
+  import BuildingControlPanel from './components/ui/BuildingControlPanel.svelte';
+  import { gameState } from './stores/gameState';
+  import { PlanetType } from './lib/types';
   
   // Game state
-  let gameStarted = false;
-  let loadingGame = false;
-  let gameCanvas = null;
-  let gameLoopStop;
-  let loadingProgress = 0;
-  let loadingMessage = "Initializing...";
-  let currentRoute = 'menu'; // 'menu', 'loading', 'game'
-
-  function goToGame() {
-    currentRoute = 'game';
-  }
-
-
-  // Weather condition description
-  $: weatherDescription = $gameState.weather ? $gameState.weather : 'Clear';
-
-  // Map generation settings
-  let mapSettings = {
-    planetType: PlanetType.EARTH_LIKE,
-    mapWidth: 100,
-    mapHeight: 100,
-    resourceRichness: 0.5
-  };
+  let isPaused = false;
+  let selectedBuilding = null;
+  let debugMode = true;
   
-  // Handle load game request
-  function handleLoadGame() {
-    loadingGame = true;
+  // Game world settings
+  let mapWidth = 60;
+  let mapHeight = 40;
+  let tileSize = 24;
+  let tiles = [];
+  
+  // Generate map
+  function generateMap() {
+    // Create an empty map
+    tiles = [];
     
-    let progress = 0;
-    const loadingInterval = setInterval(() => {
-      progress += 10;
-      loadingProgress = progress;
-      loadingMessage = "Loading saved game...";
-      
-      if (progress >= 100) {
-        clearInterval(loadingInterval);
-        initializeGame(mapSettings);
+    // Generate tiles with interesting pattern
+    for (let y = 0; y < mapHeight; y++) {
+      let row = [];
+      for (let x = 0; x < mapWidth; x++) {
+        // Create varied terrain
+        let tileType;
+        
+        // Create some large water bodies
+        const distanceFromCenter = Math.sqrt(
+          Math.pow(x - mapWidth/2, 2) + 
+          Math.pow(y - mapHeight/2, 2)
+        );
+        
+        if (distanceFromCenter < 10) {
+          // Deep water in center
+          tileType = 1;
+        } else if (distanceFromCenter < 15) {
+          // Shallow water surrounding
+          tileType = 2;
+        } else if (x < 10 || x > mapWidth - 10 || y < 10 || y > mapHeight - 10) {
+          // Mountains around edges
+          tileType = 3;
+        } else if (Math.random() < 0.1) {
+          // Random forest patches
+          tileType = 4;
+        } else {
+          // Grassland for most of the map
+          tileType = 0;
+        }
+        
+        // Add some resources
+        let resource = Math.random() < 0.05 ? Math.floor(Math.random() * 3) + 1 : 0;
+        
+        row.push({
+          type: tileType,
+          resource: resource,
+          building: null
+        });
       }
-    }, 100);
+      tiles.push(row);
+    }
+    
+    // Update game state
+    gameState.update(state => ({
+      ...state,
+      map: { 
+        name: "Beautiful Planet", 
+        width: mapWidth, 
+        height: mapHeight,
+        tiles: tiles
+      },
+      resources: {
+        energy: 1000,
+        water: 500,
+        oxygen: 200,
+        methane: 300
+      }
+    }));
+    
+    console.log("Beautiful map generated!");
   }
   
-  // Handle game start from menu
-  function handleGameStart(event) {
-    console.log("handleGameStart function called in App.svelte", event);
-    const settings = event.detail;
-    loadingGame = true;
-    mapSettings = settings;
-    console.log("Starting loading process...");
-    
-    let progress = 0;
-    const loadingInterval = setInterval(() => {
-      progress += 5;
-      loadingProgress = progress;
-      console.log(`Loading progress: ${progress}%`);
-      
-      if (progress <= 20) {
-        loadingMessage = "Generating planet terrain...";
-      } else if (progress <= 40) {
-        loadingMessage = "Calculating resource distribution...";
-      } else if (progress <= 60) {
-        loadingMessage = "Establishing atmospheric conditions...";
-      } else if (progress <= 80) {
-        loadingMessage = "Initializing simulation...";
-      } else {
-        loadingMessage = "Preparing interface...";
-      }
-      
-      if (progress >= 100) {
-        console.log("Loading complete, initializing game...");
-        clearInterval(loadingInterval);
-        initializeGame(settings);
-      }
-    }, 100);
-  }
-
+  // Toggle pause
   function togglePause() {
-    gameState.update(state => ({
-      ...state,
-      isPaused: !state.isPaused
-    }));
+    isPaused = !isPaused;
+    console.log("Game " + (isPaused ? "paused" : "resumed"));
   }
   
-  // Return to main menu
-  function returnToMenu() {
-    if (gameLoopStop) {
-      gameLoopStop();
-      gameLoopStop = null;
-    }
-    
-    gameState.update(state => ({
-      ...state,
-      isPaused: true,
-      tick: 0
-    }));
-    
-    gameStarted = false;
-  }
-  
-  // Initialize the game with given settings
-  async function initializeGame(settings) {
-    console.log("initializeGame called with settings:", settings);
-    
-    try {
-      const planetMap = generatePlanetMap({
-        width: settings.mapWidth,
-        height: settings.mapHeight,
-        planetType: settings.planetType,
-        resourceRichness: settings.resourceRichness,
-        oceanLevel: 0.4,
-        mountainLevel: 0.7,
-        smoothness: 0.5
-      });
-      
-      console.log("Planet generated:", planetMap);
-      
-      gameState.update(state => {
-        console.log("Updating game state...");
-        return {
-          ...state,
-          temperature: planetMap.baseTemperature,
-          pressure: planetMap.basePressure,
-          mapData: {
-            name: planetMap.name,
-            width: planetMap.width,
-            height: planetMap.height,
-            seed: planetMap.seed,
-            biomes: planetMap.biomes,
-            atmosphere: planetMap.atmosphere
-          }
-        };
-      });
-      
-      console.log("Setting final UI state flags...");
-      loadingGame = false;
-      gameStarted = true;
-      currentRoute = 'game'; // Use this for UI
-      localStorage.setItem('gameStarted', 'true');
-      // Reload the page
-      //window.location.reload();
-      //console.log("Game initialized successfully");
-      //console.log("State after initialization - gameStarted:", gameStarted, "loadingGame:", loadingGame);
-      
-      // Force a UI update
-      await tick();
-      console.log("UI should be updated now");
-      
-      setTimeout(() => {
-        console.log("CHECKING UI STATE AFTER DELAY:", 
-          document.querySelector('.game-container') ? "Game UI found" : "NO GAME UI FOUND",
-          "gameStarted =", gameStarted);
-      }, 500);
-    } catch (error) {
-      console.error("Error initializing game:", error);
-      loadingGame = false;
+  // Place building
+  function placeBuilding(type, x, y) {
+    // Check if cell is empty
+    if (x >= 0 && x < mapWidth && y >= 0 && y < mapHeight) {
+      if (tiles[y][x].building === null) {
+        // Place building
+        tiles[y][x].building = type;
+        
+        // Update resources
+        gameState.update(state => {
+          const resources = {...state.resources};
+          resources.energy -= 50;
+          return {...state, resources};
+        });
+        
+        console.log(`Building ${type} placed at (${x},${y})`);
+      }
     }
   }
-
-  // Add reactive statement to track state changes
-  $: console.log("State changed - gameStarted:", gameStarted, "loadingGame:", loadingGame);
-
-  // Time of day formatting
-  $: timeString = formatTime($gameState.timeOfDay || 12);
   
-  function formatTime(hours) {
-    const hour = Math.floor(hours);
-    const minute = Math.floor((hours - hour) * 60);
-    const ampm = hour >= 12 ? 'PM' : 'AM';
-    const hour12 = hour % 12 || 12;
-    return `${hour12}:${minute.toString().padStart(2, '0')} ${ampm}`;
+  // Get tile color based on type
+  function getTileColor(tile) {
+    // Base terrain colors
+    const colors = {
+      0: '#27ae60', // Grass - green
+      1: '#2980b9', // Deep water - blue
+      2: '#3498db', // Shallow water - light blue
+      3: '#7f8c8d', // Mountains - gray
+      4: '#2ecc71'  // Forest - dark green
+    };
+    
+    // Resource indicator
+    if (tile.resource > 0) {
+      const resourceColors = [
+        '#f1c40f', // Gold - energy
+        '#3498db', // Blue - water
+        '#e74c3c'  // Red - oxygen
+      ];
+      
+      // Return resource color
+      return resourceColors[tile.resource - 1];
+    }
+    
+    // Building colors
+    if (tile.building !== null) {
+      const buildingColors = {
+        'extractor': '#e67e22',
+        'storage': '#f39c12',
+        'reactor': '#c0392b',
+        'powerPlant': '#d35400',
+        'pipe': '#7f8c8d'
+      };
+      
+      return buildingColors[tile.building] || '#9b59b6';
+    }
+    
+    // Otherwise return terrain color
+    return colors[tile.type] || '#2c3e50';
   }
   
-  onMount(async () => {
-    // Check if we're returning from a reload
-    if (localStorage.getItem('gameStarted') === 'true') {
-      // Restore the game state
-      gameStarted = true;
-      localStorage.removeItem('gameStarted'); // Clean up
-    }
-    try {
-      console.log('WASM integration will be added later');
-    } catch (error) {
-      console.error('Failed to initialize WASM:', error);
-    }
+  // Initialize on mount
+  onMount(() => {
+    console.log("Game initialized");
     
-    if (gameStarted) {
-      gameLoopStop = startGameLoop();
-    }
+    // Generate map
+    generateMap();
     
+    // Add keyboard controls
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        togglePause();
+      }
+    });
+    
+    // Return cleanup function
     return () => {
-      if (gameLoopStop) gameLoopStop();
+      document.removeEventListener('keydown', togglePause);
     };
   });
 </script>
 
-<div style="position: fixed; top: 0; left: 0; background: rgba(0,0,0,0.8); color: white; padding: 5px; z-index: 9999; font-size: 12px;">
-  gameStarted: {gameStarted}, loadingGame: {loadingGame}
-</div>
-
-{#if !gameStarted}
-  {#if loadingGame}
-    <!-- Loading screen -->
-    <div class="loading-screen">
-      <h2>Loading FrankForge</h2>
-      <div class="loading-message">{loadingMessage}</div>
-      <div class="progress-bar">
-        <div class="progress-fill" style="width: {loadingProgress}%"></div>
+<main class="game-container">
+  <!-- Header -->
+  <header class="game-header">
+    <h1>FrankForge</h1>
+    <div class="resources">
+      <div class="resource">Energy: {$gameState.resources?.energy || 0}</div>
+      <div class="resource">Water: {$gameState.resources?.water || 0}</div>
+      <div class="resource">Oxygen: {$gameState.resources?.oxygen || 0}</div>
+      <div class="resource">Methane: {$gameState.resources?.methane || 0}</div>
+    </div>
+    <button class="pause-button" on:click={togglePause}>
+      {isPaused ? 'Resume Game' : 'Pause Game'}
+    </button>
+  </header>
+  
+  <!-- Game Content -->
+  <div class="game-content">
+    <!-- Sidebar with building controls -->
+    <aside class="sidebar">
+      <BuildingControlPanel />
+    </aside>
+    
+    <!-- Main game area with map -->
+    <div class="game-area">
+      <div class="game-map">
+        {#each tiles as row, y}
+          <div class="map-row">
+            {#each row as tile, x}
+              <div
+                class="map-tile"
+                style="background-color: {getTileColor(tile)}; width: {tileSize}px; height: {tileSize}px;"
+                on:click={() => placeBuilding('extractor', x, y)}
+              >
+                {#if tile.resource > 0}
+                  <div class="resource-indicator"></div>
+                {/if}
+              </div>
+            {/each}
+          </div>
+        {/each}
       </div>
     </div>
-  {:else}
-    <!-- Main menu -->
-    <MainMenu 
-      on:startGame={handleGameStart} 
-      on:loadGame={handleLoadGame} 
-    />
-  {/if}
-  {:else}
-  <!-- Game interface -->
-  <main>
-    <div class="game-container">
-      <header>
-        <div class="title-area">
-          <h1>FrankForge</h1>
-          <div class="environment-status">
-            <div class="status-item">
-              <span class="status-label">Weather:</span>
-              <span class="status-value">{weatherDescription}</span>
-            </div>
-            <div class="status-item">
-              <span class="status-label">Time:</span>
-              <span class="status-value">{timeString}</span>
-            </div>
-            {#if $gameState.mapData}
-              <div class="status-item">
-                <span class="status-label">Planet:</span>
-                <span class="status-value">{$gameState.mapData.name}</span>
-              </div>
-            {/if}
-          </div>
-        </div>
-        <div class="controls">
-          <button on:click={togglePause}>
-            {$gameState.isPaused ? 'Resume' : 'Pause'}
-          </button>
-          <button class="menu-button" on:click={returnToMenu}>
-            Main Menu
-          </button>
-        </div>
-      </header>
-      
-      <div class="game-content">
-        <div class="sidebar">
-          <BuildingControlPanel />
-          <ResourceDisplay />
-          <EnvironmentControlPanel />
-          <BuildingEfficiencyDisplay />
+  </div>
+  
+  <!-- Floating Action Button for pause -->
+  <button class="floating-button" on:click={togglePause}>
+    {isPaused ? '▶️' : '⏸️'}
+  </button>
+  
+  <!-- Controls Info -->
+  <div class="controls-info">
+    Click on tiles to place extractors | ESC: Toggle Pause Menu
+  </div>
+  
+  <!-- Pause Menu -->
+  {#if isPaused}
+    <div class="pause-overlay" transition:fade={{duration: 300}}>
+      <div class="pause-menu">
+        <h2>Game Paused</h2>
+        
+        <div class="menu-buttons">
+          <button class="resume-button" on:click={togglePause}>Resume Game</button>
+          <button class="new-game-button" on:click={generateMap}>New Game</button>
+          <button class="settings-button">Game Settings</button>
+          <button class="save-button">Save Game</button>
         </div>
         
-        <div class="canvas-container">
-          <GameCanvas />
+        <div class="menu-footer">
+          <p>Press ESC to resume game</p>
         </div>
       </div>
     </div>
-  </main>
-{/if}
+  {/if}
+  
+  <!-- Debug Panel -->
+  {#if debugMode}
+    <div class="debug-panel">
+      <h3>Debug Panel</h3>
+      <button on:click={togglePause}>Toggle Pause</button>
+      <button on:click={generateMap}>Regen Map</button>
+      <div>
+        <label>
+          Tile Size: 
+          <input type="range" min="10" max="40" bind:value={tileSize}>
+          {tileSize}px
+        </label>
+      </div>
+      <pre>
+Game State:
+Paused: {isPaused}
+Map Size: {mapWidth}x{mapHeight}
+Map Name: {$gameState.map?.name || 'None'}
+Resources: {JSON.stringify($gameState.resources, null, 2)}
+      </pre>
+    </div>
+  {/if}
+</main>
+
 <style>
   :global(body) {
     margin: 0;
     padding: 0;
-    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
-    background-color: #1a1a2e;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background-color: #0f1924;
     color: white;
     overflow: hidden;
-  }
-  
-  .loading-screen {
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
-    height: 100vh;
-    background-color: #0f0f1e;
-    background-image: radial-gradient(circle at 50% 50%, #1a1a2e 0%, #0f0f1e 100%);
-  }
-  
-  .loading-screen h2 {
-    font-size: 2rem;
-    margin-bottom: 2rem;
-    color: #3498db;
-  }
-  
-  .loading-message {
-    margin-bottom: 1rem;
-    color: #bdc3c7;
-  }
-  
-  .progress-bar {
-    width: 80%;
-    max-width: 600px;
-    height: 10px;
-    background-color: #2c3e50;
-    border-radius: 5px;
-    overflow: hidden;
-  }
-  
-  .progress-fill {
-    height: 100%;
-    background: linear-gradient(90deg, #3498db, #2ecc71);
-    transition: width 0.3s ease;
   }
   
   .game-container {
@@ -1047,94 +1002,1344 @@ button:focus-visible {
     overflow: hidden;
   }
   
-  header {
+  /* Header Styles */
+  .game-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    background-color: #0f0f1e;
-    padding: 0.5rem 1rem;
-    border-bottom: 1px solid #2a2a3e;
+    background: linear-gradient(to right, #1a2a3a, #2c3e50);
+    padding: 10px 20px;
+    height: 60px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+    z-index: 100;
   }
   
-  .title-area {
-    display: flex;
-    align-items: center;
-  }
-  
-  h1 {
+  .game-header h1 {
     margin: 0;
-    color: #3498db;
-    font-size: 1.5rem;
-    margin-right: 2rem;
+    font-size: 24px;
+    background: linear-gradient(to right, #3498db, #2ecc71);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
   }
   
-  .environment-status {
+  .resources {
     display: flex;
-    gap: 1.5rem;
+    gap: 15px;
   }
   
-  .status-item {
-    display: flex;
-    align-items: center;
-    font-size: 0.875rem;
+  .resource {
+    background-color: rgba(0, 0, 0, 0.3);
+    padding: 8px 12px;
+    border-radius: 20px;
+    font-size: 14px;
+    box-shadow: inset 0 0 5px rgba(0, 0, 0, 0.5);
   }
   
-  .status-label {
-    color: #7f8c8d;
-    margin-right: 0.5rem;
-  }
-  
-  .status-value {
-    color: #ecf0f1;
-    font-weight: 500;
-  }
-  
-  .controls {
-    display: flex;
-    gap: 0.5rem;
-  }
-  
-  .controls button {
-    background-color: #2c3e50;
+  .pause-button {
+    background-color: #e74c3c;
     color: white;
     border: none;
-    padding: 0.5rem 1rem;
-    border-radius: 4px;
+    padding: 8px 16px;
+    border-radius: 20px;
     cursor: pointer;
-    transition: background-color 0.2s;
+    font-weight: bold;
+    transition: all 0.2s ease;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
   }
   
-  .controls button:hover {
-    background-color: #3d566e;
+  .pause-button:hover {
+    background-color: #c0392b;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.4);
   }
   
-  .menu-button {
-    background-color: #7f8c8d !important;
-  }
-  
-  .menu-button:hover {
-    background-color: #95a5a6 !important;
-  }
-  
+  /* Game Content */
   .game-content {
     display: flex;
     flex: 1;
+    position: relative;
     overflow: hidden;
   }
   
   .sidebar {
-    width: 350px;
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-    padding: 1rem;
-    background-color: #16213e;
+    width: 250px;
+    background-color: rgba(26, 37, 47, 0.9);
+    padding: 15px;
     overflow-y: auto;
+    z-index: 50;
+    box-shadow: 2px 0 10px rgba(0, 0, 0, 0.5);
   }
   
-  .canvas-container {
+  .game-area {
     flex: 1;
+    position: relative;
+    overflow: auto;
+    background-color: #0a1016;
+  }
+  
+  .game-map {
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+  }
+  
+  .map-row {
+    display: flex;
+  }
+  
+  .map-tile {
+    position: relative;
+    border: 1px solid rgba(0, 0, 0, 0.3);
+    box-sizing: border-box;
+    transition: all 0.1s ease;
+    cursor: pointer;
+  }
+  
+  .map-tile:hover {
+    transform: scale(1.1);
+    z-index: 10;
+    box-shadow: 0 0 10px rgba(255, 255, 255, 0.3);
+  }
+  
+  .resource-indicator {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 6px;
+    height: 6px;
+    background-color: white;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    box-shadow: 0 0 5px rgba(255, 255, 255, 0.8);
+    animation: pulse 2s infinite;
+  }
+  
+  /* Controls Info */
+  .controls-info {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: rgba(0, 0, 0, 0.6);
+    color: white;
+    padding: 8px 16px;
+    border-radius: 20px;
+    font-size: 14px;
+    z-index: 200;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(5px);
+  }
+  
+  /* Floating Button */
+  .floating-button {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    background: linear-gradient(145deg, #e74c3c, #c0392b);
+    color: white;
+    border: none;
+    font-size: 24px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    cursor: pointer;
+    z-index: 200;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
+    transition: all 0.3s ease;
+  }
+  
+  .floating-button:hover {
+    transform: scale(1.1) rotate(10deg);
+    box-shadow: 0 6px 15px rgba(0, 0, 0, 0.6);
+  }
+  
+  /* Pause Menu */
+  .pause-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background-color: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(5px);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+  }
+  
+  .pause-menu {
+    background: linear-gradient(145deg, #1a2a3a, #2c3e50);
+    border-radius: 20px;
+    padding: 30px;
+    width: 90%;
+    max-width: 400px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    text-align: center;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+  }
+  
+  .pause-menu h2 {
+    margin-top: 0;
+    margin-bottom: 30px;
+    color: #3498db;
+    font-size: 28px;
+    text-shadow: 0 2px 5px rgba(0, 0, 0, 0.5);
+  }
+  
+  .menu-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+  }
+  
+  .menu-buttons button {
+    padding: 15px;
+    border: none;
+    border-radius: 10px;
+    background-color: #34495e;
+    color: white;
+    cursor: pointer;
+    font-size: 16px;
+    transition: all 0.2s ease;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+  }
+  
+  .menu-buttons button:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.4);
+  }
+  
+  .resume-button {
+    background: linear-gradient(145deg, #2ecc71, #27ae60) !important;
+  }
+  
+  .new-game-button {
+    background: linear-gradient(145deg, #3498db, #2980b9) !important;
+  }
+  
+  .menu-footer {
+    margin-top: 30px;
+    font-size: 14px;
+    color: #bdc3c7;
+  }
+  
+  /* Debug Panel */
+  .debug-panel {
+    position: fixed;
+    bottom: 0;
+    right: 0;
+    background-color: rgba(0, 0, 0, 0.8);
+    padding: 10px;
+    border-top-left-radius: 10px;
+    z-index: 2000;
+    max-width: 300px;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(5px);
+  }
+  
+  .debug-panel h3 {
+    margin-top: 0;
+    color: #3498db;
+  }
+  
+  .debug-panel button {
+    margin: 5px;
+    padding: 5px 10px;
+    background-color: #3498db;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  
+  .debug-panel button:hover {
+    background-color: #2980b9;
+  }
+  
+  .debug-panel pre {
+    font-size: 12px;
+    background-color: rgba(0, 0, 0, 0.3);
+    padding: 8px;
+    border-radius: 5px;
+    max-height: 200px;
+    overflow: auto;
+  }
+  
+  /* Animations */
+  @keyframes pulse {
+    0% {
+      transform: translate(-50%, -50%) scale(1);
+      opacity: 1;
+    }
+    50% {
+      transform: translate(-50%, -50%) scale(1.5);
+      opacity: 0.7;
+    }
+    100% {
+      transform: translate(-50%, -50%) scale(1);
+      opacity: 1;
+    }
+  }
+</style>
+```
+
+# frontend/src/App.svelte.bak
+
+```bak
+<script lang="ts">
+  import { onMount, afterUpdate } from 'svelte';
+  import MainMenu from './components/ui/MainMenu.svelte';
+  import { mapGenerator } from './lib/mapGenerator';
+  import { gameState } from './stores/gameState';
+  import { PlanetType } from './lib/types';
+  
+  // For debugging purposes
+  console.log("App.svelte is being evaluated");
+  
+  // Building interaction state
+  let selectedBuildingType: string | null = null;
+  let isPlacementMode = false;
+  let selectedBuilding: any = null;
+  let hoverPosition = { x: 0, y: 0 };
+  
+  // Helper functions for map rendering
+  function getTileColor(terrainType: number): string {
+    // Colors for different terrain types
+    switch(terrainType) {
+      case 0: return '#0a3b5c'; // DEEP_WATER
+      case 1: return '#0e6ba8'; // SHALLOW_WATER
+      case 2: return '#e4d6a7'; // SAND
+      case 3: return '#7ab317'; // GRASS
+      case 4: return '#3e7924'; // FOREST
+      case 5: return '#6d8383'; // HILLS
+      case 6: return '#8d8778'; // MOUNTAINS
+      case 7: return '#ffffff'; // SNOW
+      case 8: return '#7c3626'; // VOLCANIC
+      case 9: return '#e25822'; // LAVA
+      case 10: return '#3c2c3e'; // CAVE
+      case 11: return '#a2d6a2'; // ALIEN_GRASS
+      case 12: return '#5eaa5e'; // ALIEN_FOREST
+      case 13: return '#bf62a6'; // ALIEN_CRYSTAL
+      case 14: return '#39848b'; // METHANE_LAKE
+      case 15: return '#c9e1ff'; // ICE
+      default: return '#555555'; // DEFAULT
+    }
+  }
+  
+  function getResourceColor(resourceType: number): string {
+    // Colors for different resource types
+    switch(resourceType) {
+      case 0: return 'transparent'; // NONE
+      case 1: return '#39848b'; // METHANE
+      case 2: return '#f5f5f5'; // OXYGEN
+      case 3: return '#43aada'; // WATER
+      case 4: return '#b77333'; // IRON
+      case 5: return '#d4a276'; // COPPER
+      case 6: return '#f0e68c'; // SILICON
+      case 7: return '#fff44f'; // SULFUR
+      case 8: return '#9bc400'; // URANIUM
+      case 9: return '#c0c0c0'; // RARE_METALS
+      case 10: return '#bf62a6'; // XENOCRYSTALS
+      default: return '#888888'; // DEFAULT
+    }
+  }
+  
+  // Application state
+  let showMainMenu = true;
+  let showGame = false;
+  let gameSettings: {
+    planetType: PlanetType;
+    mapWidth: number;
+    mapHeight: number;
+    resourceRichness: number;
+  } | null = null;
+  
+  // Debug flags
+  let debugMode = true;
+  
+  // Handle game start from main menu
+  function handleStartGame(event: CustomEvent) {
+    console.log("handleStartGame triggered in App.svelte");
+    
+    // Get settings from the event
+    gameSettings = event.detail;
+    console.log("Game settings received:", gameSettings);
+    
+    // Generate the map based on settings
+    if (gameSettings) {
+      console.log("Generating map for", gameSettings.planetType);
+      const generatedMap = mapGenerator.generateMap({
+        planetType: gameSettings.planetType,
+        width: gameSettings.mapWidth,
+        height: gameSettings.mapHeight,
+        resourceRichness: gameSettings.resourceRichness,
+        specialFeatureCount: 3 // Reduce for safety
+      });
+      
+      console.log("Map generated successfully, updating game state");
+      
+      // Update the game state with the new map
+      gameState.update(state => ({
+        ...state,
+        map: generatedMap,
+        planetType: gameSettings.planetType,
+        tick: 0,
+        buildings: [],
+        lastUpdated: Date.now()
+      }));
+      
+      console.log("Game state updated, transitioning to game view");
+      
+      // Switch scenes: hide menu, show game
+      showMainMenu = false;
+      showGame = true;
+      console.log("Transitioning from menu to game scene");
+      
+      // Initialize canvas after DOM update
+      // Use a slightly longer delay to ensure DOM is fully updated
+      setTimeout(() => {
+        // Try to find the canvas element
+        const canvas = document.getElementById('basic-canvas');
+        console.log("Looking for canvas element after delay:", !!canvas);
+        
+        if (canvas) {
+          initializeCanvas();
+        } else {
+          console.error("Canvas element still not found after delay");
+        }
+      }, 1000);
+    }
+  }
+  
+  // Handle load game
+  function handleLoadGame() {
+    // Placeholder for load game functionality
+    console.log("Load game requested");
+    
+    // Example of loading a saved game - would come from storage in reality
+    const savedGame = {
+      planetType: PlanetType.EARTH_LIKE,
+      buildings: [],
+      resources: {},
+      tick: 0
+    };
+    
+    // Update game state with saved game
+    gameState.update(state => ({
+      ...state,
+      ...savedGame,
+      lastUpdated: Date.now()
+    }));
+    
+    // Switch scenes: hide menu, show game
+    showMainMenu = false;
+    showGame = true;
+    
+    // Initialize canvas after a delay
+    setTimeout(initializeCanvas, 500);
+  }
+  
+  let canvasElement: HTMLCanvasElement;
+  let savedGameState: any = null;
+  
+  // Scene transition functions
+  function handleBackToMenu() {
+    showGame = false;
+    showMainMenu = true;
+    console.log("Returning to main menu");
+  }
+  
+  // Building interaction functions
+  function selectBuildingType(type: string) {
+    selectedBuildingType = type;
+    console.log(`Selected building type: ${type}`);
+    
+    // Automatically enter placement mode when selecting a building type
+    if (!isPlacementMode) {
+      setPlacementMode(true);
+    }
+  }
+  
+  function setPlacementMode(enabled: boolean) {
+    isPlacementMode = enabled;
+    console.log(`Placement mode: ${enabled ? 'enabled' : 'disabled'}`);
+    
+    // Clear selection when entering placement mode
+    if (enabled) {
+      selectedBuilding = null;
+    }
+    
+    // Re-initialize canvas to update cursor and preview
+    initializeCanvas();
+  }
+  
+  function handleCanvasClick(event: MouseEvent) {
+    const canvas = document.getElementById('basic-canvas') as HTMLCanvasElement;
+    if (!canvas) return;
+    
+    // Get click position relative to canvas
+    const rect = canvas.getBoundingClientRect();
+    const clickX = event.clientX - rect.left;
+    const clickY = event.clientY - rect.top;
+    
+    // Convert to world coordinates (accounting for any zoom/pan later)
+    const worldX = clickX;
+    const worldY = clickY;
+    
+    console.log(`Canvas click at (${clickX}, ${clickY})`);
+    
+    if (isPlacementMode && selectedBuildingType) {
+      placeBuilding(worldX, worldY);
+    } else {
+      selectBuildingAtPosition(worldX, worldY);
+    }
+  }
+  
+  function handleCanvasHover(event: MouseEvent) {
+    const canvas = document.getElementById('basic-canvas') as HTMLCanvasElement;
+    if (!canvas) return;
+    
+    // Get mouse position relative to canvas
+    const rect = canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    
+    // Update hover position
+    hoverPosition = { x, y };
+    
+    // Only redraw if in placement mode to show preview
+    if (isPlacementMode && selectedBuildingType) {
+      // Use requestAnimationFrame to avoid too many redraws
+      requestAnimationFrame(initializeCanvas);
+    }
+  }
+  
+  function placeBuilding(x: number, y: number) {
+    if (!selectedBuildingType) return;
+    
+    // Create a new building object
+    const building = {
+      id: crypto.randomUUID(),
+      type: selectedBuildingType,
+      position: { x, y },
+      connections: [],
+      efficiency: 1.0,
+      isActive: true
+    };
+    
+    // Add to game state
+    gameState.update(state => {
+      return {
+        ...state,
+        buildings: [...state.buildings, building]
+      };
+    });
+    
+    console.log(`Placed ${selectedBuildingType} at (${x}, ${y})`);
+    
+    // Redraw canvas to show new building
+    initializeCanvas();
+  }
+  
+  function selectBuildingAtPosition(x: number, y: number) {
+    // Find if there's a building at the clicked position
+    selectedBuilding = null;
+    
+    const buildings = $gameState.buildings || [];
+    for (const building of buildings) {
+      // Simple distance check (can be improved with proper hitbox)
+      const distance = Math.sqrt(
+        Math.pow(building.position.x - x, 2) + 
+        Math.pow(building.position.y - y, 2)
+      );
+      
+      // If within 20 pixels, select this building
+      if (distance < 20) {
+        selectedBuilding = building;
+        console.log(`Selected building: ${building.type} (ID: ${building.id})`);
+        break;
+      }
+    }
+    
+    // If nothing was selected, log it
+    if (!selectedBuilding) {
+      console.log("No building selected");
+    }
+    
+    // Redraw to show selection
+    initializeCanvas();
+  }
+  
+  // Handle toggling buttons in debug panel
+  function handleToggleMenu() {
+    showMainMenu = !showMainMenu;
+    console.log("Toggled menu visibility:", showMainMenu);
+    
+    // Make sure we're in a valid state
+    if (showMainMenu && showGame) {
+      showGame = false;
+    } else if (!showMainMenu && !showGame) {
+      showGame = true;
+    }
+  }
+  
+  function handleToggleGame() {
+    showGame = !showGame;
+    console.log("Toggled game visibility:", showGame);
+    
+    // Make sure we're in a valid state
+    if (showGame && showMainMenu) {
+      showMainMenu = false;
+    }
+    
+    // If showing game, make sure canvas is initialized
+    if (showGame) {
+      // Small delay to ensure DOM is updated
+      setTimeout(() => {
+        initializeCanvas();
+      }, 100);
+    }
+  }
+  
+  // For debugging - save current game state
+  function forceSaveGame() {
+    savedGameState = JSON.parse(JSON.stringify($gameState));
+    console.log("Game state saved:", savedGameState);
+    alert("Game state saved (see console)");
+  }
+  
+  // For debugging - restore saved game state
+  function forceLoadGame() {
+    if (!savedGameState) {
+      console.error("No saved game state to load");
+      alert("No saved game state to load");
+      return;
+    }
+    
+    gameState.set(savedGameState);
+    console.log("Game state restored from saved state");
+    
+    if (showGame) {
+      setTimeout(() => {
+        initializeCanvas();
+      }, 100);
+    }
+    
+    alert("Game state restored - map should appear when game is visible");
+  }
+  
+  // Initialize and draw on the canvas
+  function initializeCanvas() {
+    try {
+      const canvas = document.getElementById('basic-canvas') as HTMLCanvasElement;
+      if (!canvas) {
+        console.error("Canvas element not found");
+        return;
+      }
+      
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        console.error("Could not get canvas context");
+        return;
+      }
+      
+      // Clear the canvas
+      ctx.fillStyle = '#0a0a18';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // Draw map if available
+      if ($gameState.map && $gameState.map.tiles) {
+        // Calculate tile size to fit the map on screen
+        const tileSize = Math.min(
+          Math.floor(canvas.width / $gameState.map.width),
+          Math.floor(canvas.height / $gameState.map.height)
+        );
+        
+        // Maximum dimensions to render
+        const maxTilesX = Math.min($gameState.map.width, Math.floor(canvas.width / tileSize));
+        const maxTilesY = Math.min($gameState.map.height, Math.floor(canvas.height / tileSize));
+        
+        // Draw each map tile
+        for (let y = 0; y < maxTilesY; y++) {
+          for (let x = 0; x < maxTilesX; x++) {
+            const tile = $gameState.map.tiles[y][x];
+            
+            // Get color based on terrain type
+            const tileColor = getTileColor(tile.terrain);
+            
+            // Draw tile
+            ctx.fillStyle = tileColor;
+            ctx.fillRect(x * tileSize, y * tileSize, tileSize, tileSize);
+            
+            // Draw resource indicator if present
+            if (tile.resource > 0) {
+              ctx.fillStyle = getResourceColor(tile.resource);
+              ctx.fillRect(
+                x * tileSize + tileSize/4, 
+                y * tileSize + tileSize/4, 
+                tileSize/2, 
+                tileSize/2
+              );
+            }
+          }
+        }
+        
+        // Draw grid lines
+        ctx.strokeStyle = 'rgba(52, 152, 219, 0.3)';
+        ctx.lineWidth = 0.5;
+        
+        for (let x = 0; x <= maxTilesX; x++) {
+          ctx.beginPath();
+          ctx.moveTo(x * tileSize, 0);
+          ctx.lineTo(x * tileSize, maxTilesY * tileSize);
+          ctx.stroke();
+        }
+        
+        for (let y = 0; y <= maxTilesY; y++) {
+          ctx.beginPath();
+          ctx.moveTo(0, y * tileSize);
+          ctx.lineTo(maxTilesX * tileSize, y * tileSize);
+          ctx.stroke();
+        }
+        
+        // Draw buildings
+        if ($gameState.buildings && $gameState.buildings.length > 0) {
+          for (const building of $gameState.buildings) {
+            drawBuilding(ctx, building, selectedBuilding === building);
+          }
+        }
+        
+        // Draw building placement preview
+        if (isPlacementMode && selectedBuildingType) {
+          // Draw a preview of the building at hover position
+          const previewBuilding = {
+            type: selectedBuildingType,
+            position: hoverPosition,
+            isPreview: true
+          };
+          
+          // Show placement preview with semi-transparency
+          ctx.globalAlpha = 0.6;
+          drawBuilding(ctx, previewBuilding, false);
+          ctx.globalAlpha = 1.0;
+        }
+        
+        // Draw planet information
+        ctx.fillStyle = 'white';
+        ctx.font = '18px Arial';
+        ctx.fillText(`Planet: ${$gameState.map.name}`, 10, maxTilesY * tileSize + 25);
+        ctx.fillText(`Type: ${$gameState.planetType}`, 10, maxTilesY * tileSize + 45);
+        ctx.fillText(`Size: ${$gameState.map.width}x${$gameState.map.height}`, 10, maxTilesY * tileSize + 65);
+        
+        // Draw building info if selected
+        if (selectedBuilding) {
+          const infoX = 10;
+          const infoY = maxTilesY * tileSize + 100;
+          
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+          ctx.fillRect(infoX - 5, infoY - 20, 250, 100);
+          
+          ctx.fillStyle = '#3498db';
+          ctx.font = '16px Arial';
+          ctx.fillText(`Selected: ${selectedBuilding.type}`, infoX, infoY);
+          ctx.fillStyle = 'white';
+          ctx.font = '14px Arial';
+          ctx.fillText(`ID: ${selectedBuilding.id}`, infoX, infoY + 20);
+          ctx.fillText(`Position: (${Math.round(selectedBuilding.position.x)}, ${Math.round(selectedBuilding.position.y)})`, infoX, infoY + 40);
+          ctx.fillText(`Status: ${selectedBuilding.isActive ? 'Active' : 'Inactive'}`, infoX, infoY + 60);
+        }
+        
+        // Draw mode indicator
+        const modeText = isPlacementMode ? `Placement Mode: ${selectedBuildingType || 'None'}` : 'Selection Mode';
+        ctx.fillStyle = 'white';
+        ctx.font = '16px Arial';
+        ctx.fillText(modeText, canvas.width - 250, 30);
+        
+      } else {
+        // Draw a test pattern if no map is available
+        console.log("No map data available, drawing test pattern");
+        
+        // Draw a grid
+        ctx.strokeStyle = '#3498db';
+        ctx.lineWidth = 1;
+        
+        const gridSize = 32;
+        for (let x = 0; x < canvas.width; x += gridSize) {
+          ctx.beginPath();
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, canvas.height);
+          ctx.stroke();
+        }
+        
+        for (let y = 0; y < canvas.height; y += gridSize) {
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.lineTo(canvas.width, y);
+          ctx.stroke();
+        }
+        
+        // Draw text
+        ctx.fillStyle = 'white';
+        ctx.font = '24px Arial';
+        ctx.fillText('Debug Canvas View', 50, 50);
+        ctx.fillText('No map data available', 50, 100);
+        
+        if (gameSettings) {
+          ctx.fillText(`Attempted Planet Type: ${gameSettings.planetType}`, 50, 150);
+        }
+      }
+      
+      console.log("Canvas initialized and drawn");
+    } catch (err) {
+      console.error("Error initializing canvas:", err);
+    }
+  }
+  
+  // Helper function to draw a building
+  function drawBuilding(ctx: CanvasRenderingContext2D, building: any, isSelected: boolean) {
+    const size = 30;
+    const x = building.position.x;
+    const y = building.position.y;
+    
+    // Get color based on building type
+    let color = '#3498db'; // default blue
+    switch (building.type) {
+      case 'extractor':
+        color = '#3498db'; // blue
+        break;
+      case 'storage':
+        color = '#f1c40f'; // yellow
+        break;
+      case 'powerPlant':
+        color = '#2ecc71'; // green
+        break;
+      case 'reactor':
+        color = '#e74c3c'; // red
+        break;
+      case 'pipe':
+        color = '#95a5a6'; // gray
+        break;
+    }
+    
+    // Draw different shapes based on building type
+    ctx.fillStyle = color;
+    
+    switch (building.type) {
+      case 'extractor':
+        // Circle
+        ctx.beginPath();
+        ctx.arc(x, y, size/2, 0, Math.PI * 2);
+        ctx.fill();
+        break;
+      case 'storage':
+        // Square
+        ctx.fillRect(x - size/2, y - size/2, size, size);
+        break;
+      case 'powerPlant':
+        // Triangle
+        ctx.beginPath();
+        ctx.moveTo(x, y - size/2);
+        ctx.lineTo(x + size/2, y + size/2);
+        ctx.lineTo(x - size/2, y + size/2);
+        ctx.closePath();
+        ctx.fill();
+        break;
+      case 'reactor':
+        // Diamond
+        ctx.beginPath();
+        ctx.moveTo(x, y - size/2);
+        ctx.lineTo(x + size/2, y);
+        ctx.lineTo(x, y + size/2);
+        ctx.lineTo(x - size/2, y);
+        ctx.closePath();
+        ctx.fill();
+        break;
+      case 'pipe':
+        // Line (would connect to other buildings)
+        ctx.lineWidth = 6;
+        ctx.strokeStyle = color;
+        ctx.beginPath();
+        ctx.moveTo(x - size/2, y);
+        ctx.lineTo(x + size/2, y);
+        ctx.stroke();
+        break;
+      default:
+        // Default square
+        ctx.fillRect(x - size/2, y - size/2, size, size);
+    }
+    
+    // Draw selection outline if selected
+    if (isSelected) {
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(x, y, size/2 + 5, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    
+    // Draw inactive indicator if building is not active
+    if (building.isActive === false) {
+      ctx.strokeStyle = '#e74c3c';
+      ctx.lineWidth = 2;
+      
+      // Draw X over building
+      ctx.beginPath();
+      ctx.moveTo(x - size/2, y - size/2);
+      ctx.lineTo(x + size/2, y + size/2);
+      ctx.stroke();
+      
+      ctx.beginPath();
+      ctx.moveTo(x + size/2, y - size/2);
+      ctx.lineTo(x - size/2, y + size/2);
+      ctx.stroke();
+    }
+  }
+  
+  onMount(() => {
+    console.log("App component mounted");
+    
+    // Check if we should initialize the canvas if game is already visible
+    if (showGame) {
+      console.log("Game is visible on mount, initializing canvas");
+      // Small delay to ensure DOM is ready
+      setTimeout(() => {
+        const canvas = document.getElementById('basic-canvas');
+        if (canvas) {
+          console.log("Canvas found on mount, initializing");
+          initializeCanvas();
+        } else {
+          console.error("Canvas not found on mount");
+        }
+      }, 500);
+    }
+  });
+  
+  afterUpdate(() => {
+    console.log("App component updated, checking for canvas");
+    canvasElement = document.getElementById('basic-canvas') as HTMLCanvasElement;
+    if (canvasElement && showGame) {
+      console.log("Canvas found after update:", canvasElement.id);
+      initializeCanvas();
+    }
+  });
+</script>
+
+<main class="app">
+  <!-- MENU SCENE - Always render, control visibility with CSS -->
+  <div class="scene menu-scene" style="display: {showMainMenu ? 'block' : 'none'}">
+    <MainMenu 
+      on:startGame={handleStartGame}
+      on:loadGame={handleLoadGame}
+    />
+  </div>
+  
+  <!-- GAME SCENE - Always render, control visibility with CSS -->
+  <div class="scene game-scene" style="display: {showGame ? 'flex' : 'none'}">
+    <div class="game-content">
+      <canvas 
+        id="basic-canvas" 
+        width="1000" 
+        height="800"
+        on:click={handleCanvasClick}
+        on:mousemove={handleCanvasHover}
+      ></canvas>
+      
+      <!-- Game UI Overlay -->
+      <div class="game-ui">
+        <div class="top-bar">
+          <h2 class="planet-name">
+            {$gameState.map?.name || 'Unknown Planet'} 
+            ({gameSettings?.planetType || 'unknown'})
+          </h2>
+          <button class="menu-button" on:click={handleBackToMenu}>Back to Menu</button>
+        </div>
+        
+        <!-- Building Selection Toolbar -->
+        <div class="building-toolbar">
+          <div class="building-category">Basic</div>
+          <div class="building-buttons">
+            <button 
+              class="building-button" 
+              class:selected={selectedBuildingType === 'extractor'}
+              on:click={() => selectBuildingType('extractor')}
+              title="Extractor - Mines resources"
+            >
+              <div class="building-icon extractor"></div>
+              <span>Extractor</span>
+            </button>
+            
+            <button 
+              class="building-button" 
+              class:selected={selectedBuildingType === 'storage'}
+              on:click={() => selectBuildingType('storage')}
+              title="Storage - Stores resources"
+            >
+              <div class="building-icon storage"></div>
+              <span>Storage</span>
+            </button>
+            
+            <button 
+              class="building-button" 
+              class:selected={selectedBuildingType === 'powerPlant'}
+              on:click={() => selectBuildingType('powerPlant')}
+              title="Power Plant - Generates energy"
+            >
+              <div class="building-icon power-plant"></div>
+              <span>Power</span>
+            </button>
+          </div>
+          
+          <div class="building-category">Production</div>
+          <div class="building-buttons">
+            <button 
+              class="building-button" 
+              class:selected={selectedBuildingType === 'reactor'}
+              on:click={() => selectBuildingType('reactor')}
+              title="Reactor - Processes resources"
+            >
+              <div class="building-icon reactor"></div>
+              <span>Reactor</span>
+            </button>
+            
+            <button 
+              class="building-button" 
+              class:selected={selectedBuildingType === 'pipe'}
+              on:click={() => selectBuildingType('pipe')}
+              title="Pipe - Transfers resources"
+            >
+              <div class="building-icon pipe"></div>
+              <span>Pipe</span>
+            </button>
+          </div>
+          
+          <!-- Mode Controls -->
+          <div class="mode-controls">
+            <button 
+              class="mode-button" 
+              class:active={!isPlacementMode}
+              on:click={() => setPlacementMode(false)}
+              title="Select buildings"
+            >
+              <span>Select</span>
+            </button>
+            
+            <button 
+              class="mode-button" 
+              class:active={isPlacementMode}
+              on:click={() => setPlacementMode(true)}
+              title="Place buildings"
+            >
+              <span>Place</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  {#if debugMode}
+    <div class="debug-panel">
+      <h3>Debug Panel</h3>
+      <button on:click={handleToggleMenu}>
+        Toggle Menu
+      </button>
+      <button on:click={handleToggleGame}>
+        Toggle Game
+      </button>
+      <pre>
+        State: 
+        showMainMenu: {showMainMenu}
+        showGame: {showGame}
+        settings: {JSON.stringify(gameSettings, null, 2)}
+        
+        Game State:
+        Map Name: {$gameState.map?.name || 'Not generated yet'}
+        Planet Type: {$gameState.planetType || 'None'}
+        Buildings: {$gameState.buildings?.length || 0}
+        Map Available: {$gameState.map ? 'Yes' : 'No'}
+        Map Tiles: {$gameState.map?.tiles ? 'Yes (' + $gameState.map.tiles.length + ' rows)' : 'No'}
+        Resources: {JSON.stringify($gameState.resources, null, 2)}
+      </pre>
+      
+      <div class="debug-actions">
+        <button on:click={() => forceSaveGame()}>Force Save Game State</button>
+        <button on:click={() => forceLoadGame()}>Force Restore Game State</button>
+      </div>
+    </div>
+  {/if}
+</main>
+
+<style>
+  :global(body) {
+    margin: 0;
+    padding: 0;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    background-color: #0f0f1e;
+    color: white;
     overflow: hidden;
+  }
+  
+  .app {
+    width: 100%;
+    height: 100vh;
+    overflow: hidden;
+    position: relative;
+  }
+  
+  /* Scene Management */
+  .scene {
+    width: 100%;
+    height: 100vh;
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 10;
+    transition: opacity 0.3s ease;
+  }
+  
+  .menu-scene {
+    background-color: #0f0f1e;
+    opacity: 1;
+  }
+  
+  .game-scene {
+    background-color: #1a1a2e;
+    display: flex;
+    flex-direction: column;
+    opacity: 1;
+  }
+  
+  .game-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    position: relative;
+  }
+  
+  /* Game UI */
+  .game-ui {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    pointer-events: none;
+  }
+  
+  .game-ui .top-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 20px;
+    background-color: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(5px);
+  }
+  
+  .planet-name {
+    margin: 0;
+    font-size: 1.2rem;
+    color: #3498db;
+  }
+  
+  .menu-button {
+    pointer-events: auto;
+    background-color: #e74c3c;
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  
+  /* Building toolbar */
+  .building-toolbar {
+    position: absolute;
+    left: 10px;
+    top: 60px;
+    width: 200px;
+    background-color: rgba(0, 0, 0, 0.7);
+    border-radius: 8px;
+    padding: 10px;
+    color: white;
+    backdrop-filter: blur(5px);
+    pointer-events: auto;
+  }
+  
+  .building-category {
+    font-weight: bold;
+    color: #3498db;
+    margin: 5px 0;
+    padding-bottom: 3px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+  }
+  
+  .building-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin-bottom: 15px;
+  }
+  
+  .building-button {
+    background-color: rgba(52, 73, 94, 0.7);
+    border: 1px solid #2c3e50;
+    border-radius: 4px;
+    padding: 5px;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 60px;
+    height: 70px;
+    font-size: 11px;
+    transition: all 0.2s ease;
+  }
+  
+  .building-button:hover {
+    background-color: rgba(52, 73, 94, 0.9);
+    transform: translateY(-2px);
+  }
+  
+  .building-button.selected {
+    background-color: #3498db;
+    box-shadow: 0 0 10px rgba(52, 152, 219, 0.7);
+  }
+  
+  .building-icon {
+    width: 30px;
+    height: 30px;
+    margin-bottom: 5px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  
+  /* Building icons */
+  .extractor {
+    background-color: #3498db;
+    border-radius: 50%;
+  }
+  
+  .storage {
+    background-color: #f1c40f;
+  }
+  
+  .power-plant {
+    width: 0;
+    height: 0;
+    border-left: 15px solid transparent;
+    border-right: 15px solid transparent;
+    border-bottom: 30px solid #2ecc71;
+    margin-bottom: -5px;
+  }
+  
+  .reactor {
+    width: 30px;
+    height: 30px;
+    background-color: #e74c3c;
+    transform: rotate(45deg);
+  }
+  
+  .pipe {
+    width: 30px;
+    height: 6px;
+    background-color: #95a5a6;
+  }
+  
+  /* Mode controls */
+  .mode-controls {
+    display: flex;
+    justify-content: space-between;
+    gap: 5px;
+  }
+  
+  .mode-button {
+    flex: 1;
+    background-color: #34495e;
+    color: white;
+    border: none;
+    padding: 8px 0;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+  
+  .mode-button.active {
+    background-color: #2ecc71;
+  }
+  
+  canvas {
+    border: 2px solid #3498db;
+    background-color: #0f0f1e;
+    max-width: 90vw;
+    max-height: 70vh;
+    box-shadow: 0 0 20px rgba(52, 152, 219, 0.5);
+  }
+  
+  .canvas-text, .planet-info {
+    color: white;
+    font-size: 16px;
+    margin-top: 10px;
+    text-align: center;
+  }
+  
+  .planet-info {
+    color: #3498db;
+    font-weight: bold;
+  }
+  
+  .debug-panel {
+    position: fixed;
+    bottom: 0;
+    right: 0;
+    background-color: rgba(0, 0, 0, 0.8);
+    padding: 10px;
+    border-top-left-radius: 5px;
+    z-index: 1000;
+    max-width: 400px;
+    font-size: 12px;
+  }
+  
+  .debug-panel button {
+    margin: 5px;
+    padding: 4px 8px;
+    font-size: 12px;
+    background-color: #2c3e50;
+    color: white;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+  }
+  
+  .debug-panel button:hover {
+    background-color: #3498db;
+  }
+  
+  .debug-panel pre {
+    max-height: 250px;
+    overflow: auto;
+    font-size: 10px;
+    background-color: rgba(0, 0, 0, 0.3);
+    padding: 8px;
+    border-radius: 3px;
+  }
+  
+  .debug-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin-top: 10px;
+  }
+  
+  .debug-actions button {
+    background-color: #27ae60;
+    flex: 1;
   }
 </style>
 ```
@@ -1818,16 +3023,20 @@ This is a file of the type: SVG Image
 # frontend/src/components/ui/BuildingControlPanel.svelte
 
 ```svelte
-// In frontend/src/components/buildings/BuildingControlPanel.svelte
 <script lang="ts">
-    import { gameState } from '$lib/gameLoop';
-    import { canvasActions } from '$lib/canvasActions';
+    import { createEventDispatcher } from 'svelte';
+    import { gameState } from '../../stores/gameState';
+    
+    // Event dispatcher
+    const dispatch = createEventDispatcher();
     
     // Available building types
     const buildingTypes = [
       { id: 'extractor', name: 'Extractor', description: 'Extracts resources from the environment', cost: { energy: 100 } },
+      { id: 'storage', name: 'Storage', description: 'Stores resources for later use', cost: { energy: 80 } },
       { id: 'reactor', name: 'Chemical Reactor', description: 'Combines chemicals to create reactions', cost: { energy: 200, methane: 50 } },
-      { id: 'powerPlant', name: 'Power Plant', description: 'Generates energy from fuel', cost: { energy: 150 } }
+      { id: 'powerPlant', name: 'Power Plant', description: 'Generates energy from fuel', cost: { energy: 150 } },
+      { id: 'pipe', name: 'Pipe', description: 'Connects buildings to transfer resources', cost: { energy: 20 } }
     ];
     
     // Resources required to build
@@ -1837,7 +3046,7 @@ This is a file of the type: SVG Image
       
       // Check if we have enough resources
       for (const [resource, amount] of Object.entries(building.cost)) {
-        if ($gameState.resources[resource] < amount) {
+        if (!$gameState.resources || $gameState.resources[resource] < amount) {
           return false;
         }
       }
@@ -1846,25 +3055,27 @@ This is a file of the type: SVG Image
     }
     
     // Start building placement
-    function startPlacement(buildingType) {
+    function selectBuilding(buildingType) {
       // Check if we can afford it
-      if (!canBuild(buildingType)) return;
-      
-      // Use the store to call the startPlacement function
-      if ($canvasActions.startPlacement) {
-        $canvasActions.startPlacement(buildingType);
-      } else {
-        console.error('Placement function not available');
-        alert("Building placement isn't ready yet. Please try again in a moment.");
+      if (!canBuild(buildingType)) {
+        console.warn(`Not enough resources to build ${buildingType}`);
+        return;
       }
+      
+      // Dispatch the select event to parent
+      dispatch('select', { type: buildingType });
+      
+      console.log(`Selected building type: ${buildingType}`);
     }
     
     // Function to get color for building icon
     function getBuildingColor(buildingType) {
       switch (buildingType) {
         case 'extractor': return '#3498db';
+        case 'storage': return '#f1c40f';
         case 'reactor': return '#e74c3c';
         case 'powerPlant': return '#2ecc71';
+        case 'pipe': return '#95a5a6';
         default: return '#bdc3c7';
       }
     }
@@ -1878,7 +3089,7 @@ This is a file of the type: SVG Image
       <button 
         class="building-button" 
         class:disabled={!canBuild(building.id)}
-        on:click={() => startPlacement(building.id)}
+        on:click={() => selectBuilding(building.id)}
       >
         <div class="building-icon" style="background-color: {getBuildingColor(building.id)}"></div>
         <div class="building-info">
@@ -2798,7 +4009,7 @@ This is a file of the type: SVG Image
 <!-- frontend/src/components/ui/MainMenu.svelte -->
 <script lang="ts">
     import { createEventDispatcher } from 'svelte';
-    import { PlanetType } from '$lib/types';
+    import { PlanetType } from '../../lib/types';
     
     const dispatch = createEventDispatcher();
     
@@ -2841,75 +4052,95 @@ This is a file of the type: SVG Image
     
     // Start game with current settings
     function startGame() {
-      console.log("startGame function called in MainMenu");
-      dispatch('startGame', {
-        planetType: selectedPlanet,
-        mapWidth,
-        mapHeight,
-        resourceRichness
-      });
+    console.log("startGame function called in MainMenu");
+    const settings = {
+      planetType: selectedPlanet,
+      mapWidth,
+      mapHeight,
+      resourceRichness
+    };
+    console.log("Dispatching startGame event with settings:", settings);
+    
+    // Force event to dispatch synchronously to parent
+    setTimeout(() => {
+      dispatch('startGame', settings);
       console.log("Event dispatched from MainMenu");
-    }
+    }, 0);
+    
+    // Log dispatch to help debug
+    console.log("IMPORTANT: If you don't see handleStartGame logs in App.svelte within a second, the event handling is broken");
+  }
     
     // Load a saved game
     function loadGame() {
-      // This would be expanded in a full implementation
-      dispatch('loadGame');
+      console.log("loadGame function called in MainMenu");
+      
+      // Force event to dispatch synchronously to parent
+      setTimeout(() => {
+        dispatch('loadGame');
+        console.log("loadGame event dispatched from MainMenu");
+      }, 0);
     }
   </script>
   
   <div class="main-menu">
-    <div class="menu-container">
-      <div class="game-title">
-        <h1>FrankForge</h1>
-        <div class="tagline">Build, React, Evolve</div>
-      </div>
-      
-      <div class="menu-content">
-        <div class="planet-selection">
-          <h2>Select Planet</h2>
-          <div class="planet-grid">
-            {#each planetTypes as planet}
+  <div class="menu-container">
+    <div class="game-title">
+      <h1>FrankForge</h1>
+      <div class="tagline">Build, React, Evolve</div>
+    </div>
+    
+    <div class="menu-content">
 
-              <button 
+      <div class="planet-selection">
+        <h2>Select Planet</h2>
+        <div class="planet-grid">
+          {#each planetTypes as planet}
+            <button 
               class="planet-card" 
               class:selected={selectedPlanet === planet.id}
               on:click={() => selectedPlanet = planet.id}
               type="button"
-              aria-pressed={selectedPlanet === planet.id}
             >
               <div class="planet-icon" style={`background-color: ${getPlanetColor(planet.id)};`}></div>
               <div class="planet-details">
                 <div class="planet-name">{planet.name}</div>
                 <div class="planet-description">{planet.description}</div>
               </div>
-              </button>
-
-            {/each}
-          </div>
+            </button>
+          {/each}
         </div>
+      </div>
+      
+      <div class="game-settings">
+        <h2>Game Settings</h2>
         
-        <div class="game-settings">
-          <h2>Game Settings</h2>
-          
-          <!-- For map size selection -->
+        <!-- Map Size Selection -->
         <div class="setting">
-          <label id="map-size-label">Map Size:</label>
-          <div class="setting-options" role="radiogroup" aria-labelledby="map-size-label">
+          <label>Map Size:</label>
+          <div class="setting-options">
             <button 
-              type="button"
-              role="radio"
-              aria-checked={mapSize === "small"}
               class:active={mapSize === "small"} 
               on:click={() => updateMapSize("small")}
             >
               Small (50×50)
             </button>
-            <!-- Repeat for other map size buttons -->
+            <button 
+              class:active={mapSize === "medium"} 
+              on:click={() => updateMapSize("medium")}
+            >
+              Medium (100×100)
+            </button>
+            <button 
+              class:active={mapSize === "large"} 
+              on:click={() => updateMapSize("large")}
+            >
+              Large (200×200)
+            </button>
           </div>
         </div>
-          
-          <!-- For resource richness slider -->
+        
+        <!-- Resource Richness -->
         <div class="setting">
           <label for="resource-slider">Resource Richness: {Math.round(resourceRichness * 100)}%</label>
           <input 
@@ -2921,18 +4152,21 @@ This is a file of the type: SVG Image
             bind:value={resourceRichness} 
           />
         </div>
-        </div>
-        <div class="menu-actions">
-          <button class="primary-button" on:click={startGame}>
-            Start New Game
-          </button>
-          <button class="secondary-button" on:click={loadGame}>
-            Load Saved Game
-          </button>
-        </div>
+      </div>
+      
+      <!-- Action Buttons - Moved to the top for visibility -->
+      <div class="menu-actions">
+        <!-- Added type="button" to prevent form submission behavior -->
+        <button type="button" class="primary-button" on:click={startGame}>
+          Start New Game
+        </button>
+        <button type="button" class="secondary-button" on:click={loadGame}>
+          Load Saved Game
+        </button>
       </div>
     </div>
   </div>
+</div>
   
   <style>
     .main-menu {
@@ -2949,20 +4183,22 @@ This is a file of the type: SVG Image
     
     .menu-container {
       width: 90%;
-      max-width: 1200px;
+      max-width: 1080px;
+      height: 90vh;
+      overflow-y: auto;
       background-color: rgba(26, 26, 46, 0.8);
       border-radius: 8px;
       box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
-      padding: 2rem;
+      padding: 1.5rem;
     }
     
     .game-title {
       text-align: center;
-      margin-bottom: 2rem;
+      margin-bottom: 1.5rem;
     }
     
     h1 {
-      font-size: 3rem;
+      font-size: 2.5rem;
       margin: 0;
       background: linear-gradient(90deg, #3498db, #2ecc71, #e74c3c);
       -webkit-background-clip: text;
@@ -2972,7 +4208,7 @@ This is a file of the type: SVG Image
     }
     
     .tagline {
-      font-size: 1.2rem;
+      font-size: 1rem;
       margin-top: 0.5rem;
       color: #bdc3c7;
     }
@@ -2980,67 +4216,36 @@ This is a file of the type: SVG Image
     .menu-content {
       display: flex;
       flex-direction: column;
-      gap: 2rem;
+      gap: 1.2rem;
     }
     
-    h2 {
-      margin-top: 0;
-      border-bottom: 1px solid #34495e;
-      padding-bottom: 0.5rem;
-      color: #3498db;
+    .planet-selection {
+      margin-bottom: 0.5rem;
     }
     
-    .planet-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-      gap: 1rem;
-      margin-top: 1rem;
+    .planet-selection label {
+      display: block;
+      margin-bottom: 0.5rem;
+      font-weight: 500;
     }
     
-    .planet-card {
-      display: flex;
-      align-items: center;
+    .planet-selection select {
+      width: 100%;
+      padding: 0.6rem;
       background-color: #2c3e50;
-      border-radius: 6px;
-      padding: 1rem;
+      color: white;
+      border: none;
+      border-radius: 4px;
       cursor: pointer;
-      transition: all 0.2s ease;
     }
     
-    .planet-card:hover {
-      background-color: #34495e;
-      transform: translateY(-2px);
-    }
-    
-    .planet-card.selected {
-      background-color: #3498db;
-      box-shadow: 0 0 10px rgba(52, 152, 219, 0.5);
-    }
-    
-    .planet-icon {
-      width: 40px;
-      height: 40px;
-      border-radius: 50%;
-      margin-right: 1rem;
-      flex-shrink: 0;
-    }
-    
-    .planet-details {
-      flex: 1;
-    }
-    
-    .planet-name {
-      font-weight: bold;
-      margin-bottom: 0.25rem;
-    }
-    
-    .planet-description {
-      font-size: 0.8rem;
-      color: #bdc3c7;
+    .planet-selection select option {
+      background-color: #2c3e50;
+      color: white;
     }
     
     .setting {
-      margin-bottom: 1rem;
+      margin-bottom: 0.8rem;
     }
     
     .setting label {
@@ -3083,8 +4288,8 @@ This is a file of the type: SVG Image
     
     input[type="range"]::-webkit-slider-thumb {
       -webkit-appearance: none;
-      width: 20px;
-      height: 20px;
+      width: 16px;
+      height: 16px;
       border-radius: 50%;
       background-color: #3498db;
       cursor: pointer;
@@ -3092,19 +4297,20 @@ This is a file of the type: SVG Image
     
     .menu-actions {
       display: flex;
-      gap: 1rem;
-      margin-top: 1rem;
+      gap: 0.8rem;
+      margin-top: 1.5rem;
     }
     
     .primary-button, .secondary-button {
       flex: 1;
-      padding: 1rem;
+      padding: 0.8rem;
       border: none;
       border-radius: 6px;
-      font-size: 1.1rem;
+      font-size: 1rem;
       font-weight: 500;
       cursor: pointer;
       transition: all 0.2s ease;
+      position: relative; /* For the active state effect */
     }
     
     .primary-button {
@@ -3115,6 +4321,12 @@ This is a file of the type: SVG Image
     .primary-button:hover {
       background-color: #27ae60;
       transform: translateY(-2px);
+      box-shadow: 0 4px 8px rgba(39, 174, 96, 0.3);
+    }
+    
+    .primary-button:active {
+      transform: translateY(1px);
+      box-shadow: 0 2px 3px rgba(39, 174, 96, 0.3);
     }
     
     .secondary-button {
@@ -3125,6 +4337,12 @@ This is a file of the type: SVG Image
     .secondary-button:hover {
       background-color: #95a5a6;
       transform: translateY(-2px);
+      box-shadow: 0 4px 8px rgba(127, 140, 141, 0.3);
+    }
+    
+    .secondary-button:active {
+      transform: translateY(1px);
+      box-shadow: 0 2px 3px rgba(127, 140, 141, 0.3);
     }
   </style>
   
@@ -4084,691 +5302,403 @@ This is a file of the type: SVG Image
 # frontend/src/components/world/GameCanvas.svelte
 
 ```svelte
+<!-- src/components/GameCanvas.svelte -->
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { canvasActions, registerCanvasActions } from '$lib/canvasActions';
-  import { gameState } from '$lib/gameLoop';
-  import { TILE_SIZE, renderMap } from '$lib/mapRenderer';
-  import { generatePlanetMap } from '$lib/mapGenerator';
-  import { PlanetType } from '$lib/types';
+  import { onMount, onDestroy, tick } from 'svelte';
+  import { gameState, startGameLoop, type Building } from '../../stores/gameState';
+  
   // Canvas properties
   let canvas: HTMLCanvasElement;
   let ctx: CanvasRenderingContext2D;
+  
+  // Use simpler fixed dimensions for troubleshooting
   let width = 800;
   let height = 600;
+  
+  // Flag to track initialization
+  let isInitialized = false;
+  let debugMessage = "Component created";
+  
+  // Resize canvas when window changes
+  function handleResize() {
+    width = window.innerWidth;
+    height = window.innerHeight;
+    if (canvas && ctx) {
+      canvas.width = width;
+      canvas.height = height;
+    }
+  }
   
   // Camera controls
   let cameraX = 0;
   let cameraY = 0;
-  const cameraSpeed = 10;
+  let zoom = 1;
   
   // Mouse state
   let mouseX = 0;
   let mouseY = 0;
-  let isMouseDown = false;
+  let isDragging = false;
+  let selectedBuilding: Building | null = null;
   
   // Building placement
   let placementMode = false;
   let placementType = '';
   
-  // Environmental visualization
-  let showHeatMap = false;
-  let showPressureMap = false;
-  
-  // Map and tileset
-  let planetMap;
-  let tileset: HTMLImageElement;
-  let tilesetInfo = {
-    tileWidth: TILE_SIZE,
-    tileHeight: TILE_SIZE,
-    columns: 16,
-    rows: 16
-  };
-  
-  // Method to start building placement - will be called via store
-  function startPlacementInternal(type) {
-    console.log("GameCanvas.startPlacement called with:", type);
-    placementMode = true;
-    placementType = type;
-  }
-
-  // Initialize the world map
-  function initializeWorld() {
-    // Generate a map for testing (would eventually load from save or generate based on seed)
-    planetMap = generatePlanetMap({
-      width: 50,
-      height: 50,
-      planetType: PlanetType.EARTH_LIKE,
-      oceanLevel: 0.35,
-      mountainLevel: 0.7,
-      resourceRichness: 0.6,
-      alienness: 0.2
-    });
+  onMount(() => {
+    console.log("GameCanvas: onMount triggered");
     
-    // Load tileset image
-    tileset = new Image();
-    tileset.src = 'assets/sprites/terrain/terrain_tileset.png'; // Placeholder path
-    tileset.onload = () => {
-      // Force a redraw when tileset is loaded
-      renderLoop();
+    // Initialize canvas
+    if (!canvas) {
+      console.error("GameCanvas: Canvas element not found on mount");
+      return;
+    }
+    
+    // Set initial canvas size
+    canvas.width = width;
+    canvas.height = height;
+    
+    ctx = canvas.getContext('2d');
+    if (!ctx) {
+      console.error("GameCanvas: Could not get canvas context");
+      return;
+    }
+    
+    // Add resize listener
+    window.addEventListener('resize', handleResize);
+    
+    // Start render loop
+    const renderLoopCleanup = startRenderLoop();
+    
+    // Start game loop
+    const gameLoopCleanup = startGameLoop();
+    
+    console.log("GameCanvas: Render and game loops started");
+    
+    return () => {
+      console.log("GameCanvas: Cleaning up");
+      renderLoopCleanup();
+      gameLoopCleanup();
+      window.removeEventListener('resize', handleResize);
+    };
+  });
+  
+  function startRenderLoop() {
+    let animationFrame: number;
+    let renderCount = 0;
+    
+    const render = () => {
+      if (!ctx || !canvas) {
+        console.warn("GameCanvas: Canvas or context not available, skipping render");
+        animationFrame = requestAnimationFrame(render);
+        return;
+      }
+      
+      try {
+        // Clear canvas
+        ctx.fillStyle = '#1a1a2e';
+        ctx.fillRect(0, 0, width, height);
+        
+        // Apply camera transform
+        ctx.save();
+        ctx.translate(width/2, height/2);
+        ctx.scale(zoom, zoom);
+        ctx.translate(-cameraX, -cameraY);
+        
+        // Draw grid
+        drawGrid();
+        
+        // Draw buildings if they exist
+        if ($gameState.buildings && Array.isArray($gameState.buildings)) {
+          $gameState.buildings.forEach(building => {
+            drawBuilding(building);
+          });
+          
+          // Draw connections between buildings
+          drawConnections();
+        }
+        
+        // Draw placement preview if in placement mode
+        if (placementMode) {
+          drawPlacementPreview();
+        }
+        
+        // Reset transform
+        ctx.restore();
+        
+        // Draw UI elements that don't move with camera
+        drawUI();
+        
+        // Log only the first few frames for debugging
+        renderCount++;
+        if (renderCount <= 5) {
+          console.log(`GameCanvas: Rendered frame #${renderCount}`);
+        }
+        if (renderCount === 60) {
+          console.log("GameCanvas: Render loop running at 60fps");
+        }
+      } catch (err) {
+        console.error("GameCanvas: Error in render loop:", err);
+      }
+      
+      // Request next frame
+      animationFrame = requestAnimationFrame(render);
+    };
+    
+    console.log("GameCanvas: Starting render loop");
+    animationFrame = requestAnimationFrame(render);
+    
+    return () => {
+      if (animationFrame) {
+        cancelAnimationFrame(animationFrame);
+      }
     };
   }
   
-  // Handle keyboard input for camera movement
-  function handleKeyDown(event: KeyboardEvent) {
-    // Only move camera if not typing in an input
-    if (event.target instanceof HTMLInputElement) return;
+  function drawGrid() {
+    const gridSize = 32;
+    const gridExtent = 2000;
     
-    if (event.key === 'w' || event.key === 'ArrowUp') cameraY -= cameraSpeed;
-    if (event.key === 's' || event.key === 'ArrowDown') cameraY += cameraSpeed;
-    if (event.key === 'a' || event.key === 'ArrowLeft') cameraX -= cameraSpeed;
-    if (event.key === 'd' || event.key === 'ArrowRight') cameraX += cameraSpeed;
-    
-    // Toggle heat map with 'h'
-    if (event.key === 'h') showHeatMap = !showHeatMap;
-    
-    // Toggle pressure map with 'p'
-    if (event.key === 'p') showPressureMap = !showPressureMap;
-    
-    // Cancel placement with Escape
-    if (event.key === 'Escape' && placementMode) {
-      placementMode = false;
-    }
-    
-    // Prevent scrolling the page
-    if (['w', 's', 'a', 'd', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'h', 'p'].includes(event.key)) {
-      event.preventDefault();
-    }
-  }
-
-  function renderLoop() {
-    // Clear canvas
-    ctx.fillStyle = '#1a1a2e';
-    ctx.fillRect(0, 0, width, height);
-    
-    // Render map if available
-    if (planetMap && tileset && tileset.complete) {
-      renderMap(
-        ctx, 
-        planetMap, 
-        tileset, 
-        tilesetInfo, 
-        cameraX, 
-        cameraY, 
-        width, 
-        height, 
-        false // debug mode
-      );
-    } else {
-      // Render loading message
-      ctx.fillStyle = 'white';
-      ctx.font = '24px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('Loading map...', width / 2, height / 2);
-      
-      // Render a simple grid as placeholder
-      renderTiles();
-    }
-    
-    // Render environmental effects if enabled
-    if (showHeatMap) {
-      renderHeatMap();
-    } else if (showPressureMap) {
-      renderPressureMap();
-    }
-    
-    // Render buildings
-    renderBuildings();
-    
-    // Render placement preview
-    if (placementMode) {
-      renderPlacementPreview();
-    }
-    
-    // Render UI overlays
-    renderUIOverlays();
-    
-    // Continue the loop
-    requestAnimationFrame(renderLoop);
-  }
-  
-  function renderTiles() {
-    // Calculate visible grid range
-    const startX = Math.floor(cameraX / TILE_SIZE);
-    const endX = startX + Math.ceil(width / TILE_SIZE) + 1;
-    const startY = Math.floor(cameraY / TILE_SIZE);
-    const endY = startY + Math.ceil(height / TILE_SIZE) + 1;
-    
-    // Render visible tiles (simplified placeholder grid)
     ctx.strokeStyle = '#2a2a3e';
     ctx.lineWidth = 1;
     
-    for (let y = startY; y < endY; y++) {
-      for (let x = startX; x < endX; x++) {
-        const screenX = Math.floor(x * TILE_SIZE - cameraX);
-        const screenY = Math.floor(y * TILE_SIZE - cameraY);
-        
-        // Draw grid cell
-        ctx.strokeRect(screenX, screenY, TILE_SIZE, TILE_SIZE);
-        
-        // Draw checkerboard pattern for visibility
-        if ((x + y) % 2 === 0) {
-          ctx.fillStyle = '#1a1a2e';
-        } else {
-          ctx.fillStyle = '#232342';
-        }
-        ctx.fillRect(screenX, screenY, TILE_SIZE, TILE_SIZE);
-      }
+    // Calculate visible grid range
+    const startX = Math.floor((cameraX - width/(2*zoom)) / gridSize) * gridSize;
+    const endX = Math.ceil((cameraX + width/(2*zoom)) / gridSize) * gridSize;
+    const startY = Math.floor((cameraY - height/(2*zoom)) / gridSize) * gridSize;
+    const endY = Math.ceil((cameraY + height/(2*zoom)) / gridSize) * gridSize;
+    
+    // Draw vertical lines
+    for (let x = startX; x <= endX; x += gridSize) {
+      ctx.beginPath();
+      ctx.moveTo(x, startY);
+      ctx.lineTo(x, endY);
+      ctx.stroke();
+    }
+    
+    // Draw horizontal lines
+    for (let y = startY; y <= endY; y += gridSize) {
+      ctx.beginPath();
+      ctx.moveTo(startX, y);
+      ctx.lineTo(endX, y);
+      ctx.stroke();
     }
   }
   
-  function renderHeatMap() {
-    // Overlay heat visualization on the world
-    ctx.globalAlpha = 0.4; // Semi-transparent
-
-    // Buildings and their heat influence
-    if ($gameState && $gameState.buildings) {
-      $gameState.buildings.forEach(building => {
-        const screenX = Math.floor(building.position.x * TILE_SIZE - cameraX);
-        const screenY = Math.floor(building.position.y * TILE_SIZE - cameraY);
-        
-        // Only render if on screen
-        if (screenX > -TILE_SIZE * 5 && screenX < width + TILE_SIZE * 5 &&
-            screenY > -TILE_SIZE * 5 && screenY < height + TILE_SIZE * 5) {
-          
-          // Heat radius depends on temperature difference from ambient
-          const tempDiff = building.temperature - $gameState.temperature;
-          const radius = Math.abs(tempDiff) / 10 * TILE_SIZE * 3;
-          
-          // Create radial gradient for heat effect
-          const gradient = ctx.createRadialGradient(
-            screenX + TILE_SIZE/2, screenY + TILE_SIZE/2, 0,
-            screenX + TILE_SIZE/2, screenY + TILE_SIZE/2, radius
-          );
-          
-          if (tempDiff > 0) {
-            // Hot buildings (red)
-            gradient.addColorStop(0, 'rgba(255, 0, 0, 0.7)');
-            gradient.addColorStop(1, 'rgba(255, 0, 0, 0)');
-          } else {
-            // Cold buildings (blue)
-            gradient.addColorStop(0, 'rgba(0, 0, 255, 0.7)');
-            gradient.addColorStop(1, 'rgba(0, 0, 255, 0)');
-          }
-          
-          ctx.fillStyle = gradient;
+  function drawBuilding(building: Building) {
+    const size = 32;
+    const x = building.position.x;
+    const y = building.position.y;
+    
+    // Draw different shapes based on building type
+    ctx.fillStyle = getColorForBuildingType(building.type);
+    
+    switch (building.type) {
+      case 'extractor':
+        ctx.beginPath();
+        ctx.arc(x, y, size/2, 0, Math.PI * 2);
+        ctx.fill();
+        break;
+      case 'reactor':
+        ctx.fillRect(x - size/2, y - size/2, size, size);
+        break;
+      case 'powerPlant':
+        drawTriangle(x, y, size);
+        break;
+      default:
+        ctx.fillRect(x - size/2, y - size/2, size, size);
+    }
+    
+    // Draw selection indicator if selected
+    if (selectedBuilding && selectedBuilding.id === building.id) {
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x - size/2 - 4, y - size/2 - 4, size + 8, size + 8);
+    }
+  }
+  
+  function drawTriangle(x: number, y: number, size: number) {
+    ctx.beginPath();
+    ctx.moveTo(x, y - size/2);
+    ctx.lineTo(x + size/2, y + size/2);
+    ctx.lineTo(x - size/2, y + size/2);
+    ctx.closePath();
+    ctx.fill();
+  }
+  
+  function getColorForBuildingType(type: string): string {
+    switch (type) {
+      case 'extractor': return '#3498db';
+      case 'reactor': return '#e74c3c';
+      case 'separator': return '#9b59b6';
+      case 'storage': return '#f1c40f';
+      case 'powerPlant': return '#2ecc71';
+      case 'pipe': return '#95a5a6';
+      default: return '#bdc3c7';
+    }
+  }
+  
+  function drawConnections() {
+    ctx.strokeStyle = '#95a5a6';
+    ctx.lineWidth = 2;
+    
+    $gameState.buildings.forEach(building => {
+      building.connections.forEach(targetId => {
+        const target = $gameState.buildings.find(b => b.id === targetId);
+        if (target) {
           ctx.beginPath();
-          ctx.arc(screenX + TILE_SIZE/2, screenY + TILE_SIZE/2, radius, 0, Math.PI * 2);
-          ctx.fill();
+          ctx.moveTo(building.position.x, building.position.y);
+          ctx.lineTo(target.position.x, target.position.y);
+          ctx.stroke();
         }
       });
-    }
-    
-    ctx.globalAlpha = 1.0; // Reset transparency
-  }
-  
-  function renderPressureMap() {
-    // Overlay pressure visualization
-    ctx.globalAlpha = 0.3; // Semi-transparent
-    
-    // Buildings and their pressure influence
-    $gameState.buildings.forEach(building => {
-      const screenX = Math.floor(building.position.x * TILE_SIZE - cameraX);
-      const screenY = Math.floor(building.position.y * TILE_SIZE - cameraY);
-      
-      // Only render if on screen
-      if (screenX > -TILE_SIZE * 5 && screenX < width + TILE_SIZE * 5 &&
-          screenY > -TILE_SIZE * 5 && screenY < height + TILE_SIZE * 5) {
-        
-        // Pressure radius depends on pressure difference from ambient
-        const pressureDiff = building.pressure - $gameState.pressure;
-        const radius = Math.abs(pressureDiff) / 10000 * TILE_SIZE * 3;
-        
-        // Create radial gradient for pressure effect
-        const gradient = ctx.createRadialGradient(
-          screenX + TILE_SIZE/2, screenY + TILE_SIZE/2, 0,
-          screenX + TILE_SIZE/2, screenY + TILE_SIZE/2, radius
-        );
-        
-        if (pressureDiff > 0) {
-          // High pressure (purple)
-          gradient.addColorStop(0, 'rgba(128, 0, 128, 0.7)');
-          gradient.addColorStop(1, 'rgba(128, 0, 128, 0)');
-        } else {
-          // Low pressure (green)
-          gradient.addColorStop(0, 'rgba(0, 128, 0, 0.7)');
-          gradient.addColorStop(1, 'rgba(0, 128, 0, 0)');
-        }
-        
-        ctx.fillStyle = gradient;
-        ctx.beginPath();
-        ctx.arc(screenX + TILE_SIZE/2, screenY + TILE_SIZE/2, radius, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    });
-    
-    ctx.globalAlpha = 1.0; // Reset transparency
-  }
-  
-  function renderBuildings() {
-    $gameState.buildings.forEach(building => {
-      const screenX = Math.floor(building.position.x * TILE_SIZE - cameraX);
-      const screenY = Math.floor(building.position.y * TILE_SIZE - cameraY);
-      
-      // Only render if on screen
-      if (screenX > -TILE_SIZE * 2 && screenX < width &&
-          screenY > -TILE_SIZE * 2 && screenY < height) {
-        
-        // Draw building based on type
-        switch (building.type) {
-          case 'extractor':
-            drawExtractor(screenX, screenY, building);
-            break;
-          case 'reactor':
-            drawReactor(screenX, screenY, building);
-            break;
-          case 'powerPlant':
-            drawPowerPlant(screenX, screenY, building);
-            break;
-          default:
-            // Default building shape
-            ctx.fillStyle = '#bdc3c7';
-            ctx.fillRect(screenX, screenY, TILE_SIZE, TILE_SIZE);
-        }
-      }
     });
   }
   
-  function drawExtractor(x, y, building) {
-    // Blue circular extractor
-    ctx.fillStyle = '#3498db';
+  function drawPlacementPreview() {
+    // Get mouse world position
+    const worldX = cameraX + (mouseX - width/2) / zoom;
+    const worldY = cameraY + (mouseY - height/2) / zoom;
     
-    // Apply efficiency visual effect
-    if (building && building.efficiency) {
-      const opacity = Math.max(0.3, building.efficiency);
-      ctx.fillStyle = `rgba(52, 152, 219, ${opacity})`;
-    }
+    // Snap to grid
+    const gridSize = 32;
+    const snappedX = Math.round(worldX / gridSize) * gridSize;
+    const snappedY = Math.round(worldY / gridSize) * gridSize;
     
-    ctx.beginPath();
-    ctx.arc(x + TILE_SIZE/2, y + TILE_SIZE/2, TILE_SIZE/2, 0, Math.PI * 2);
-    ctx.fill();
-    
-    // Inner details
-    ctx.fillStyle = '#2980b9';
-    ctx.beginPath();
-    ctx.arc(x + TILE_SIZE/2, y + TILE_SIZE/2, TILE_SIZE/4, 0, Math.PI * 2);
-    ctx.fill();
-    
-    // Show building is selected
-    if (building && building.selected) {
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(x - 2, y - 2, TILE_SIZE + 4, TILE_SIZE + 4);
-    }
-    
-    // Display efficiency indicator if very low
-    if (building && building.efficiency < 0.5) {
-      drawWarningIndicator(x, y);
-    }
-  }
-  
-  function drawReactor(x, y, building) {
-    // Red square reactor
-    ctx.fillStyle = '#e74c3c';
-    
-    // Apply efficiency visual effect
-    if (building && building.efficiency) {
-      const opacity = Math.max(0.3, building.efficiency);
-      ctx.fillStyle = `rgba(231, 76, 60, ${opacity})`;
-    }
-    
-    ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
-    
-    // Inner details (warning stripes)
-    ctx.fillStyle = '#c0392b';
-    ctx.fillRect(x + TILE_SIZE/4, y + TILE_SIZE/4, TILE_SIZE/2, TILE_SIZE/2);
-    
-    // Show building is selected
-    if (building && building.selected) {
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(x - 2, y - 2, TILE_SIZE + 4, TILE_SIZE + 4);
-    }
-    
-    // Display efficiency indicator if very low
-    if (building && building.efficiency < 0.5) {
-      drawWarningIndicator(x, y);
-    }
-    
-    // Show heat effect for reactors (they tend to be hot)
-    if (building && building.temperature > 400) {
-      drawHeatIndicator(x, y);
-    }
-  }
-  
-  function drawPowerPlant(x, y, building) {
-    // Green power plant (triangle shape)
-    ctx.fillStyle = '#2ecc71';
-    
-    // Apply efficiency visual effect
-    if (building && building.efficiency) {
-      const opacity = Math.max(0.3, building.efficiency);
-      ctx.fillStyle = `rgba(46, 204, 113, ${opacity})`;
-    }
-    
-    ctx.beginPath();
-    ctx.moveTo(x + TILE_SIZE/2, y);
-    ctx.lineTo(x + TILE_SIZE, y + TILE_SIZE);
-    ctx.lineTo(x, y + TILE_SIZE);
-    ctx.closePath();
-    ctx.fill();
-    
-    // Show building is selected
-    if (building && building.selected) {
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(x - 2, y - 2, TILE_SIZE + 4, TILE_SIZE + 4);
-    }
-    
-    // Display efficiency indicator if very low
-    if (building && building.efficiency < 0.5) {
-      drawWarningIndicator(x, y);
-    }
-    
-    // Show heat effect for power plants (they tend to be hot)
-    if (building && building.temperature > 450) {
-      drawHeatIndicator(x, y);
-    }
-  }
-  
-  function drawWarningIndicator(x, y) {
-    // Draw a warning triangle
-    ctx.fillStyle = '#f39c12';
-    ctx.beginPath();
-    ctx.moveTo(x + TILE_SIZE - 4, y + 4);
-    ctx.lineTo(x + TILE_SIZE - 4, y + 14);
-    ctx.lineTo(x + TILE_SIZE - 14, y + 4);
-    ctx.closePath();
-    ctx.fill();
-    
-    // Exclamation mark
-    ctx.fillStyle = '#000';
-    ctx.fillRect(x + TILE_SIZE - 9, y + 6, 2, 4);
-    ctx.fillRect(x + TILE_SIZE - 9, y + 11, 2, 2);
-  }
-  
-  function drawHeatIndicator(x, y) {
-    // Small flame indicator
-    ctx.fillStyle = '#f39c12';
-    
-    // Flame base
-    ctx.beginPath();
-    ctx.moveTo(x + 4, y + TILE_SIZE - 4);
-    ctx.lineTo(x + 12, y + TILE_SIZE - 14);
-    ctx.lineTo(x + 20, y + TILE_SIZE - 4);
-    ctx.closePath();
-    ctx.fill();
-  }
-  
-  function renderUIOverlays() {
-    // Draw mode indicators
-    ctx.fillStyle = '#fff';
-    ctx.font = '14px sans-serif';
-    ctx.textAlign = 'left';
-    
-    if (showHeatMap) {
-      ctx.fillText('Heat Map Active (H to toggle)', 10, 20);
-    } else if (showPressureMap) {
-      ctx.fillText('Pressure Map Active (P to toggle)', 10, 20);
-    }
-    
-    // Display current coordinates under mouse
-    if (mouseX > 0 && mouseY > 0) {
-      const gridX = Math.floor((mouseX + cameraX) / TILE_SIZE);
-      const gridY = Math.floor((mouseY + cameraY) / TILE_SIZE);
-      
-      if (gridX >= 0 && gridY >= 0) {
-        ctx.fillText(`Coordinates: (${gridX}, ${gridY})`, 10, height - 10);
-      }
-    }
-  }
-  
-  function renderPlacementPreview() {
-    // Get mouse grid position
-    const gridX = Math.floor((mouseX + cameraX) / TILE_SIZE);
-    const gridY = Math.floor((mouseY + cameraY) / TILE_SIZE);
-    const screenX = gridX * TILE_SIZE - cameraX;
-    const screenY = gridY * TILE_SIZE - cameraY;
-    
-    // Draw semi-transparent preview
+    // Draw preview
     ctx.globalAlpha = 0.5;
+    ctx.fillStyle = getColorForBuildingType(placementType);
     
     switch (placementType) {
       case 'extractor':
-        drawExtractor(screenX, screenY, null);
+        ctx.beginPath();
+        ctx.arc(snappedX, snappedY, gridSize/2, 0, Math.PI * 2);
+        ctx.fill();
         break;
       case 'reactor':
-        drawReactor(screenX, screenY, null);
+        ctx.fillRect(snappedX - gridSize/2, snappedY - gridSize/2, gridSize, gridSize);
         break;
       case 'powerPlant':
-        drawPowerPlant(screenX, screenY, null);
+        drawTriangle(snappedX, snappedY, gridSize);
         break;
       default:
-        ctx.fillStyle = '#bdc3c7';
-        ctx.fillRect(screenX, screenY, TILE_SIZE, TILE_SIZE);
+        ctx.fillRect(snappedX - gridSize/2, snappedY - gridSize/2, gridSize, gridSize);
     }
     
     ctx.globalAlpha = 1.0;
-    
-    // Draw grid highlight
-    ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(screenX, screenY, TILE_SIZE, TILE_SIZE);
-    
-    // Display info about placement
-    ctx.fillStyle = '#fff';
-    ctx.font = '14px sans-serif';
-    ctx.textAlign = 'left';
-    ctx.fillText(`Placing: ${placementType}`, 10, 40);
-    
-    // Show resource at placement location
-    if (gridX >= 0 && gridY >= 0 && planetMap && gridY < planetMap.height && gridX < planetMap.width) {
-      const tile = planetMap.tiles[gridY][gridX];
-      ctx.fillText(`Terrain: ${TerrainType[tile.terrain]}`, 10, 60);
-      
-      if (tile.resource !== ResourceType.NONE) {
-        ctx.fillText(`Resource: ${ResourceType[tile.resource]} (${Math.round(tile.resourceDensity * 100)}%)`, 10, 80);
-      }
-      
-      // Show efficiency prediction based on environment
-      const predictedEfficiency = predictBuildingEfficiency(placementType, $gameState.temperature, $gameState.pressure);
-      ctx.fillText(`Predicted Efficiency: ${Math.round(predictedEfficiency * 100)}%`, 10, 100);
-    }
   }
   
-  function handleMouseMove(event) {
-    if (!canvas) return;
+  function drawUI() {
+    // Draw resource info
+    ctx.font = '16px monospace';
+    ctx.fillStyle = '#ffffff';
+    let y = 20;
     
+    for (const [resource, amount] of Object.entries($gameState.resources)) {
+      ctx.fillText(`${resource}: ${amount.toFixed(1)}`, 10, y);
+      y += 20;
+    }
+    
+    // Draw energy info
+    ctx.fillText(`Energy: ${$gameState.energy} J`, 10, y + 20);
+    
+    // Draw tick count
+    ctx.fillText(`Tick: ${$gameState.tick}`, 10, y + 40);
+  }
+  
+  // Event handlers
+  function handleMouseDown(event: MouseEvent) {
     const rect = canvas.getBoundingClientRect();
     mouseX = event.clientX - rect.left;
     mouseY = event.clientY - rect.top;
+    
+    if (event.button === 0) { // Left click
+      if (placementMode) {
+        placeBuilding();
+      } else {
+        selectBuilding();
+      }
+    } else if (event.button === 2) { // Right click
+      isDragging = true;
+    }
   }
   
-  function handleMouseDown(event) {
-    isMouseDown = true;
+  function handleMouseMove(event: MouseEvent) {
+    const rect = canvas.getBoundingClientRect();
+    mouseX = event.clientX - rect.left;
+    mouseY = event.clientY - rect.top;
     
-    if (placementMode) {
-      const gridX = Math.floor((mouseX + cameraX) / TILE_SIZE);
-      const gridY = Math.floor((mouseY + cameraY) / TILE_SIZE);
-      
-      // Check if within grid bounds
-      if (gridX >= 0 && gridY >= 0 && planetMap && gridY < planetMap.height && gridX < planetMap.width) {
-        // Check if we can place on this tile (not occupied)
-        const canPlace = !$gameState.buildings.some(
-          b => b.position.x === gridX && b.position.y === gridY
-        );
-        
-        if (canPlace) {
-          // Add new building to game state
-          const newBuilding = {
-            id: crypto.randomUUID(),
-            type: placementType,
-            position: { x: gridX, y: gridY },
-            connections: [],
-            temperature: $gameState.temperature, // Initialize with ambient temperature
-            pressure: $gameState.pressure,       // Initialize with ambient pressure
-            efficiency: predictBuildingEfficiency(placementType, $gameState.temperature, $gameState.pressure)
-          };
-          
-          gameState.update(state => {
-            state.buildings = [...state.buildings, newBuilding];
-            
-            // Deduct resources (placeholder - will be implemented in next steps)
-            // For now just decrease energy as a placeholder
-            state.resources.energy -= 100;
-            
-            return state;
-          });
-        }
-      }
-      
-      // Exit placement mode after placing
-      placementMode = false;
-    } else {
-      // Select building under cursor
-      selectBuildingUnderCursor();
+    if (isDragging) {
+      cameraX -= event.movementX / zoom;
+      cameraY -= event.movementY / zoom;
     }
   }
   
   function handleMouseUp() {
-    isMouseDown = false;
+    isDragging = false;
   }
   
-  function selectBuildingUnderCursor() {
-    const gridX = Math.floor((mouseX + cameraX) / TILE_SIZE);
-    const gridY = Math.floor((mouseY + cameraY) / TILE_SIZE);
+  function handleWheel(event: WheelEvent) {
+    event.preventDefault();
+    const zoomFactor = event.deltaY > 0 ? 0.9 : 1.1;
+    zoom = Math.max(0.1, Math.min(zoom * zoomFactor, 5));
+  }
+  
+  function placeBuilding() {
+    const worldX = cameraX + (mouseX - width/2) / zoom;
+    const worldY = cameraY + (mouseY - height/2) / zoom;
     
-    // Deselect all buildings first
+    // Snap to grid
+    const gridSize = 32;
+    const snappedX = Math.round(worldX / gridSize) * gridSize;
+    const snappedY = Math.round(worldY / gridSize) * gridSize;
+    
+    // Create new building
+    const newBuilding: Building = {
+      id: crypto.randomUUID(),
+      type: placementType,
+      position: { x: snappedX, y: snappedY },
+      connections: []
+    };
+    
+    // Add to game state
     gameState.update(state => {
-      state.buildings.forEach(b => b.selected = false);
-      
-      // Find and select the building under cursor
-      const building = state.buildings.find(
-        b => b.position.x === gridX && b.position.y === gridY
-      );
-      
-      if (building) {
-        building.selected = true;
-      }
-      
+      state.buildings.push(newBuilding);
       return state;
     });
+    
+    // Exit placement mode
+    placementMode = false;
   }
   
-  // Predict building efficiency based on placement environment
-  function predictBuildingEfficiency(type, temperature, pressure) {
-    // Different building types have different optimal conditions
-    let optimalTemp = 293.15; // Default 20°C
-    let optimalPressure = 101325; // Default 1 atm
+  function selectBuilding() {
+    const worldX = cameraX + (mouseX - width/2) / zoom;
+    const worldY = cameraY + (mouseY - height/2) / zoom;
     
-    // Set optimal conditions based on building type
-    switch (type) {
-      case 'extractor':
-        optimalTemp = 283.15; // 10°C
-        optimalPressure = 101325; // 1 atm
+    // Find clicked building
+    selectedBuilding = null;
+    
+    for (const building of $gameState.buildings) {
+      const dx = building.position.x - worldX;
+      const dy = building.position.y - worldY;
+      const distance = Math.sqrt(dx*dx + dy*dy);
+      
+      if (distance < 20) {
+        selectedBuilding = building;
         break;
-      case 'reactor':
-        optimalTemp = 450; // Higher temperature for reactions
-        optimalPressure = 200000; // ~2 atm for better reaction rates
-        break;
-      case 'powerPlant':
-        optimalTemp = 500; // High temperature for power generation
-        optimalPressure = 101325; // Standard pressure
-        break;
+      }
     }
-    
-    // Calculate temperature efficiency component (drop off as we move from optimal)
-    const tempDeviation = Math.abs(temperature - optimalTemp) / optimalTemp;
-    const tempEfficiency = Math.max(0.3, 1 - tempDeviation);
-    
-    // Calculate pressure efficiency component
-    const pressureDeviation = Math.abs(pressure - optimalPressure) / optimalPressure;
-    const pressureEfficiency = Math.max(0.5, 1 - pressureDeviation);
-    
-    // Combined efficiency with more weight on temperature
-    return tempEfficiency * 0.7 + pressureEfficiency * 0.3;
   }
-
-  onMount(() => {
-    // Initialize canvas
-    ctx = canvas.getContext('2d');
-    
-    // Register canvas actions with the store
-    registerCanvasActions({
-      startPlacement: startPlacementInternal,
-      selectBuilding: (id) => {
-        // Implementation for selecting a building by ID
-        gameState.update(state => {
-          state.buildings.forEach(b => b.selected = b.id === id);
-          return state;
-        });
-      },
-      deleteSelectedBuilding: () => {
-        // Implementation for deleting the selected building
-        gameState.update(state => {
-          state.buildings = state.buildings.filter(b => !b.selected);
-          return state;
-        });
-      },
-      rotateSelectedBuilding: () => {
-        // Rotation implementation (if needed)
-        console.log("Rotate building - to be implemented");
-      },
-      cancelPlacement: () => {
-        // Cancel building placement
-        placementMode = false;
-      }
-    });
-    
-    // Initialize world
-    initializeWorld();
-    
-    // Add keyboard listener
-    window.addEventListener('keydown', handleKeyDown);
-    
-    // Start render loop
-    const renderFrame = requestAnimationFrame(renderLoop);
-    
-    // Handle canvas resizing
-    const resizeObserver = new ResizeObserver(entries => {
-      for (const entry of entries) {
-        if (entry.target === canvas.parentElement) {
-          width = entry.contentRect.width;
-          height = entry.contentRect.height;
-          canvas.width = width;
-          canvas.height = height;
-        }
-      }
-    });
-    
-    if (canvas.parentElement) {
-      resizeObserver.observe(canvas.parentElement);
-    }
-    
-    return () => {
-      // Clean up when component is destroyed
-      registerCanvasActions({
-        startPlacement: null,
-        selectBuilding: null,
-        deleteSelectedBuilding: null,
-        rotateSelectedBuilding: null,
-        cancelPlacement: null
-      });
-      window.removeEventListener('keydown', handleKeyDown);
-      cancelAnimationFrame(renderFrame);
-      resizeObserver.disconnect();
-    };
-  });
+  
+  // Building placement controls
+  export function startPlacement(type: string) {
+    placementMode = true;
+    placementType = type;
+  }
+  
+  // Prevent context menu on right-click
+  function handleContextMenu(event: MouseEvent) {
+    event.preventDefault();
+  }
 </script>
 
 <div class="game-container">
@@ -4776,75 +5706,60 @@ This is a file of the type: SVG Image
     bind:this={canvas}
     {width}
     {height}
-    on:mousemove={handleMouseMove}
     on:mousedown={handleMouseDown}
+    on:mousemove={handleMouseMove}
     on:mouseup={handleMouseUp}
+    on:wheel={handleWheel}
+    on:contextmenu={handleContextMenu}
+    id="game-canvas-{canvasKey}"
   ></canvas>
   
-  <div class="view-controls">
-    <button 
-      class:active={showHeatMap} 
-      on:click={() => {
-        showHeatMap = !showHeatMap;
-        if (showHeatMap) showPressureMap = false;
-      }}
-      title="Toggle Heat Map (H)"
-    >
-      Heat Map
-    </button>
-    <button 
-      class:active={showPressureMap} 
-      on:click={() => {
-        showPressureMap = !showPressureMap;
-        if (showPressureMap) showHeatMap = false;
-      }}
-      title="Toggle Pressure Map (P)"
-    >
-      Pressure Map
-    </button>
+  <div class="canvas-overlay">
+    <div class="loading-indicator">
+      {#if !ctx}
+        Canvas initializing...
+      {/if}
+    </div>
   </div>
 </div>
 
 <style>
   .game-container {
     position: relative;
-    overflow: hidden;
-    background-color: #1a1a2e;
     width: 100%;
     height: 100%;
+    overflow: hidden;
+    background-color: #1a1a2e;
   }
   
   canvas {
     display: block;
+    position: absolute;
+    top: 0;
+    left: 0;
     width: 100%;
     height: 100%;
   }
   
-  .view-controls {
+  .canvas-overlay {
     position: absolute;
-    bottom: 16px;
-    right: 16px;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 10;
     display: flex;
-    gap: 8px;
+    justify-content: center;
+    align-items: center;
   }
   
-  .view-controls button {
-    background-color: rgba(44, 62, 80, 0.8);
+  .loading-indicator {
+    background-color: rgba(0, 0, 0, 0.7);
     color: white;
-    border: none;
-    border-radius: 4px;
-    padding: 8px 12px;
-    font-size: 12px;
-    cursor: pointer;
-    transition: background-color 0.2s;
-  }
-  
-  .view-controls button:hover {
-    background-color: rgba(52, 73, 94, 0.8);
-  }
-  
-  .view-controls button.active {
-    background-color: rgba(41, 128, 185, 0.8);
+    padding: 1rem;
+    border-radius: 0.5rem;
+    font-family: monospace;
   }
 </style>
 ```
@@ -5208,6 +6123,240 @@ This is a file of the type: SVG Image
   
   canvas {
     display: block;
+  }
+</style>
+```
+
+# frontend/src/components/world/PixiGame.svelte
+
+```svelte
+<script lang="ts">
+  import { onMount, onDestroy, createEventDispatcher } from 'svelte';
+  import { initPixiApp, pixiApp, setPlacementMode, moveWorld } from '../../lib/pixiManager';
+  import { gameState } from '../../stores/gameState';
+  import { get } from 'svelte/store';
+  
+  // Props
+  export let width = '100%';
+  export let height = '100%';
+  
+  // Event dispatcher
+  const dispatch = createEventDispatcher();
+  
+  // Local state
+  let gameContainer: HTMLDivElement;
+  let selectedBuildingType: string | null = null;
+  let isPlacementMode = false;
+  
+  // Keyboard controls
+  let keysPressed: Record<string, boolean> = {};
+  let keyboardControlsActive = false;
+  let keyboardInterval: number | null = null;
+  
+  // Handle keyboard controls
+  function handleKeyDown(event: KeyboardEvent) {
+    // Don't block other handlers - we want the Escape key to still work
+    const key = event.key.toLowerCase();
+    keysPressed[key] = true;
+    
+    // Only handle WASD keys in this component
+    if (['w', 'a', 's', 'd'].includes(key)) {
+      // Start the movement loop if not already running
+      if (!keyboardControlsActive) {
+        startKeyboardControls();
+      }
+    }
+  }
+  
+  function handleKeyUp(event: KeyboardEvent) {
+    const key = event.key.toLowerCase();
+    keysPressed[key] = false;
+    
+    // Check if any movement keys are still pressed
+    const anyKeysPressed = ['w', 'a', 's', 'd'].some(k => keysPressed[k]);
+    if (!anyKeysPressed && keyboardControlsActive) {
+      stopKeyboardControls();
+    }
+  }
+  
+  function startKeyboardControls() {
+    keyboardControlsActive = true;
+    
+    // Process keyboard input at a fixed rate
+    keyboardInterval = window.setInterval(() => {
+      // Calculate direction vector
+      let dx = 0;
+      let dy = 0;
+      
+      if (keysPressed['w']) dy += 10; // Up
+      if (keysPressed['s']) dy -= 10; // Down
+      if (keysPressed['a']) dx += 10; // Left
+      if (keysPressed['d']) dx -= 10; // Right
+      
+      // Move the world if there's any direction
+      if (dx !== 0 || dy !== 0) {
+        moveWorld(dx, dy);
+      }
+    }, 16); // ~60fps
+  }
+  
+  function stopKeyboardControls() {
+    keyboardControlsActive = false;
+    if (keyboardInterval !== null) {
+      clearInterval(keyboardInterval);
+      keyboardInterval = null;
+    }
+  }
+  
+  // Initialize PixiJS when component mounts
+  onMount(() => {
+    if (gameContainer) {
+      try {
+        console.log("Initializing PixiJS in game container");
+        
+        // Check if there's an existing app and destroy it if needed
+        const existingApp = get(pixiApp);
+        if (existingApp) {
+          console.log("Destroying existing PixiJS app before creating a new one");
+          existingApp.destroy(true, { children: true, texture: true, baseTexture: true });
+          pixiApp.set(null);
+        }
+        
+        // Initialize new app with game world
+        const app = initPixiApp(gameContainer);
+        
+        // Add player character
+        console.log("Adding player character");
+        import('../../lib/pixiManager').then(module => {
+          if (module.addPlayerCharacter) {
+            module.addPlayerCharacter();
+          }
+        });
+        
+        // Set initial container dimensions to be fullscreen
+        gameContainer.style.width = typeof width === 'number' ? `${width}px` : width;
+        gameContainer.style.height = typeof height === 'number' ? `${height}px` : height;
+        
+        // Add keyboard event listeners for WASD controls
+        console.log("Setting up keyboard controls");
+        window.addEventListener('keydown', handleKeyDown);
+        window.addEventListener('keyup', handleKeyUp);
+        
+        // Notify parent that the game is ready
+        console.log("PixiGame component initialized successfully, dispatching ready event");
+        dispatch('ready', { app });
+      } catch (error) {
+        console.error("Error initializing PixiJS:", error);
+      }
+    } else {
+      console.error("Game container reference not available");
+    }
+    
+    return () => {
+      console.log("PixiGame component cleanup from onMount return");
+      stopKeyboardControls();
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+      
+      const app = get(pixiApp);
+      if (app) {
+        console.log("Destroying PixiJS app in onMount cleanup");
+        app.destroy(true, { children: true, texture: true, baseTexture: true });
+        pixiApp.set(null);
+      }
+    };
+  });
+  
+  // Clean up when component is destroyed
+  onDestroy(() => {
+    console.log("PixiGame component onDestroy triggered");
+    
+    // Clean up keyboard controls
+    stopKeyboardControls();
+    window.removeEventListener('keydown', handleKeyDown);
+    window.removeEventListener('keyup', handleKeyUp);
+    
+    const app = get(pixiApp);
+    if (app) {
+      try {
+        // Clean up resources using our custom method first
+        if ((app as any).cleanupResources) {
+          console.log("Calling cleanupResources before destroying app");
+          (app as any).cleanupResources();
+        }
+        
+        console.log("Destroying PixiJS app in onDestroy");
+        app.destroy(true, { 
+          children: true, 
+          texture: true, 
+          baseTexture: true,
+          removeView: true
+        });
+        
+        // Check if we need to remove the canvas manually
+        if (gameContainer) {
+          const canvas = gameContainer.querySelector('canvas');
+          if (canvas) {
+            console.log("Manually removing canvas from container");
+            gameContainer.removeChild(canvas);
+          }
+        }
+        
+        // Reset the store
+        pixiApp.set(null);
+        
+      } catch (error) {
+        console.error("Error during PixiJS app cleanup:", error);
+      }
+    }
+  });
+  
+  // Handle building type selection
+  export function selectBuildingType(type: string) {
+    selectedBuildingType = type;
+    isPlacementMode = true;
+    setPlacementMode(true, type);
+    
+    console.log(`Selected building type: ${type}`);
+  }
+  
+  // Toggle placement mode
+  export function togglePlacementMode(enabled: boolean) {
+    isPlacementMode = enabled;
+    
+    if (!enabled) {
+      selectedBuildingType = null;
+    }
+    
+    setPlacementMode(isPlacementMode, selectedBuildingType || undefined);
+  }
+  
+  // Reset the view (center and reset zoom)
+  export function resetView() {
+    console.log("Resetting game view");
+    import('../../lib/pixiManager').then(module => {
+      module.resetView();
+    });
+  }
+</script>
+
+<div 
+  class="pixi-game-container"
+  bind:this={gameContainer}
+  style:width={typeof width === 'number' ? `${width}px` : width}
+  style:height={typeof height === 'number' ? `${height}px` : height}
+/>
+
+<style>
+  .pixi-game-container {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    overflow: hidden;
+    background-color: #0f0f1e;
+    box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
   }
 </style>
 ```
@@ -5870,6 +7019,12 @@ const {
   planetTemplates
 } = Types;
 
+// Export the mapGenerator object for use in other files
+export const mapGenerator = {
+  generateMap: generatePlanetMap,
+  generateMars
+};
+
 // Helper function to initialize noise generators
 function initNoiseGenerators(seed: number) {
   // Create different noise generators for various map aspects using seedrandom
@@ -6032,8 +7187,26 @@ function determineResourceType(
 
 // Add special features to the map
 function addSpecialFeatures(map: PlanetMap, count: number): void {
-  const features: SpecialFeature[] = Object.values(SpecialFeature);
-  const selectedFeatures: SpecialFeature[] = [];
+  if (!map || !map.tiles || map.tiles.length === 0) {
+    console.warn("Cannot add special features: Map is not properly initialized");
+    return;
+  }
+
+  // Use string enum values directly
+  const features = [
+    'meteor_crater',
+    'volcano',
+    'canyon',
+    'cave_system',
+    'alien_ruins',
+    'geothermal_area',
+    'crystal_formation',
+    'abandoned_base',
+    'strange_signal',
+    'ancient_technology'
+  ];
+  
+  const selectedFeatures: string[] = [];
   
   // Randomly select features
   for (let i = 0; i < count; i++) {
@@ -6049,8 +7222,20 @@ function addSpecialFeatures(map: PlanetMap, count: number): void {
   
   // For each feature, modify the map (this would be expanded in a full implementation)
   for (const feature of selectedFeatures) {
+    // Make sure map dimensions are valid
+    if (!map.width || !map.height || map.width <= 0 || map.height <= 0) {
+      console.warn("Invalid map dimensions for feature placement");
+      continue;
+    }
+    
     const x = Math.floor(Math.random() * map.width);
     const y = Math.floor(Math.random() * map.height);
+    
+    // Make sure indices are valid
+    if (!map.tiles[y] || !map.tiles[y][x]) {
+      console.warn(`Invalid map coordinates (${x},${y}) for feature placement`);
+      continue;
+    }
     
     // Ensure we're not placing in deep water
     if (map.tiles[y][x].terrain === TerrainType.DEEP_WATER) {
@@ -6059,16 +7244,21 @@ function addSpecialFeatures(map: PlanetMap, count: number): void {
     
     // Create the feature based on type
     switch (feature) {
-      case SpecialFeature.METEOR_CRATER:
+      case 'meteor_crater':
         createMeteorCrater(map, x, y);
         break;
-      case SpecialFeature.VOLCANO:
+      case 'volcano':
         createVolcano(map, x, y);
         break;
-      case SpecialFeature.ALIEN_RUINS:
+      case 'alien_ruins':
         createAlienRuins(map, x, y);
         break;
-      // Add more feature creation methods as needed
+      // For other features, we'll add them in the future
+      default:
+        // Just add a basic decoration for now
+        if (map.tiles[y][x]) {
+          map.tiles[y][x].decorations = [Math.floor(Math.random() * 10)];
+        }
     }
   }
 }
@@ -6818,6 +8008,697 @@ export function optimizeAnimations(
       animations.delete(key);
     }
   }
+}
+```
+
+# frontend/src/lib/pixiManager.ts
+
+```ts
+// PixiJS Game Manager
+import * as PIXI from 'pixi.js';
+import { writable, get } from 'svelte/store';
+import { gameState } from '../stores/gameState';
+import { TerrainType, ResourceType, PlanetType } from './types';
+
+// Store for the PIXI Application
+export const pixiApp = writable<PIXI.Application | null>(null);
+
+// Game layers
+let worldContainer: PIXI.Container;
+let terrainLayer: PIXI.Container;
+let resourceLayer: PIXI.Container;
+let buildingLayer: PIXI.Container;
+let characterLayer: PIXI.Container;
+let uiLayer: PIXI.Container;
+
+// Player character sprite
+let playerCharacter: PIXI.Sprite | null = null;
+
+// Textures for different entities
+const terrainTextures: Record<number, PIXI.Texture> = {};
+const resourceTextures: Record<number, PIXI.Texture> = {};
+const buildingTextures: Record<string, PIXI.Texture> = {};
+
+// Game state tracking
+let tileSize = 16;
+let mapWidth = 0;
+let mapHeight = 0;
+let isDragging = false;
+let lastPosition = { x: 0, y: 0 };
+let selectedBuilding: any = null;
+let hoverPosition = { x: 0, y: 0 };
+let isPlacementMode = false;
+let selectedBuildingType: string | null = null;
+
+// Building ghost (for placement preview)
+let buildingGhost: PIXI.Sprite | null = null;
+
+// Initialize PixiJS Application
+export function initPixiApp(parentElement: HTMLElement): PIXI.Application {
+  console.log("initPixiApp called with parent element:", parentElement);
+  
+  // Check if parent already has a canvas child, clean it up
+  const existingCanvas = parentElement.querySelector('canvas');
+  if (existingCanvas) {
+    console.log("Found existing canvas, removing it");
+    parentElement.removeChild(existingCanvas);
+  }
+  
+  // Create PIXI Application
+  const app = new PIXI.Application({
+    width: parentElement.clientWidth || 800,
+    height: parentElement.clientHeight || 600,
+    backgroundColor: 0x0f0f1e,
+    resolution: window.devicePixelRatio || 1,
+    autoDensity: true,
+    antialias: true,
+  });
+
+  // Add canvas to DOM
+  console.log("Appending canvas to parent element");
+  parentElement.appendChild(app.view as HTMLCanvasElement);
+
+  // Store the app in our store
+  console.log("Storing app in pixiApp store");
+  pixiApp.set(app);
+
+  // Create layers
+  console.log("Setting up layers");
+  setupLayers(app);
+
+  // Generate textures
+  console.log("Generating textures");
+  generateTextures(app);
+
+  // Set up event handlers
+  console.log("Setting up event handlers");
+  setupEvents(app);
+
+  // Save the unsubscriber so we can clean it up later
+  let unsubscribe: (() => void) | null = null;
+  
+  // Subscribe to game state changes
+  console.log("Subscribing to game state changes");
+  unsubscribe = gameState.subscribe(state => {
+    console.log("Game state updated:", state);
+    if (state.map) {
+      console.log("Rendering map:", state.map.name);
+      renderMap(state.map);
+    }
+    if (state.buildings) {
+      console.log("Rendering buildings:", state.buildings.length);
+      renderBuildings(state.buildings);
+    }
+  });
+  
+  // Add cleanup method to the app for more reliable cleanup
+  (app as any).cleanupResources = () => {
+    console.log("Cleaning up PIXI resources");
+    // Unsubscribe from game state
+    if (unsubscribe) {
+      console.log("Unsubscribing from game state");
+      unsubscribe();
+      unsubscribe = null;
+    }
+    
+    // Clear containers
+    if (worldContainer) worldContainer.removeChildren();
+    if (terrainLayer) terrainLayer.removeChildren();
+    if (resourceLayer) resourceLayer.removeChildren();
+    if (buildingLayer) buildingLayer.removeChildren();
+    if (uiLayer) uiLayer.removeChildren();
+    
+    // Remove event listeners
+    if (app.view) {
+      console.log("Removing wheel event listener");
+      app.view.removeEventListener('wheel', handleWheel);
+    }
+  };
+
+  return app;
+}
+
+// Wheel event handler reference to be able to remove it
+function handleWheel(event: WheelEvent) {
+  event.preventDefault();
+  const app = get(pixiApp);
+  if (!app) return;
+  
+  // Calculate zoom factor
+  const zoomFactor = event.deltaY > 0 ? 0.9 : 1.1;
+  
+  // Get current mouse position relative to world container
+  const lastPosition = { x: event.clientX, y: event.clientY };
+  const mouseX = lastPosition.x - worldContainer.x;
+  const mouseY = lastPosition.y - worldContainer.y;
+  
+  // Apply zoom
+  worldContainer.scale.x *= zoomFactor;
+  worldContainer.scale.y *= zoomFactor;
+  
+  // Adjust world container position to zoom in/out from mouse position
+  worldContainer.x = lastPosition.x - mouseX * zoomFactor;
+  worldContainer.y = lastPosition.y - mouseY * zoomFactor;
+}
+
+// Set up basic layers for our game
+function setupLayers(app: PIXI.Application) {
+  // World container (can be moved, scaled, etc)
+  worldContainer = new PIXI.Container();
+  app.stage.addChild(worldContainer);
+
+  // Terrain layer (bottom)
+  terrainLayer = new PIXI.Container();
+  worldContainer.addChild(terrainLayer);
+
+  // Resource layer (above terrain)
+  resourceLayer = new PIXI.Container();
+  worldContainer.addChild(resourceLayer);
+
+  // Building layer (above resources)
+  buildingLayer = new PIXI.Container();
+  worldContainer.addChild(buildingLayer);
+  
+  // Character layer (above buildings)
+  characterLayer = new PIXI.Container();
+  worldContainer.addChild(characterLayer);
+
+  // UI layer (top, fixed position)
+  uiLayer = new PIXI.Container();
+  app.stage.addChild(uiLayer);
+}
+
+// Generate simple textures for game elements
+function generateTextures(app: PIXI.Application) {
+  // Create terrain textures
+  for (let i = 0; i <= 15; i++) {
+    const graphics = new PIXI.Graphics();
+    
+    // Fill with color based on terrain type
+    switch (i) {
+      case TerrainType.DEEP_WATER:
+        graphics.beginFill(0x0a3b5c);
+        break;
+      case TerrainType.SHALLOW_WATER:
+        graphics.beginFill(0x0e6ba8);
+        break;
+      case TerrainType.SAND:
+        graphics.beginFill(0xe4d6a7);
+        break;
+      case TerrainType.GRASS:
+        graphics.beginFill(0x7ab317);
+        break;
+      case TerrainType.FOREST:
+        graphics.beginFill(0x3e7924);
+        break;
+      case TerrainType.HILLS:
+        graphics.beginFill(0x6d8383);
+        break;
+      case TerrainType.MOUNTAINS:
+        graphics.beginFill(0x8d8778);
+        break;
+      case TerrainType.SNOW:
+        graphics.beginFill(0xffffff);
+        break;
+      case TerrainType.VOLCANIC:
+        graphics.beginFill(0x7c3626);
+        break;
+      case TerrainType.LAVA:
+        graphics.beginFill(0xe25822);
+        break;
+      case TerrainType.CAVE:
+        graphics.beginFill(0x3c2c3e);
+        break;
+      case TerrainType.ALIEN_GRASS:
+        graphics.beginFill(0xa2d6a2);
+        break;
+      case TerrainType.ALIEN_FOREST:
+        graphics.beginFill(0x5eaa5e);
+        break;
+      case TerrainType.ALIEN_CRYSTAL:
+        graphics.beginFill(0xbf62a6);
+        break;
+      case TerrainType.METHANE_LAKE:
+        graphics.beginFill(0x39848b);
+        break;
+      case TerrainType.ICE:
+        graphics.beginFill(0xc9e1ff);
+        break;
+      default:
+        graphics.beginFill(0x555555);
+    }
+    
+    graphics.drawRect(0, 0, tileSize, tileSize);
+    graphics.endFill();
+    
+    // Add border
+    graphics.lineStyle(1, 0x000000, 0.2);
+    graphics.drawRect(0, 0, tileSize, tileSize);
+    
+    terrainTextures[i] = app.renderer.generateTexture(graphics);
+  }
+
+  // Create resource textures
+  for (let i = 0; i <= 10; i++) {
+    const graphics = new PIXI.Graphics();
+    
+    // Fill with color based on resource type
+    switch (i) {
+      case ResourceType.NONE:
+        graphics.beginFill(0x000000, 0); // Transparent
+        break;
+      case ResourceType.METHANE:
+        graphics.beginFill(0x39848b);
+        break;
+      case ResourceType.OXYGEN:
+        graphics.beginFill(0xf5f5f5);
+        break;
+      case ResourceType.WATER:
+        graphics.beginFill(0x43aada);
+        break;
+      case ResourceType.IRON:
+        graphics.beginFill(0xb77333);
+        break;
+      case ResourceType.COPPER:
+        graphics.beginFill(0xd4a276);
+        break;
+      case ResourceType.SILICON:
+        graphics.beginFill(0xf0e68c);
+        break;
+      case ResourceType.SULFUR:
+        graphics.beginFill(0xfff44f);
+        break;
+      case ResourceType.URANIUM:
+        graphics.beginFill(0x9bc400);
+        break;
+      case ResourceType.RARE_METALS:
+        graphics.beginFill(0xc0c0c0);
+        break;
+      case ResourceType.XENOCRYSTALS:
+        graphics.beginFill(0xbf62a6);
+        break;
+      default:
+        graphics.beginFill(0x888888);
+    }
+    
+    // Draw circle for resources
+    graphics.drawCircle(tileSize / 2, tileSize / 2, tileSize / 3);
+    graphics.endFill();
+    
+    resourceTextures[i] = app.renderer.generateTexture(graphics);
+  }
+
+  // Create building textures
+  const buildingTypes = ['extractor', 'storage', 'powerPlant', 'reactor', 'pipe'];
+  
+  buildingTypes.forEach(type => {
+    const graphics = new PIXI.Graphics();
+    
+    // Fill with color based on building type
+    switch (type) {
+      case 'extractor':
+        graphics.beginFill(0x3498db);
+        graphics.drawCircle(tileSize, tileSize, tileSize);
+        break;
+      case 'storage':
+        graphics.beginFill(0xf1c40f);
+        graphics.drawRect(0, 0, tileSize * 2, tileSize * 2);
+        break;
+      case 'powerPlant':
+        graphics.beginFill(0x2ecc71);
+        graphics.moveTo(tileSize, 0);
+        graphics.lineTo(tileSize * 2, tileSize * 2);
+        graphics.lineTo(0, tileSize * 2);
+        graphics.closePath();
+        break;
+      case 'reactor':
+        graphics.beginFill(0xe74c3c);
+        graphics.moveTo(tileSize, 0);
+        graphics.lineTo(tileSize * 2, tileSize);
+        graphics.lineTo(tileSize, tileSize * 2);
+        graphics.lineTo(0, tileSize);
+        graphics.closePath();
+        break;
+      case 'pipe':
+        graphics.beginFill(0x95a5a6);
+        graphics.drawRoundedRect(0, tileSize / 2, tileSize * 2, tileSize / 2, 5);
+        break;
+    }
+    
+    graphics.endFill();
+    
+    buildingTextures[type] = app.renderer.generateTexture(graphics);
+  });
+
+  // Create selection indicator
+  const selectionGraphics = new PIXI.Graphics();
+  selectionGraphics.lineStyle(2, 0xffffff, 1);
+  selectionGraphics.drawCircle(tileSize, tileSize, tileSize + 5);
+  buildingTextures['selection'] = app.renderer.generateTexture(selectionGraphics);
+
+  // Create building ghost (transparent version for placement preview)
+  const ghostGraphics = new PIXI.Graphics();
+  ghostGraphics.lineStyle(2, 0xffffff, 0.8);
+  ghostGraphics.beginFill(0xffffff, 0.3);
+  ghostGraphics.drawCircle(tileSize, tileSize, tileSize);
+  ghostGraphics.endFill();
+  buildingTextures['ghost'] = app.renderer.generateTexture(ghostGraphics);
+}
+
+// Set up event handlers for user interactions
+function setupEvents(app: PIXI.Application) {
+  console.log("Setting up event handlers");
+  
+  // Add interactive capabilities
+  worldContainer.eventMode = 'static';
+  worldContainer.cursor = 'pointer';
+
+  // Mouse down
+  worldContainer.on('pointerdown', (event) => {
+    const position = event.global;
+    lastPosition = { x: position.x, y: position.y };
+    
+    if (isPlacementMode && selectedBuildingType) {
+      // Place building at mouse position
+      const worldPos = event.getLocalPosition(worldContainer);
+      placeBuilding(selectedBuildingType, worldPos.x, worldPos.y);
+    } else {
+      // Select building under cursor
+      const worldPos = event.getLocalPosition(worldContainer);
+      selectBuildingAt(worldPos.x, worldPos.y);
+      
+      // Start dragging if not in placement mode
+      isDragging = true;
+    }
+  });
+
+  // Mouse move
+  worldContainer.on('pointermove', (event) => {
+    const position = event.global;
+    
+    if (isDragging) {
+      // Move the world container (panning)
+      worldContainer.x += position.x - lastPosition.x;
+      worldContainer.y += position.y - lastPosition.y;
+    }
+    
+    lastPosition = { x: position.x, y: position.y };
+    
+    // Update hover position
+    const worldPos = event.getLocalPosition(worldContainer);
+    hoverPosition = { x: worldPos.x, y: worldPos.y };
+    
+    // Update ghost position in placement mode
+    if (isPlacementMode && buildingGhost) {
+      buildingGhost.position.set(
+        Math.floor(worldPos.x / tileSize) * tileSize,
+        Math.floor(worldPos.y / tileSize) * tileSize
+      );
+    }
+  });
+
+  // Mouse up
+  worldContainer.on('pointerup', () => {
+    isDragging = false;
+  });
+
+  // Mouse wheel for zoom - use our separate handleWheel function
+  app.view.addEventListener('wheel', handleWheel);
+  
+  console.log("Event handlers setup complete");
+}
+
+// Render map from game state
+function renderMap(map: any) {
+  console.log("Rendering map with dimensions:", map.width, "x", map.height);
+  
+  // Clear existing terrain and resources
+  terrainLayer.removeChildren();
+  resourceLayer.removeChildren();
+  
+  // Store map dimensions
+  mapWidth = map.width;
+  mapHeight = map.height;
+  
+  // Calculate appropriate tile size based on map dimensions
+  const app = get(pixiApp);
+  if (app) {
+    console.log("Screen dimensions:", app.screen.width, "x", app.screen.height);
+    
+    // Set a visible background color for the app
+    app.renderer.background.color = 0x123456; // Dark blue background
+    
+    // Use a fixed tile size to ensure consistent appearance
+    tileSize = 32; // Larger tiles make it easier to see the map
+    
+    console.log("Using tile size:", tileSize);
+  }
+  
+  // Render each tile in the map
+  for (let y = 0; y < mapHeight; y++) {
+    for (let x = 0; x < mapWidth; x++) {
+      // Skip if the tile doesn't exist
+      if (!map.tiles[y] || !map.tiles[y][x]) continue;
+      
+      const tile = map.tiles[y][x];
+      
+      // Create terrain sprite
+      const terrainSprite = new PIXI.Sprite(terrainTextures[tile.terrain]);
+      terrainSprite.position.set(x * tileSize, y * tileSize);
+      terrainSprite.width = tileSize;
+      terrainSprite.height = tileSize;
+      terrainLayer.addChild(terrainSprite);
+      
+      // Add resource sprite if the tile has a resource
+      if (tile.resource > 0) {
+        const resourceSprite = new PIXI.Sprite(resourceTextures[tile.resource]);
+        resourceSprite.position.set(x * tileSize + tileSize / 4, y * tileSize + tileSize / 4);
+        resourceSprite.width = tileSize / 2;
+        resourceSprite.height = tileSize / 2;
+        resourceLayer.addChild(resourceSprite);
+      }
+    }
+  }
+  
+  // Center the map in the view
+  if (app) {
+    console.log("Centering map in view");
+    worldContainer.position.set(
+      (app.screen.width - mapWidth * tileSize) / 2,
+      (app.screen.height - mapHeight * tileSize) / 2
+    );
+  }
+}
+
+// Render buildings from game state
+function renderBuildings(buildings: any[]) {
+  // Clear existing buildings
+  buildingLayer.removeChildren();
+  
+  // Create and add building sprites
+  buildings.forEach(building => {
+    if (buildingTextures[building.type]) {
+      const sprite = new PIXI.Sprite(buildingTextures[building.type]);
+      sprite.position.set(building.position.x, building.position.y);
+      sprite.anchor.set(0.5, 0.5);
+      sprite.interactive = true;
+      
+      // Store building data in sprite
+      (sprite as any).buildingData = building;
+      
+      // Add to building layer
+      buildingLayer.addChild(sprite);
+      
+      // Add selection indicator if this building is selected
+      if (selectedBuilding && selectedBuilding.id === building.id) {
+        const selection = new PIXI.Sprite(buildingTextures['selection']);
+        selection.position.set(building.position.x, building.position.y);
+        selection.anchor.set(0.5, 0.5);
+        buildingLayer.addChild(selection);
+      }
+    }
+  });
+  
+  // Add building ghost for placement preview
+  if (isPlacementMode && selectedBuildingType) {
+    if (buildingGhost) {
+      buildingLayer.removeChild(buildingGhost);
+    }
+    
+    buildingGhost = new PIXI.Sprite(buildingTextures[selectedBuildingType]);
+    buildingGhost.position.set(
+      Math.floor(hoverPosition.x / tileSize) * tileSize,
+      Math.floor(hoverPosition.y / tileSize) * tileSize
+    );
+    buildingGhost.anchor.set(0.5, 0.5);
+    buildingGhost.alpha = 0.6;
+    buildingLayer.addChild(buildingGhost);
+  }
+}
+
+// Place a new building
+function placeBuilding(type: string, x: number, y: number) {
+  // Create a new building object
+  const building = {
+    id: crypto.randomUUID(),
+    type,
+    position: { x, y },
+    connections: [],
+    efficiency: 1.0,
+    isActive: true
+  };
+  
+  // Update game state
+  gameState.update(state => {
+    return {
+      ...state,
+      buildings: [...(state.buildings || []), building]
+    };
+  });
+  
+  console.log(`Placed ${type} at (${x}, ${y})`);
+}
+
+// Select a building at a position
+function selectBuildingAt(x: number, y: number) {
+  const state = get(gameState);
+  selectedBuilding = null;
+  
+  if (state.buildings) {
+    for (const building of state.buildings) {
+      // Simple distance check
+      const distance = Math.sqrt(
+        Math.pow(building.position.x - x, 2) + 
+        Math.pow(building.position.y - y, 2)
+      );
+      
+      // If within the radius of the building, select it
+      if (distance < tileSize) {
+        selectedBuilding = building;
+        console.log(`Selected building: ${building.type} (ID: ${building.id})`);
+        break;
+      }
+    }
+  }
+  
+  if (!selectedBuilding) {
+    console.log("No building selected");
+  }
+  
+  // Re-render buildings to show selection
+  renderBuildings(state.buildings || []);
+}
+
+// Set placement mode
+export function setPlacementMode(enabled: boolean, buildingType?: string) {
+  isPlacementMode = enabled;
+  
+  if (enabled && buildingType) {
+    selectedBuildingType = buildingType;
+    console.log(`Placement mode enabled for ${buildingType}`);
+  } else {
+    console.log("Placement mode disabled");
+  }
+  
+  // Update ghost visibility
+  if (!enabled && buildingGhost) {
+    buildingLayer.removeChild(buildingGhost);
+    buildingGhost = null;
+  } else if (enabled && selectedBuildingType) {
+    // Will be created on next render
+    const state = get(gameState);
+    renderBuildings(state.buildings || []);
+  }
+}
+
+// Set selected building
+export function setSelectedBuilding(building: any) {
+  selectedBuilding = building;
+  
+  // Update rendering
+  const state = get(gameState);
+  renderBuildings(state.buildings || []);
+}
+
+// Reset view
+export function resetView() {
+  // Reset zoom and position
+  worldContainer.scale.set(1, 1);
+  
+  const app = get(pixiApp);
+  if (app) {
+    worldContainer.position.set(
+      (app.screen.width - mapWidth * tileSize) / 2,
+      (app.screen.height - mapHeight * tileSize) / 2
+    );
+  }
+}
+
+// Move world container with WASD controls
+export function moveWorld(dx: number, dy: number) {
+  if (!worldContainer) return;
+  
+  // Update world container position
+  worldContainer.x += dx;
+  worldContainer.y += dy;
+  
+  // Log position for debugging
+  if (dx !== 0 || dy !== 0) {
+    console.log(`Moving world: dx=${dx}, dy=${dy}, position=(${worldContainer.x}, ${worldContainer.y})`);
+  }
+}
+
+// Add a player character to the game
+export function addPlayerCharacter() {
+  const app = get(pixiApp);
+  if (!app || !characterLayer) {
+    console.error("Can't add player character - app or character layer not available");
+    return;
+  }
+  
+  console.log("Creating player character");
+  
+  // Create a simple character sprite
+  const graphics = new PIXI.Graphics();
+  
+  // Draw character (a simple colored circle with an arrow for direction)
+  graphics.lineStyle(2, 0xFFFFFF, 1);
+  graphics.beginFill(0x3498db);
+  graphics.drawCircle(0, 0, 16);
+  graphics.endFill();
+  
+  // Draw direction indicator
+  graphics.lineStyle(2, 0xFFFFFF, 1);
+  graphics.moveTo(0, 0);
+  graphics.lineTo(16, 0);
+  
+  // Create texture from graphics
+  const texture = app.renderer.generateTexture(graphics);
+  
+  // Create sprite from texture
+  playerCharacter = new PIXI.Sprite(texture);
+  playerCharacter.anchor.set(0.5, 0.5);
+  
+  // Position at center of the screen
+  const screenCenter = {
+    x: app.screen.width / 2,
+    y: app.screen.height / 2
+  };
+  
+  // Convert screen center to world coordinates
+  const worldPos = {
+    x: (screenCenter.x - worldContainer.x) / worldContainer.scale.x,
+    y: (screenCenter.y - worldContainer.y) / worldContainer.scale.y
+  };
+  
+  playerCharacter.position.set(worldPos.x, worldPos.y);
+  
+  // Add to character layer
+  characterLayer.addChild(playerCharacter);
+  
+  console.log("Player character added at position:", playerCharacter.position);
+  
+  return playerCharacter;
 }
 ```
 
@@ -7866,29 +9747,118 @@ export default App
 ```svelte
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import GameCanvas from '../components/world/GameCanvas.svelte';
+  import PixiGame from '../components/world/PixiGame.svelte';
   import BuildingControlPanel from '../components/ui/BuildingControlPanel.svelte';
-  import { gameState, startGameLoop } from '../stores/gameState';
+  import { gameState } from '../stores/gameState';
+  import { mapGenerator } from '../lib/mapGenerator';
+  import { PlanetType } from '../lib/types';
   import { initWasm } from '../wasm';
   
-  let gameLoopStop: () => void;
+  // Game component references
+  let pixiGameComponent: PixiGame;
+  
+  // Game settings from URL or default
+  const params = new URLSearchParams(window.location.search);
+  let planetType = (params.get('planet') as PlanetType) || PlanetType.EARTH_LIKE;
+  let mapWidth = parseInt(params.get('width') || '100');
+  let mapHeight = parseInt(params.get('height') || '100');
+  let resourceRichness = parseFloat(params.get('resources') || '0.5');
+  
+  // UI state
+  let selectedBuildingType: string | null = null;
+  let isPlacementMode = false;
+  
+  // Resources display
+  let resources = {
+    energy: $gameState.resources?.energy || 100,
+    water: $gameState.resources?.water || 100,
+    oxygen: $gameState.resources?.oxygen || 100,
+    methane: $gameState.resources?.methane || 100
+  };
+  
+  // Navigate back to menu
+  function handleBackToMenu() {
+    window.location.href = '/';
+  }
+  
+  // Handle building selection from control panel
+  function handleBuildingSelect(event: CustomEvent) {
+    selectedBuildingType = event.detail.type;
+    isPlacementMode = true;
+    
+    if (pixiGameComponent) {
+      pixiGameComponent.selectBuildingType(selectedBuildingType);
+    }
+  }
+  
+  // Generate a new map if needed
+  function ensureMapExists() {
+    const state = $gameState;
+    if (!state.map) {
+      console.log(`Generating ${planetType} map (${mapWidth}x${mapHeight})`);
+      
+      const generatedMap = mapGenerator.generateMap({
+        planetType,
+        width: mapWidth,
+        height: mapHeight,
+        resourceRichness,
+        specialFeatureCount: 3
+      });
+      
+      gameState.update(state => ({
+        ...state,
+        map: generatedMap,
+        planetType,
+        tick: 0,
+        buildings: [],
+        lastUpdated: Date.now()
+      }));
+      
+      console.log('Map generated:', generatedMap.name);
+    }
+  }
+  
+  // Process game ready event from PixiGame component
+  function handleGameReady(event: CustomEvent) {
+    console.log('PixiJS game initialized and ready', event.detail);
+  }
   
   onMount(async () => {
+    console.log("Game component mounted!");
+    console.debug("Props received:", { planetType, mapWidth, mapHeight, resourceRichness });
+    
     // Initialize WASM
     await initWasm();
     
-    // Start game loop
-    gameLoopStop = startGameLoop();
+    // Ensure we have a map
+    ensureMapExists();
     
-    return () => {
-      if (gameLoopStop) gameLoopStop();
-    };
+    // Log when game is ready
+    console.log("Game component fully initialized");
   });
 </script>
 
 <div class="game-page">
   <header class="game-header">
     <h1>FrankForge</h1>
+    <div class="resources">
+      <div class="resource">
+        <div class="resource-icon energy"></div>
+        <div class="resource-value">{resources.energy}</div>
+      </div>
+      <div class="resource">
+        <div class="resource-icon water"></div>
+        <div class="resource-value">{resources.water}</div>
+      </div>
+      <div class="resource">
+        <div class="resource-icon oxygen"></div>
+        <div class="resource-value">{resources.oxygen}</div>
+      </div>
+      <div class="resource">
+        <div class="resource-icon methane"></div>
+        <div class="resource-value">{resources.methane}</div>
+      </div>
+    </div>
     <div class="controls">
       <button
         class="control-button"
@@ -7901,16 +9871,22 @@ export default App
       >
         {$gameState.isPaused ? 'Resume' : 'Pause'}
       </button>
+      <button class="menu-button" on:click={handleBackToMenu}>
+        Back to Menu
+      </button>
     </div>
   </header>
   
   <main class="game-content">
     <div class="sidebar">
-      <BuildingControlPanel />
+      <BuildingControlPanel on:select={handleBuildingSelect} />
     </div>
     
     <div class="game-canvas-container">
-      <GameCanvas />
+      <PixiGame
+        bind:this={pixiGameComponent}
+        on:ready={handleGameReady}
+      />
     </div>
   </main>
 </div>
@@ -7929,13 +9905,59 @@ export default App
     justify-content: space-between;
     align-items: center;
     padding: 12px 24px;
-    background-color: #1a1a2e;
+    background-color: rgba(26, 26, 46, 0.9);
+    backdrop-filter: blur(5px);
+    z-index: 100;
   }
   
   h1 {
     margin: 0;
     font-size: 24px;
     color: #3498db;
+  }
+  
+  .resources {
+    display: flex;
+    gap: 20px;
+  }
+  
+  .resource {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+  
+  .resource-icon {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+  }
+  
+  .energy {
+    background-color: #f1c40f; /* Yellow for energy */
+  }
+  
+  .water {
+    background-color: #3498db; /* Blue for water */
+  }
+  
+  .oxygen {
+    background-color: #ecf0f1; /* Light gray/white for oxygen */
+  }
+  
+  .methane {
+    background-color: #9b59b6; /* Purple for methane */
+  }
+  
+  .resource-value {
+    font-size: 1rem;
+    font-weight: bold;
+    color: white;
+  }
+  
+  .controls {
+    display: flex;
+    gap: 10px;
   }
   
   .control-button {
@@ -7947,21 +9969,40 @@ export default App
     cursor: pointer;
   }
   
+  .menu-button {
+    background-color: #e74c3c;
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+  }
+  
+  .menu-button:hover {
+    background-color: #c0392b;
+  }
+  
   .game-content {
     display: flex;
     flex: 1;
     overflow: hidden;
+    position: relative;
   }
   
   .sidebar {
-    width: 320px;
+    width: 250px;
     padding: 16px;
-    background-color: rgba(26, 26, 46, 0.9);
+    background-color: rgba(26, 26, 46, 0.8);
+    backdrop-filter: blur(5px);
+    z-index: 50;
+    border-right: 1px solid rgba(52, 152, 219, 0.3);
   }
   
   .game-canvas-container {
     flex: 1;
     overflow: hidden;
+    position: relative;
   }
 </style>
 
@@ -9226,6 +11267,9 @@ export interface GameState {
   resources: Record<string, number>;
   buildings: Building[];
   energy: number;
+  map?: any;
+  planetType?: number;
+  lastUpdated?: number;
 }
 
 export interface Building {
