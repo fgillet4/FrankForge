@@ -20,6 +20,7 @@
   let keysPressed: Record<string, boolean> = {};
   let keyboardControlsActive = false;
   let keyboardInterval: number | null = null;
+  let cameraControlMode = false; // Whether to move camera or player
   
   // Handle keyboard controls
   function handleKeyDown(event: KeyboardEvent) {
@@ -27,12 +28,43 @@
     const key = event.key.toLowerCase();
     keysPressed[key] = true;
     
-    // Only handle WASD keys in this component
-    if (['w', 'a', 's', 'd'].includes(key)) {
+    // Handle Tab key to toggle between camera and player movement
+    if (key === 'tab') {
+      cameraControlMode = !cameraControlMode;
+      event.preventDefault();
+      console.log(`Switched to ${cameraControlMode ? 'camera' : 'player'} control mode`);
+      return;
+    }
+    
+    // Handle shift key for running
+    if (key === 'shift') {
+      import('../../lib/pixiManager').then(module => {
+        if (module.setPlayerRunning) {
+          module.setPlayerRunning(true);
+        }
+      });
+    }
+    
+    // Handle E key for interactions
+    if (key === 'e') {
+      import('../../lib/pixiManager').then(module => {
+        if (module.interactWithWorld) {
+          module.interactWithWorld();
+        }
+      });
+      event.preventDefault();
+      return;
+    }
+    
+    // Only handle movement keys in this component
+    if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) {
       // Start the movement loop if not already running
       if (!keyboardControlsActive) {
         startKeyboardControls();
       }
+      
+      // Prevent default to avoid scrolling the page with arrow keys
+      event.preventDefault();
     }
   }
   
@@ -40,30 +72,52 @@
     const key = event.key.toLowerCase();
     keysPressed[key] = false;
     
+    // Handle shift key for running
+    if (key === 'shift') {
+      import('../../lib/pixiManager').then(module => {
+        if (module.setPlayerRunning) {
+          module.setPlayerRunning(false);
+        }
+      });
+    }
+    
     // Check if any movement keys are still pressed
-    const anyKeysPressed = ['w', 'a', 's', 'd'].some(k => keysPressed[k]);
+    const anyKeysPressed = ['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].some(k => keysPressed[k]);
+    
     if (!anyKeysPressed && keyboardControlsActive) {
       stopKeyboardControls();
+      
+      // Stop player movement if in player mode
+      if (!cameraControlMode) {
+        import('../../lib/pixiManager').then(module => {
+          if (module.setPlayerMoving) {
+            module.setPlayerMoving(false);
+          }
+        });
+      }
     }
   }
   
   function startKeyboardControls() {
     keyboardControlsActive = true;
     
+    // If in player mode, notify the player is moving
+    if (!cameraControlMode) {
+      import('../../lib/pixiManager').then(module => {
+        if (module.setPlayerMoving) {
+          module.setPlayerMoving(true);
+        }
+      });
+    }
+    
     // Process keyboard input at a fixed rate
     keyboardInterval = window.setInterval(() => {
-      // Calculate direction vector
-      let dx = 0;
-      let dy = 0;
-      
-      if (keysPressed['w']) dy += 10; // Up
-      if (keysPressed['s']) dy -= 10; // Down
-      if (keysPressed['a']) dx += 10; // Left
-      if (keysPressed['d']) dx -= 10; // Right
-      
-      // Move the world if there's any direction
-      if (dx !== 0 || dy !== 0) {
-        moveWorld(dx, dy);
+      if (cameraControlMode) {
+        // Camera movement mode
+        updateCameraMovement();
+      } else {
+        // Player movement mode
+        updatePlayerMovement();
       }
     }, 16); // ~60fps
   }
@@ -74,6 +128,136 @@
       clearInterval(keyboardInterval);
       keyboardInterval = null;
     }
+  }
+  
+  // Update camera position based on keyboard input
+  function updateCameraMovement() {
+    if (!keyboardControlsActive) return;
+    
+    // Calculate direction vector
+    let dx = 0;
+    let dy = 0;
+    
+    if (keysPressed['w'] || keysPressed['arrowup']) dy += 10; // Up
+    if (keysPressed['s'] || keysPressed['arrowdown']) dy -= 10; // Down
+    if (keysPressed['a'] || keysPressed['arrowleft']) dx += 10; // Left
+    if (keysPressed['d'] || keysPressed['arrowright']) dx -= 10; // Right
+    
+    // Move the world if there's any direction
+    if (dx !== 0 || dy !== 0) {
+      import('../../lib/pixiManager').then(module => {
+        module.moveWorld(dx, dy);
+      });
+    }
+  }
+  
+  // Update player position based on keyboard input
+  function updatePlayerMovement() {
+    if (!keyboardControlsActive) return;
+    
+    // Calculate direction vector
+    let dx = 0;
+    let dy = 0;
+    
+    if (keysPressed['w'] || keysPressed['arrowup']) dy -= 1; // Up 
+    if (keysPressed['s'] || keysPressed['arrowdown']) dy += 1; // Down
+    if (keysPressed['a'] || keysPressed['arrowleft']) dx -= 1; // Left
+    if (keysPressed['d'] || keysPressed['arrowright']) dx += 1; // Right
+    
+    // Determine player direction
+    let direction = 'down';
+    
+    if (dx < 0) direction = 'left';
+    else if (dx > 0) direction = 'right';
+    else if (dy < 0) direction = 'up';
+    else if (dy > 0) direction = 'down';
+    
+    // Update player direction
+    import('../../lib/pixiManager').then(module => {
+      if (module.setPlayerDirection) {
+        module.setPlayerDirection(direction);
+      }
+    });
+    
+    // Get player data from game state
+    const state = get(gameState);
+    if (!state.player) return;
+    
+    // Normalize diagonal movement
+    if (dx !== 0 && dy !== 0) {
+      const length = Math.sqrt(dx * dx + dy * dy);
+      dx = dx / length;
+      dy = dy / length;
+    }
+    
+    // Get player speed from state
+    const baseSpeed = state.player.stats.speed || 2.5;
+    const isRunning = keysPressed['shift'];
+    const runMultiplier = isRunning ? 1.5 : 1.0;
+    
+    // Check if player has enough energy to run
+    let canRun = true;
+    if (isRunning && state.player.stats.energy <= 0) {
+      canRun = false;
+      import('../../lib/pixiManager').then(module => {
+        if (module.setPlayerRunning) {
+          module.setPlayerRunning(false);
+        }
+      });
+    }
+    
+    // Calculate movement
+    const speed = baseSpeed * runMultiplier * (1/60); // Adjust for 60 FPS
+    dx *= speed;
+    dy *= speed;
+    
+    // Get current position
+    const currentX = state.player.position.x;
+    const currentY = state.player.position.y;
+    
+    // Calculate new position
+    const newX = currentX + dx;
+    const newY = currentY + dy;
+    
+    // Check for collisions at new position
+    import('../../lib/pixiManager').then(module => {
+      if (module.checkCollision) {
+        // Use collision system in pixiManager
+        const canMoveX = !module.checkCollision(state.map, Math.floor(newX), Math.floor(currentY));
+        const canMoveY = !module.checkCollision(state.map, Math.floor(currentX), Math.floor(newY));
+        
+        // Apply movement with collision resolution
+        const finalX = canMoveX ? newX : currentX;
+        const finalY = canMoveY ? newY : currentY;
+        
+        // Update player position in game state
+        gameState.update(state => {
+          // Update position
+          state.player.position.x = finalX;
+          state.player.position.y = finalY;
+          
+          // Update energy if running
+          if (isRunning && canRun) {
+            state.player.stats.energy = Math.max(0, state.player.stats.energy - 0.2);
+          } else if (state.player.stats.energy < state.player.stats.maxEnergy) {
+            // Recover energy when not running
+            state.player.stats.energy = Math.min(
+              state.player.stats.maxEnergy,
+              state.player.stats.energy + 0.05
+            );
+          }
+          
+          return state;
+        });
+      } else {
+        // Fallback if collision system isn't available
+        gameState.update(state => {
+          state.player.position.x = newX;
+          state.player.position.y = newY;
+          return state;
+        });
+      }
+    });
   }
   
   // Initialize PixiJS when component mounts

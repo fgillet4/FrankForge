@@ -716,15 +716,24 @@ button:focus-visible {
 ```svelte
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { fade } from 'svelte/transition';
+  import { fade, fly, slide } from 'svelte/transition';
   import BuildingControlPanel from './components/ui/BuildingControlPanel.svelte';
+  import ResourceDisplay from './components/ui/ResourceDisplay.svelte';
+  import SaveLoadPanel from './components/ui/SaveLoadPanel.svelte';
+  import ResearchPanel from './components/ui/ResearchPanel.svelte';
+  import StatisticsPanel from './components/ui/StatisticsPanel.svelte';
   import { gameState } from './stores/gameState';
   import { PlanetType } from './lib/types';
   
   // Game state
-  let isPaused = false;
+  // We'll initialize isPaused from the gameState store, but maintain a local copy
+  // for faster UI rendering
+  let isPaused = $gameState.isPaused || false;
+  
+  // Reactive statement to keep local isPaused in sync with the store
+  $: isPaused = $gameState.isPaused;
   let selectedBuilding = null;
-  let debugMode = true;
+  let debugMode = false; // Changed to false for production
   
   // Game world settings
   let mapWidth = 60;
@@ -732,48 +741,180 @@ button:focus-visible {
   let tileSize = 24;
   let tiles = [];
   
-  // Generate map
+  // UI state
+  let showTooltip = false;
+  let tooltipContent = '';
+  let tooltipX = 0;
+  let tooltipY = 0;
+  let activePanel = 'buildings'; // buildings, resources, save, tutorial
+  let showTutorial = false;
+  let tutorialStep = 0;
+  let showMinimap = true;
+  let showGhostBuilding = true;
+  let currentGhostBuilding = null;
+  let ghostBuildingX = 0;
+  let ghostBuildingY = 0;
+  let isValidPlacement = true;
+  let showContextMenu = false;
+  let contextMenuX = 0;
+  let contextMenuY = 0;
+  let contextMenuItems = [];
+  let draggingCanvas = false;
+  let canvasOffsetX = 0;
+  let canvasOffsetY = 0;
+  let zoomLevel = 1;
+  let usedBlueprints = [];
+  let currentBlueprint = null;
+  let showConnectionLines = true;
+  
+  // Generate a noise value between 0 and 1
+  function generateNoise(x, y, frequency = 0.1, seed = 42) {
+    return Math.abs(Math.sin(x * frequency + seed) * Math.cos(y * frequency + seed)) % 1;
+  }
+  
+  // Create multiple octaves of noise for more natural terrain
+  function generateTerrainNoise(x, y, octaves = 4, persistence = 0.5, scale = 0.05) {
+    let noise = 0;
+    let amplitude = 1.0;
+    let frequency = scale;
+    let maxValue = 0;
+    
+    for (let i = 0; i < octaves; i++) {
+      noise += generateNoise(x * frequency, y * frequency, 1, i * 100) * amplitude;
+      maxValue += amplitude;
+      amplitude *= persistence;
+      frequency *= 2;
+    }
+    
+    // Normalize to 0-1
+    return noise / maxValue;
+  }
+  
+  // Generate map with improved terrain using noise functions
   function generateMap() {
     // Create an empty map
     tiles = [];
+    const seed = Math.floor(Math.random() * 10000);
     
-    // Generate tiles with interesting pattern
+    // Generate base noise maps for different terrain features
+    const heightNoise = [];
+    const moistureNoise = [];
+    const resourceNoise = [];
+    
+    // Pre-calculate noise values for performance
+    for (let y = 0; y < mapHeight; y++) {
+      heightNoise[y] = [];
+      moistureNoise[y] = [];
+      resourceNoise[y] = [];
+      
+      for (let x = 0; x < mapWidth; x++) {
+        // Height noise - determines base terrain type
+        heightNoise[y][x] = generateTerrainNoise(x, y, 4, 0.5, 0.04);
+        
+        // Moisture noise - affects vegetation and water bodies
+        moistureNoise[y][x] = generateTerrainNoise(x, y, 3, 0.4, 0.03);
+        
+        // Resource noise - determines resource distribution
+        resourceNoise[y][x] = generateTerrainNoise(x + 500, y + 500, 3, 0.3, 0.08);
+      }
+    }
+    
+    // Generate tiles based on noise maps
     for (let y = 0; y < mapHeight; y++) {
       let row = [];
       for (let x = 0; x < mapWidth; x++) {
-        // Create varied terrain
+        // Create varied terrain based on noise values
         let tileType;
+        let variant = 0;
         
-        // Create some large water bodies
-        const distanceFromCenter = Math.sqrt(
-          Math.pow(x - mapWidth/2, 2) + 
-          Math.pow(y - mapHeight/2, 2)
-        );
+        // Get noise values
+        const height = heightNoise[y][x];
+        const moisture = moistureNoise[y][x];
         
-        if (distanceFromCenter < 10) {
-          // Deep water in center
-          tileType = 1;
-        } else if (distanceFromCenter < 15) {
-          // Shallow water surrounding
-          tileType = 2;
-        } else if (x < 10 || x > mapWidth - 10 || y < 10 || y > mapHeight - 10) {
-          // Mountains around edges
-          tileType = 3;
-        } else if (Math.random() < 0.1) {
-          // Random forest patches
+        // Determine base terrain type from height and moisture
+        if (height < 0.3) {
+          // Water bodies
+          if (height < 0.15) {
+            tileType = 1; // Deep water
+          } else {
+            tileType = 2; // Shallow water
+          }
+          
+          // Add water variant based on moisture
+          variant = Math.floor(moisture * 3);
+        } else if (height > 0.7) {
+          // Mountains and hills
+          tileType = 3; // Mountains
+          
+          // Add mountain variant
+          variant = Math.floor(moisture * 3);
+        } else if (moisture > 0.65) {
+          // Forest
           tileType = 4;
+          // Forest variants
+          variant = Math.floor(height * 3);
         } else {
-          // Grassland for most of the map
+          // Grassland/plains
           tileType = 0;
+          // Grass variants
+          variant = Math.floor((moisture + height) * 1.5) % 3;
         }
         
-        // Add some resources
-        let resource = Math.random() < 0.05 ? Math.floor(Math.random() * 3) + 1 : 0;
+        // Special features for more variety (alien crystals, volcanic areas)
+        const specialFeature = generateTerrainNoise(x + 1000, y + 1000, 2, 0.3, 0.1);
+        if (specialFeature > 0.85) {
+          tileType = 5; // Alien crystal
+          variant = Math.floor(specialFeature * 3);
+        } else if (specialFeature > 0.8 && height > 0.6) {
+          tileType = 6; // Volcanic
+          variant = Math.floor(specialFeature * 3);
+        }
         
+        // Determine resources based on terrain and resource noise
+        let resource = 0;
+        let resourceDensity = 0;
+        
+        if (resourceNoise[y][x] > 0.75) {
+          // Higher chance of resources
+          const resourceType = Math.floor(resourceNoise[y][x] * 8) % 8;
+          
+          // Different terrains favor different resources
+          switch(tileType) {
+            case 0: // Grass - iron, copper
+              resource = resourceType % 2 + 1;
+              break;
+            case 1: // Deep water - water, methane
+            case 2: // Shallow water
+              resource = (resourceType % 2) + 3;
+              break;
+            case 3: // Mountains - rare metals, uranium
+              resource = (resourceType % 2) + 5;
+              break;
+            case 4: // Forest - oxygen, organics
+              resource = (resourceType % 2) + 7;
+              break;
+            case 5: // Alien crystal - xenocrystals
+              resource = 9;
+              break;
+            case 6: // Volcanic - sulfur
+              resource = 10;
+              break;
+          }
+          
+          resourceDensity = 0.3 + resourceNoise[y][x] * 0.7; // 0.3 to 1.0
+        }
+        
+        // Create the tile with more detailed properties
         row.push({
           type: tileType,
+          variant: variant,
           resource: resource,
-          building: null
+          resourceDensity: resourceDensity,
+          building: null,
+          decoration: Math.random() < 0.1 ? Math.floor(Math.random() * 5) : -1,
+          flowingResource: null,
+          animationFrame: 0,
+          lastUpdated: Date.now()
         });
       }
       tiles.push(row);
@@ -792,7 +933,13 @@ button:focus-visible {
         energy: 1000,
         water: 500,
         oxygen: 200,
-        methane: 300
+        methane: 300,
+        iron: 200,
+        copper: 150,
+        rare_metals: 50,
+        uranium: 25,
+        xenocrystals: 10,
+        sulfur: 100
       }
     }));
     
@@ -801,166 +948,1025 @@ button:focus-visible {
   
   // Toggle pause
   function togglePause() {
+    // Update local state
     isPaused = !isPaused;
+    
+    // Update global game state
+    gameState.update(state => ({
+      ...state,
+      isPaused: isPaused
+    }));
+    
     console.log("Game " + (isPaused ? "paused" : "resumed"));
+  }
+  
+  // Building selection
+  let selectedBuildingType = null;
+  let buildMode = false;
+  let buildingCosts = {
+    'extractor': { energy: 50, iron: 20 },
+    'storage': { energy: 75, iron: 30 },
+    'reactor': { energy: 150, iron: 40, copper: 30 },
+    'powerPlant': { energy: 200, iron: 50, copper: 40 },
+    'pipe': { energy: 10, iron: 5 },
+    'conveyor': { energy: 15, iron: 10 }
+  };
+  
+  // Select building type for placement
+  function selectBuildingType(type) {
+    selectedBuildingType = type;
+    buildMode = true;
+    console.log(`Selected building type: ${type}`);
+    
+    // Show ghost building preview
+    currentGhostBuilding = type;
+  }
+  
+  // Exit build mode
+  function exitBuildMode() {
+    selectedBuildingType = null;
+    buildMode = false;
+    currentGhostBuilding = null;
+    console.log("Exited build mode");
+  }
+
+  // Check if player can afford a building
+  function canAffordBuilding(type) {
+    const cost = buildingCosts[type];
+    if (!cost) return false;
+    
+    const resources = $gameState.resources;
+    
+    for (const [resource, amount] of Object.entries(cost)) {
+      if (!resources[resource] || resources[resource] < amount) {
+        return false;
+      }
+    }
+    
+    return true;
+  }
+  
+  // Check if tile is valid for building placement
+  function isValidBuildingPlacement(x, y, type) {
+    // Check bounds
+    if (x < 0 || x >= mapWidth || y < 0 || y >= mapHeight) {
+      return false;
+    }
+    
+    const tile = tiles[y][x];
+    
+    // Can't build on water or mountains
+    if (tile.type === 1 || tile.type === 2 || tile.type === 3) {
+      return false;
+    }
+    
+    // Check if tile already has a building
+    if (tile.building !== null) {
+      return false;
+    }
+    
+    // Special rules for different building types
+    switch (type) {
+      case 'extractor':
+        // Extractors need resources
+        return tile.resource > 0;
+      case 'powerPlant':
+        // Power plants need flat ground
+        return tile.type === 0;
+      default:
+        return true;
+    }
   }
   
   // Place building
   function placeBuilding(type, x, y) {
-    // Check if cell is empty
-    if (x >= 0 && x < mapWidth && y >= 0 && y < mapHeight) {
-      if (tiles[y][x].building === null) {
-        // Place building
-        tiles[y][x].building = type;
-        
-        // Update resources
-        gameState.update(state => {
-          const resources = {...state.resources};
-          resources.energy -= 50;
-          return {...state, resources};
-        });
-        
-        console.log(`Building ${type} placed at (${x},${y})`);
+    // Check if we're in build mode with a selected building
+    if (!buildMode && type !== selectedBuildingType) {
+      type = selectedBuildingType || type;
+    }
+    
+    // Check if cell is valid for building placement
+    if (!isValidBuildingPlacement(x, y, type)) {
+      console.log(`Cannot build at (${x},${y})`);
+      return;
+    }
+    
+    // Check if player can afford the building
+    if (!canAffordBuilding(type)) {
+      showTooltip = true;
+      tooltipContent = `Cannot afford ${type}`;
+      tooltipX = event.clientX;
+      tooltipY = event.clientY;
+      setTimeout(() => { showTooltip = false; }, 2000);
+      return;
+    }
+    
+    // Place building
+    const tile = tiles[y][x];
+    tile.building = type;
+    tile.buildTime = Date.now(); // For animation timing
+    tile.buildFrame = 0; // Current animation frame
+    
+    // Add particle effect for building placement
+    addBuildingPlacementEffect(x, y);
+    
+    // Deduct resources
+    gameState.update(state => {
+      const resources = {...state.resources};
+      const cost = buildingCosts[type];
+      
+      // Deduct all costs
+      for (const [resource, amount] of Object.entries(cost)) {
+        resources[resource] -= amount;
       }
+      
+      return {...state, resources};
+    });
+    
+    console.log(`Building ${type} placed at (${x},${y})`);
+    
+    // Auto-save after building placement
+    saveGameToStorage();
+    
+    // If blueprint mode, continue placing buildings
+    if (currentBlueprint) {
+      // Continue with next building in blueprint
+    } else {
+      // Exit build mode if not using blueprint
+      exitBuildMode();
     }
   }
   
-  // Get tile color based on type
+  // Add visual effect for building placement
+  function addBuildingPlacementEffect(x, y) {
+    // This would add particle effects in a real implementation
+    // For now just add a simple animation flag
+    if (x >= 0 && x < mapWidth && y >= 0 && y < mapHeight) {
+      tiles[y][x].placementEffect = true;
+      setTimeout(() => {
+        if (tiles[y] && tiles[y][x]) {
+          tiles[y][x].placementEffect = false;
+        }
+      }, 1000);
+    }
+  }
+  
+  // Connect buildings (pipe/conveyor)
+  function connectBuildings(sourceX, sourceY, targetX, targetY) {
+    if (sourceX === targetX && sourceY === targetY) return;
+    
+    // Check if both tiles have buildings
+    if (tiles[sourceY][sourceX].building && tiles[targetY][targetX].building) {
+      // Create a connection
+      // In a real implementation, this would create pipe/conveyor entities
+      // For now, just record the connection
+      if (!tiles[sourceY][sourceX].connections) {
+        tiles[sourceY][sourceX].connections = [];
+      }
+      
+      tiles[sourceY][sourceX].connections.push({x: targetX, y: targetY});
+      console.log(`Connected building at (${sourceX},${sourceY}) to (${targetX},${targetY})`);
+    }
+  }
+  
+  // Get tile color based on type and variant
   function getTileColor(tile) {
-    // Base terrain colors
-    const colors = {
-      0: '#27ae60', // Grass - green
-      1: '#2980b9', // Deep water - blue
-      2: '#3498db', // Shallow water - light blue
-      3: '#7f8c8d', // Mountains - gray
-      4: '#2ecc71'  // Forest - dark green
+    // Base terrain colors with variants
+    const terrainColors = {
+      // Grass variants (lighter to darker greens)
+      0: ['#2ecc71', '#27ae60', '#27ae60'],
+      // Deep water variants (darker to lighter blues)
+      1: ['#1a5276', '#21618c', '#2874a6'],
+      // Shallow water variants (turquoise shades)
+      2: ['#3498db', '#5dade2', '#85c1e9'],
+      // Mountain variants (gray to brown)
+      3: ['#7f8c8d', '#95a5a6', '#5d6d7e'],
+      // Forest variants (dark greens)
+      4: ['#196f3d', '#1e8449', '#239b56'],
+      // Alien crystal variants (purples)
+      5: ['#8e44ad', '#9b59b6', '#a569bd'],
+      // Volcanic variants (reds/oranges)
+      6: ['#922b21', '#c0392b', '#e74c3c']
     };
     
-    // Resource indicator
-    if (tile.resource > 0) {
-      const resourceColors = [
-        '#f1c40f', // Gold - energy
-        '#3498db', // Blue - water
-        '#e74c3c'  // Red - oxygen
-      ];
-      
-      // Return resource color
-      return resourceColors[tile.resource - 1];
+    // Resource colors by type
+    const resourceColors = {
+      1: '#e67e22', // Iron (orange)
+      2: '#d35400', // Copper (dark orange)
+      3: '#3498db', // Water (blue)
+      4: '#1abc9c', // Methane (turquoise)
+      5: '#bdc3c7', // Rare metals (silver)
+      6: '#f1c40f', // Uranium (yellow)
+      7: '#2ecc71', // Oxygen (green)
+      8: '#27ae60', // Organics (dark green)
+      9: '#9b59b6', // Xenocrystals (purple)
+      10: '#f39c12' // Sulfur (amber)
+    };
+    
+    // Building colors with animation frame consideration
+    const buildingColors = {
+      'extractor': ['#e67e22', '#d35400', '#e67e22', '#f39c12'],
+      'storage': ['#3498db', '#2980b9', '#3498db', '#5dade2'],
+      'reactor': ['#c0392b', '#922b21', '#c0392b', '#e74c3c'],
+      'powerPlant': ['#f1c40f', '#d4ac0d', '#f1c40f', '#f4d03f'],
+      'pipe': ['#7f8c8d', '#5d6d7e', '#7f8c8d', '#95a5a6'],
+      'conveyor': ['#7f8c8d', '#5d6d7e', '#7f8c8d', '#95a5a6']
+    };
+    
+    // Handle decoration overlay
+    // We'll return actual colors for simplicity, but in a real implementation
+    // this would return decoration sprite info
+    const decorationColors = {
+      0: 'rgba(102, 51, 0, 0.5)', // Rock
+      1: 'rgba(0, 100, 0, 0.3)',  // Bush
+      2: 'rgba(210, 180, 140, 0.3)', // Small rock
+      3: 'rgba(139, 69, 19, 0.3)', // Log
+      4: 'rgba(46, 204, 113, 0.3)' // Plant
+    };
+    
+    // Building rendering takes priority
+    if (tile.building !== null) {
+      // Get the building color (with animation frame 0 for now)
+      const buildingColor = buildingColors[tile.building];
+      if (buildingColor) {
+        // In a real implementation, we'd use the animation frame
+        // For now, just use the first color
+        return buildingColor[0];
+      }
+      return '#9b59b6'; // Default purple for unknown buildings
     }
     
-    // Building colors
-    if (tile.building !== null) {
-      const buildingColors = {
-        'extractor': '#e67e22',
-        'storage': '#f39c12',
-        'reactor': '#c0392b',
-        'powerPlant': '#d35400',
-        'pipe': '#7f8c8d'
+    // Resource rendering is next priority
+    if (tile.resource > 0) {
+      // Get resource color
+      const resourceColor = resourceColors[tile.resource];
+      if (resourceColor) {
+        // For resources with density, we could adjust opacity/brightness
+        return resourceColor;
+      }
+    }
+    
+    // Base terrain rendering
+    // Get the color based on type and variant
+    if (tile.type in terrainColors) {
+      const variantColors = terrainColors[tile.type];
+      const variant = Math.min(tile.variant || 0, variantColors.length - 1);
+      return variantColors[variant];
+    }
+    
+    // Default fallback
+    return '#2c3e50';
+  }
+  
+  // Get decoration element for a tile
+  function getTileDecoration(tile) {
+    if (tile.decoration === undefined || tile.decoration < 0) {
+      return null;
+    }
+    
+    // Decoration types
+    const decorations = [
+      { name: 'rock', color: '#6b7280', size: 0.3 },
+      { name: 'bush', color: '#047857', size: 0.25 },
+      { name: 'small-rock', color: '#9ca3af', size: 0.2 },
+      { name: 'log', color: '#92400e', size: 0.35 },
+      { name: 'plant', color: '#10b981', size: 0.15 }
+    ];
+    
+    const decorIndex = Math.min(tile.decoration, decorations.length - 1);
+    return decorations[decorIndex];
+  }
+  
+  // Get sprite URL for a building or resource
+  function getSprite(type, variant = 0) {
+    // In a real implementation, this would return sprite URLs from your assets folder
+    const buildingSprites = {
+      'extractor': '/assets/sprites/buildings/extractor_',
+      'storage': '/assets/sprites/buildings/storage_',
+      'reactor': '/assets/sprites/buildings/reactor_',
+      'powerPlant': '/assets/sprites/buildings/power_plant_',
+      'pipe': '/assets/sprites/buildings/pipe_',
+    };
+    
+    const resourceSprites = {
+      1: '/assets/sprites/resources/iron_',
+      2: '/assets/sprites/resources/copper_',
+      3: '/assets/sprites/resources/water_',
+      4: '/assets/sprites/resources/methane_',
+      5: '/assets/sprites/resources/rare_metals_',
+      6: '/assets/sprites/resources/uranium_',
+      7: '/assets/sprites/resources/oxygen_',
+      8: '/assets/sprites/resources/sulfur_',
+      9: '/assets/sprites/resources/xenocrystals_',
+      10: '/assets/sprites/resources/sulfur_'
+    };
+    
+    if (type in buildingSprites) {
+      return `${buildingSprites[type]}${variant}.png`;
+    } else if (type in resourceSprites) {
+      return `${resourceSprites[type]}${variant}.png`;
+    }
+    
+    // Default fallback
+    return '';
+  }
+  
+  // Create a new blueprint from selected buildings
+  function createBlueprint() {
+    // In a real implementation, this would save the layout of selected buildings
+    const blueprint = {
+      name: `Blueprint ${usedBlueprints.length + 1}`,
+      buildings: [], // This would be a list of building types and relative positions
+      created: Date.now()
+    };
+    
+    usedBlueprints.push(blueprint);
+    console.log("Blueprint created");
+  }
+  
+  // Save game state to localStorage and JSON file
+  async function saveGameToStorage() {
+    const gameData = {
+      tiles,
+      resources: $gameState.resources,
+      mapWidth,
+      mapHeight,
+      mapName: $gameState.map?.name || "Beautiful Planet"
+    };
+    
+    try {
+      // First save to localStorage
+      localStorage.setItem('frankforge_game', JSON.stringify(gameData));
+      console.log("Game saved to local storage");
+      
+      // Then save to JSON file
+      await saveGameToFile(gameData);
+    } catch (e) {
+      console.error("Failed to save game:", e);
+      showTooltip = true;
+      tooltipContent = "Failed to save game";
+      tooltipX = window.innerWidth / 2;
+      tooltipY = window.innerHeight / 2;
+      setTimeout(() => { showTooltip = false; }, 3000);
+    }
+  }
+  
+  // Save game data to JSON file using a Blob and download
+  async function saveGameToFile(gameData) {
+    try {
+      // Create a blob with the game data
+      const jsonData = JSON.stringify(gameData, null, 2);
+      const blob = new Blob([jsonData], { type: 'application/json' });
+      
+      // Create a download link and trigger it
+      const filename = `frankforge_save_${Date.now()}.json`;
+      
+      // Create download link
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      
+      // Append to body temporarily
+      document.body.appendChild(a);
+      a.click();
+      
+      // Clean up
+      setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }, 100);
+      
+      console.log(`Game saved to file: ${filename}`);
+      showTooltip = true;
+      tooltipContent = "Game saved to file";
+      tooltipX = window.innerWidth / 2;
+      tooltipY = window.innerHeight / 2;
+      setTimeout(() => { showTooltip = false; }, 2000);
+      
+      return true;
+    } catch (e) {
+      console.error("Failed to save game to file:", e);
+      return false;
+    }
+  }
+  
+  // Load game data from JSON file
+  async function loadGameFromFile(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    try {
+      const reader = new FileReader();
+      
+      reader.onload = (e) => {
+        try {
+          const gameData = JSON.parse(e.target.result);
+          
+          // Restore map dimensions
+          mapWidth = gameData.mapWidth || 60;
+          mapHeight = gameData.mapHeight || 40;
+          
+          // Restore tiles
+          if (gameData.tiles && gameData.tiles.length > 0) {
+            tiles = gameData.tiles;
+            
+            // Update game state with loaded map
+            gameState.update(state => ({
+              ...state,
+              map: {
+                name: gameData.mapName || "Beautiful Planet",
+                width: mapWidth,
+                height: mapHeight,
+                tiles: tiles
+              },
+              resources: gameData.resources || {
+                energy: 1000,
+                water: 500,
+                oxygen: 200,
+                methane: 300
+              }
+            }));
+            
+            console.log("Game loaded from file");
+            showTooltip = true;
+            tooltipContent = "Game loaded from file";
+            tooltipX = window.innerWidth / 2;
+            tooltipY = window.innerHeight / 2;
+            setTimeout(() => { showTooltip = false; }, 2000);
+          }
+        } catch (parseError) {
+          console.error("Failed to parse game file:", parseError);
+          showTooltip = true;
+          tooltipContent = "Invalid save file";
+          tooltipX = window.innerWidth / 2;
+          tooltipY = window.innerHeight / 2;
+          setTimeout(() => { showTooltip = false; }, 3000);
+        }
       };
       
-      return buildingColors[tile.building] || '#9b59b6';
+      reader.readAsText(file);
+    } catch (e) {
+      console.error("Failed to load game from file:", e);
     }
-    
-    // Otherwise return terrain color
-    return colors[tile.type] || '#2c3e50';
   }
+  
+  // Load game state from localStorage
+  function loadGameFromStorage() {
+    try {
+      const savedGame = localStorage.getItem('frankforge_game');
+      if (savedGame) {
+        const gameData = JSON.parse(savedGame);
+        
+        // Restore map dimensions
+        mapWidth = gameData.mapWidth || 60;
+        mapHeight = gameData.mapHeight || 40;
+        
+        // Restore tiles
+        if (gameData.tiles && gameData.tiles.length > 0) {
+          tiles = gameData.tiles;
+          
+          // Update game state with loaded map
+          gameState.update(state => ({
+            ...state,
+            map: {
+              name: gameData.mapName || "Beautiful Planet",
+              width: mapWidth,
+              height: mapHeight,
+              tiles: tiles
+            },
+            resources: gameData.resources || {
+              energy: 1000,
+              water: 500,
+              oxygen: 200,
+              methane: 300
+            }
+          }));
+          
+          console.log("Game loaded from local storage");
+          return true;
+        }
+      }
+      return false;
+    } catch (e) {
+      console.error("Failed to load game:", e);
+      return false;
+    }
+  }
+  
+  // Show tutorial panel and start the tutorial
+  function startTutorial() {
+    showTutorial = true;
+    tutorialStep = 0;
+  }
+  
+  // Progress to next tutorial step
+  function nextTutorialStep() {
+    tutorialStep++;
+    if (tutorialStep >= tutorialSteps.length) {
+      showTutorial = false;
+    }
+  }
+  
+  // Tutorial steps content
+  const tutorialSteps = [
+    {
+      title: "Welcome to FrankForge",
+      content: "This tutorial will guide you through the basics of building your factory.",
+      action: "Let's begin!"
+    },
+    {
+      title: "Resource Gathering",
+      content: "Start by placing an Extractor on a resource patch. Extractors collect resources from the planet's surface.",
+      action: "Continue"
+    },
+    {
+      title: "Power Generation",
+      content: "Build a Power Plant to generate energy for your buildings. All buildings require power to operate.",
+      action: "Continue"
+    },
+    {
+      title: "Building Connections",
+      content: "Connect your buildings with pipes and conveyors to transport resources between them.",
+      action: "Continue"
+    },
+    {
+      title: "Resource Processing",
+      content: "Use reactors to process resources into more valuable materials.",
+      action: "Continue"
+    },
+    {
+      title: "Storage",
+      content: "Build storage facilities to store excess resources for later use.",
+      action: "Complete Tutorial"
+    }
+  ];
   
   // Initialize on mount
   onMount(() => {
     console.log("Game initialized");
     
-    // Generate map
-    generateMap();
+    // Try to load from storage first, generate new map if no saved game
+    if (!loadGameFromStorage()) {
+      console.log("No saved game found, generating new map");
+      generateMap();
+    }
+    
+    // Auto-save every 30 seconds
+    const saveInterval = setInterval(saveGameToStorage, 30000);
     
     // Add keyboard controls
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') {
-        togglePause();
-      }
-    });
+    document.addEventListener('keydown', handleKeyDown);
+    
+    // Add mouse movement for tooltips
+    document.addEventListener('mousemove', handleMouseMove);
+    
+    // Check for first-time players to show tutorial
+    const firstTime = localStorage.getItem('frankforge_first_time');
+    if (!firstTime) {
+      localStorage.setItem('frankforge_first_time', 'false');
+      startTutorial();
+    }
     
     // Return cleanup function
     return () => {
-      document.removeEventListener('keydown', togglePause);
+      clearInterval(saveInterval);
+      saveGameToStorage(); // Save on unmount
+      document.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('mousemove', handleMouseMove);
     };
   });
+  
+  // Handle keyboard controls
+  function handleKeyDown(e) {
+    switch (e.key) {
+      case 'Escape':
+        if (showTutorial) {
+          showTutorial = false;
+        } else if (buildMode) {
+          exitBuildMode();
+        } else {
+          togglePause();
+        }
+        break;
+      case 'b':
+        // Toggle build mode
+        if (!buildMode) {
+          activePanel = 'buildings';
+        } else {
+          exitBuildMode();
+        }
+        break;
+      case 'm':
+        // Toggle minimap
+        showMinimap = !showMinimap;
+        break;
+      case 'r':
+        // Rotate building in build mode
+        if (buildMode) {
+          // Would rotate the current building
+        }
+        break;
+      // Number keys for quick select buildings
+      case '1':
+      case '2':
+      case '3':
+      case '4':
+      case '5':
+        const buildingIndex = parseInt(e.key) - 1;
+        const buildingTypes = ['extractor', 'storage', 'reactor', 'powerPlant', 'pipe'];
+        if (buildingIndex >= 0 && buildingIndex < buildingTypes.length) {
+          selectBuildingType(buildingTypes[buildingIndex]);
+        }
+        break;
+    }
+  }
+  
+  // Handle mouse movement for tooltips
+  function handleMouseMove(e) {
+    // If ghost building is active, update its position
+    if (currentGhostBuilding) {
+      const mapElement = document.querySelector('.game-map');
+      if (mapElement) {
+        const rect = mapElement.getBoundingClientRect();
+        const mapX = e.clientX - rect.left;
+        const mapY = e.clientY - rect.top;
+        
+        // Convert to grid coordinates
+        ghostBuildingX = Math.floor(mapX / tileSize);
+        ghostBuildingY = Math.floor(mapY / tileSize);
+        
+        // Check if placement is valid
+        isValidPlacement = isValidBuildingPlacement(ghostBuildingX, ghostBuildingY, currentGhostBuilding);
+      }
+    }
+  }
 </script>
 
 <main class="game-container">
-  <!-- Header -->
-  <header class="game-header">
-    <h1>FrankForge</h1>
-    <div class="resources">
-      <div class="resource">Energy: {$gameState.resources?.energy || 0}</div>
-      <div class="resource">Water: {$gameState.resources?.water || 0}</div>
-      <div class="resource">Oxygen: {$gameState.resources?.oxygen || 0}</div>
-      <div class="resource">Methane: {$gameState.resources?.methane || 0}</div>
+  <!-- Header with resource display -->
+  <header class="game-header" transition:slide={{duration: 300, axis: 'y'}}>
+    <div class="header-left">
+      <h1>FrankForge</h1>
     </div>
-    <button class="pause-button" on:click={togglePause}>
-      {isPaused ? 'Resume Game' : 'Pause Game'}
-    </button>
+    
+    <div class="header-center">
+      <div class="resource-overview">
+        {#each Object.entries($gameState.resources).slice(0, 5) as [resource, amount]}
+          <div class="resource-chip" on:mouseenter={() => {
+            showTooltip = true;
+            tooltipContent = `${resource}: ${amount.toFixed(1)}`;
+            tooltipX = event.clientX;
+            tooltipY = event.clientY;
+          }} on:mouseleave={() => showTooltip = false}>
+            <div class="resource-icon" style="background: linear-gradient(135deg, var(--color-{resource}), var(--color-{resource}-dark))"></div>
+            <span class="resource-amount">{amount >= 1000 ? `${(amount/1000).toFixed(1)}K` : amount.toFixed(0)}</span>
+          </div>
+        {/each}
+        <button class="resource-more" on:click={() => activePanel = activePanel === 'resources' ? 'buildings' : 'resources'}>
+          {activePanel === 'resources' ? 'Hide Resources' : 'More Resources'}
+        </button>
+      </div>
+    </div>
+    
+    <div class="header-right">
+      <div class="main-nav">
+        <button 
+          class="nav-button" 
+          class:active={activePanel === 'buildings'}
+          on:click={() => activePanel = 'buildings'}
+          title="Buildings"
+        >
+          <span class="nav-icon">🏭</span>
+        </button>
+        
+        <button 
+          class="nav-button" 
+          class:active={activePanel === 'research'}
+          on:click={() => activePanel = 'research'}
+          title="Research"
+        >
+          <span class="nav-icon">🔬</span>
+        </button>
+        
+        <button 
+          class="nav-button" 
+          class:active={activePanel === 'statistics'}
+          on:click={() => activePanel = 'statistics'}
+          title="Statistics"
+        >
+          <span class="nav-icon">📊</span>
+        </button>
+        
+        <button 
+          class="nav-button" 
+          class:active={activePanel === 'save'}
+          on:click={() => activePanel = 'save'}
+          title="Save/Load Game"
+        >
+          <span class="nav-icon">💾</span>
+        </button>
+      </div>
+      
+      <button class="control-button pause-button" on:click={togglePause}>
+        <span class="button-icon">{isPaused ? '▶️' : '⏸️'}</span>
+        <span class="button-text">{isPaused ? 'Resume' : 'Pause'}</span>
+      </button>
+    </div>
   </header>
   
-  <!-- Game Content -->
+  <!-- Game Content Area -->
   <div class="game-content">
-    <!-- Sidebar with building controls -->
-    <aside class="sidebar">
-      <BuildingControlPanel />
+    <!-- Left Sidebar with contextual panels -->
+    <aside class="sidebar" transition:slide={{duration: 300, axis: 'x'}}>
+      {#if activePanel === 'buildings'}
+        <div class="panel" in:fly={{x: -20, duration: 200}}>
+          <BuildingControlPanel on:select={(e) => selectBuildingType(e.detail.type)} />
+        </div>
+      {:else if activePanel === 'research'}
+        <div class="panel" in:fly={{x: -20, duration: 200}}>
+          <ResearchPanel />
+        </div>
+      {:else if activePanel === 'resources'}
+        <div class="panel" in:fly={{x: -20, duration: 200}}>
+          <ResourceDisplay />
+        </div>
+      {:else if activePanel === 'statistics'}
+        <div class="panel" in:fly={{x: -20, duration: 200}}>
+          <StatisticsPanel />
+        </div>
+      {:else if activePanel === 'save'}
+        <div class="panel" in:fly={{x: -20, duration: 200}}>
+          <SaveLoadPanel />
+          
+          <!-- Additional file-based save/load -->
+          <div class="file-save-section">
+            <h3>File Operations</h3>
+            <button class="action-button save-file" on:click={saveGameToStorage}>
+              Save to File
+            </button>
+            
+            <div class="file-input-wrapper">
+              <label for="load-file" class="action-button load-file">
+                Load from File
+              </label>
+              <input
+                type="file"
+                id="load-file"
+                accept=".json"
+                on:change={loadGameFromFile}
+                style="display: none;"
+              />
+            </div>
+          </div>
+        </div>
+      {/if}
     </aside>
     
     <!-- Main game area with map -->
     <div class="game-area">
-      <div class="game-map">
+      <div 
+        class="game-map"
+        style="transform: scale({zoomLevel}); transform-origin: center;"
+      >
         {#each tiles as row, y}
           <div class="map-row">
             {#each row as tile, x}
               <div
                 class="map-tile"
+                class:tile-water={tile.type === 1 || tile.type === 2}
+                class:tile-mountain={tile.type === 3}
+                class:tile-forest={tile.type === 4}
+                class:tile-alien={tile.type === 5}
+                class:tile-volcanic={tile.type === 6}
+                class:tile-placement-effect={tile.placementEffect}
                 style="background-color: {getTileColor(tile)}; width: {tileSize}px; height: {tileSize}px;"
-                on:click={() => placeBuilding('extractor', x, y)}
+                on:click={() => placeBuilding(selectedBuildingType, x, y)}
+                on:mouseenter={() => {
+                  if (tile.building) {
+                    showTooltip = true;
+                    tooltipContent = `${tile.building} - Click for details`;
+                    tooltipX = event.clientX;
+                    tooltipY = event.clientY;
+                  } else if (tile.resource > 0) {
+                    showTooltip = true;
+                    tooltipContent = `${['', 'Iron', 'Copper', 'Water', 'Methane', 'Rare Metals', 'Uranium', 'Oxygen', 'Organics', 'Xenocrystals', 'Sulfur'][tile.resource]} - Density: ${Math.round(tile.resourceDensity * 100)}%`;
+                    tooltipX = event.clientX;
+                    tooltipY = event.clientY;
+                  }
+                }}
+                on:mouseleave={() => {
+                  showTooltip = false;
+                }}
               >
                 {#if tile.resource > 0}
-                  <div class="resource-indicator"></div>
+                  <div 
+                    class="resource-indicator" 
+                    style="
+                      opacity: {0.5 + tile.resourceDensity * 0.5}; 
+                      transform: translate(-50%, -50%) scale({0.8 + tile.resourceDensity * 0.4});
+                      background-image: url({getSprite(tile.resource, tile.variant)});
+                    "
+                  ></div>
+                {/if}
+                
+                {#if tile.decoration !== undefined && tile.decoration >= 0}
+                  {@const decoration = getTileDecoration(tile)}
+                  {#if decoration}
+                    <div 
+                      class="decoration" 
+                      style="
+                        background-color: {decoration.color}; 
+                        width: {tileSize * decoration.size}px; 
+                        height: {tileSize * decoration.size}px;
+                        top: {Math.random() * 70}%;
+                        left: {Math.random() * 70}%;
+                      "
+                    ></div>
+                  {/if}
+                {/if}
+                
+                {#if tile.building}
+                  <div 
+                    class="building-indicator"
+                    style="background-image: url({getSprite(tile.building, 0)});"
+                  ></div>
+                  
+                  <!-- Animated working indicator -->
+                  <div class="building-working-indicator"></div>
+                {/if}
+                
+                <!-- Flow animations for resources between buildings -->
+                {#if tile.flowingResource}
+                  <div 
+                    class="resource-flow" 
+                    style="
+                      background-color: {getTileColor({resource: tile.flowingResource})}; 
+                      animation-duration: {1 + Math.random() * 0.5}s;
+                    "
+                  ></div>
                 {/if}
               </div>
             {/each}
           </div>
         {/each}
+        
+        <!-- Ghost building placement preview -->
+        {#if currentGhostBuilding && ghostBuildingX >= 0 && ghostBuildingX < mapWidth && ghostBuildingY >= 0 && ghostBuildingY < mapHeight}
+          <div 
+            class="ghost-building" 
+            class:invalid-placement={!isValidPlacement}
+            style="
+              left: {ghostBuildingX * tileSize}px; 
+              top: {ghostBuildingY * tileSize}px; 
+              width: {tileSize}px; 
+              height: {tileSize}px;
+              background-image: url({getSprite(currentGhostBuilding, 0)});
+            "
+          ></div>
+        {/if}
       </div>
+      
+      <!-- Minimap -->
+      {#if showMinimap}
+        <div class="minimap" transition:fade={{duration: 200}}>
+          <div class="minimap-content">
+            {#each tiles as row, y}
+              <div class="minimap-row">
+                {#each row as tile, x}
+                  <div 
+                    class="minimap-tile" 
+                    style="
+                      background-color: {getTileColor(tile)}; 
+                      width: {2}px; 
+                      height: {2}px;
+                    "
+                    on:click={() => {
+                      // Center the main view on this location
+                      const mapElement = document.querySelector('.game-map');
+                      if (mapElement) {
+                        const centerX = x * tileSize - mapElement.clientWidth / 2 + tileSize / 2;
+                        const centerY = y * tileSize - mapElement.clientHeight / 2 + tileSize / 2;
+                        mapElement.scrollLeft = centerX;
+                        mapElement.scrollTop = centerY;
+                      }
+                    }}
+                  ></div>
+                {/each}
+              </div>
+            {/each}
+            
+            <!-- Viewport indicator in minimap -->
+            <div class="minimap-viewport"></div>
+          </div>
+        </div>
+      {/if}
     </div>
   </div>
   
-  <!-- Floating Action Button for pause -->
-  <button class="floating-button" on:click={togglePause}>
-    {isPaused ? '▶️' : '⏸️'}
-  </button>
+  <!-- Tooltip -->
+  {#if showTooltip}
+    <div 
+      class="tooltip" 
+      style="
+        left: {tooltipX}px; 
+        top: {tooltipY + 20}px; 
+        transform: translateX(-50%);
+      "
+      transition:fade={{duration: 150}}
+    >
+      {tooltipContent}
+    </div>
+  {/if}
   
-  <!-- Controls Info -->
-  <div class="controls-info">
-    Click on tiles to place extractors | ESC: Toggle Pause Menu
+  <!-- Keyboard shortcut display -->
+  <div class="controls-info" transition:fade={{duration: 200}}>
+    <div class="shortcut"><span class="key">ESC</span> Menu</div>
+    <div class="shortcut"><span class="key">B</span> Build</div>
+    <div class="shortcut"><span class="key">M</span> Map</div>
+    <div class="shortcut"><span class="key">R</span> Rotate</div>
+    <div class="shortcut"><span class="key">1-5</span> Quick Select</div>
   </div>
+  
+  <!-- Tutorial overlay -->
+  {#if showTutorial}
+    <div class="tutorial-overlay" transition:fade={{duration: 300}}>
+      <div class="tutorial-card" transition:fly={{y: 20, duration: 300}}>
+        <h2>{tutorialSteps[tutorialStep].title}</h2>
+        <p>{tutorialSteps[tutorialStep].content}</p>
+        <button class="tutorial-button" on:click={nextTutorialStep}>
+          {tutorialSteps[tutorialStep].action}
+        </button>
+      </div>
+    </div>
+  {/if}
+  
+  <!-- Blueprint panel (shown when creating blueprint) -->
+  {#if currentBlueprint}
+    <div class="blueprint-panel" transition:slide={{duration: 300, axis: 'y'}}>
+      <h3>Blueprint Mode</h3>
+      <p>Select the buildings to include in your blueprint.</p>
+      <div class="blueprint-actions">
+        <button class="action-button cancel" on:click={() => currentBlueprint = null}>Cancel</button>
+        <button class="action-button save" on:click={createBlueprint}>Save Blueprint</button>
+      </div>
+    </div>
+  {/if}
   
   <!-- Pause Menu -->
   {#if isPaused}
     <div class="pause-overlay" transition:fade={{duration: 300}}>
-      <div class="pause-menu">
+      <div class="pause-backdrop" in:fade={{duration: 150, delay: 150}}></div>
+      <div class="pause-menu" transition:fly={{y: -20, duration: 400}}>
         <h2>Game Paused</h2>
         
         <div class="menu-buttons">
-          <button class="resume-button" on:click={togglePause}>Resume Game</button>
-          <button class="new-game-button" on:click={generateMap}>New Game</button>
-          <button class="settings-button">Game Settings</button>
-          <button class="save-button">Save Game</button>
+          <button class="menu-button resume-button" on:click={togglePause}>
+            <span class="button-icon">▶️</span>
+            <span>Resume Game</span>
+          </button>
+          <button class="menu-button save-button" on:click={() => {
+            saveGameToStorage();
+            // Show save confirmation
+            showTooltip = true;
+            tooltipContent = "Game saved successfully!";
+            tooltipX = window.innerWidth / 2;
+            tooltipY = window.innerHeight / 2;
+            setTimeout(() => { showTooltip = false; }, 2000);
+          }}>
+            <span class="button-icon">💾</span>
+            <span>Save Game</span>
+          </button>
+          <button class="menu-button load-button" on:click={loadGameFromStorage}>
+            <span class="button-icon">📂</span>
+            <span>Load Game</span>
+          </button>
+          <button class="menu-button new-game-button" on:click={() => {
+            if (confirm("Start a new game? This will discard your current progress.")) {
+              generateMap();
+              togglePause(); // Resume game after generating
+            }
+          }}>
+            <span class="button-icon">🌍</span>
+            <span>New Game</span>
+          </button>
+          <button class="menu-button tutorial-button" on:click={() => {
+            startTutorial();
+            togglePause();
+          }}>
+            <span class="button-icon">❓</span>
+            <span>Tutorial</span>
+          </button>
         </div>
         
         <div class="menu-footer">
-          <p>Press ESC to resume game</p>
+          <p>Press <span class="key-hint">ESC</span> to resume game</p>
         </div>
       </div>
     </div>
   {/if}
   
-  <!-- Debug Panel -->
+  <!-- Debug Panel - hidden by default now -->
   {#if debugMode}
     <div class="debug-panel">
       <h3>Debug Panel</h3>
@@ -988,10 +1994,30 @@ Resources: {JSON.stringify($gameState.resources, null, 2)}
   :global(body) {
     margin: 0;
     padding: 0;
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    background-color: #0f1924;
+    font-family: 'Inter', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background-color: #0c1118;
     color: white;
     overflow: hidden;
+    --color-energy: #f39c12;
+    --color-energy-dark: #d35400;
+    --color-water: #3498db;
+    --color-water-dark: #2980b9;
+    --color-oxygen: #2ecc71;
+    --color-oxygen-dark: #27ae60;
+    --color-methane: #1abc9c;
+    --color-methane-dark: #16a085;
+    --color-iron: #e67e22;
+    --color-iron-dark: #d35400;
+    --color-copper: #e74c3c;
+    --color-copper-dark: #c0392b;
+    --color-rare_metals: #bdc3c7;
+    --color-rare_metals-dark: #95a5a6;
+    --color-uranium: #f1c40f;
+    --color-uranium-dark: #f39c12;
+    --color-xenocrystals: #9b59b6;
+    --color-xenocrystals-dark: #8e44ad;
+    --color-sulfur: #f39c12;
+    --color-sulfur-dark: #e67e22;
   }
   
   .game-container {
@@ -1000,6 +2026,8 @@ Resources: {JSON.stringify($gameState.resources, null, 2)}
     height: 100vh;
     width: 100vw;
     overflow: hidden;
+    background-color: #0c1118;
+    position: relative;
   }
   
   /* Header Styles */
@@ -1007,51 +2035,189 @@ Resources: {JSON.stringify($gameState.resources, null, 2)}
     display: flex;
     justify-content: space-between;
     align-items: center;
-    background: linear-gradient(to right, #1a2a3a, #2c3e50);
+    background: linear-gradient(to bottom, rgba(22, 30, 40, 0.95), rgba(16, 24, 34, 0.9));
     padding: 10px 20px;
-    height: 60px;
+    height: 50px;
     box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
     z-index: 100;
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  }
+  
+  .header-left, .header-right {
+    display: flex;
+    align-items: center;
+  }
+  
+  .header-center {
+    flex: 1;
+    display: flex;
+    justify-content: center;
+  }
+  
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
   }
   
   .game-header h1 {
     margin: 0;
-    font-size: 24px;
+    font-size: 20px;
     background: linear-gradient(to right, #3498db, #2ecc71);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+    letter-spacing: 0.5px;
+    font-weight: 800;
   }
   
-  .resources {
+  .resource-overview {
     display: flex;
-    gap: 15px;
+    gap: 8px;
+    align-items: center;
   }
   
-  .resource {
-    background-color: rgba(0, 0, 0, 0.3);
-    padding: 8px 12px;
-    border-radius: 20px;
+  .resource-chip {
+    display: flex;
+    align-items: center;
+    background-color: rgba(16, 22, 26, 0.8);
+    border-radius: 16px;
+    padding: 4px 8px 4px 4px;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+    transition: all 0.2s ease;
+    cursor: pointer;
+    overflow: hidden;
+  }
+  
+  .resource-chip:hover {
+    transform: translateY(-2px);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2), 
+                0 4px 8px rgba(0, 0, 0, 0.3);
+  }
+  
+  .resource-icon {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    margin-right: 6px;
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.2),
+                inset 0 2px 5px rgba(255, 255, 255, 0.1);
+  }
+  
+  .resource-amount {
+    font-size: 12px;
+    font-weight: 600;
+  }
+  
+  .resource-more {
+    background-color: rgba(16, 22, 26, 0.5);
+    border: none;
+    color: #bdc3c7;
+    font-size: 12px;
+    padding: 4px 8px;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+  
+  .resource-more:hover {
+    background-color: rgba(26, 32, 36, 0.8);
+    color: white;
+  }
+  
+  /* Main Navigation */
+  .main-nav {
+    display: flex;
+    gap: 6px;
+    background-color: rgba(10, 15, 20, 0.7);
+    padding: 4px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+  }
+  
+  .nav-button {
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    border-radius: 6px;
+    color: #bdc3c7;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    position: relative;
+  }
+  
+  .nav-button.active {
+    background-color: rgba(52, 152, 219, 0.3);
+    color: white;
+    box-shadow: inset 0 0 0 1px rgba(52, 152, 219, 0.5),
+                0 2px 5px rgba(0, 0, 0, 0.2);
+  }
+  
+  .nav-button:hover:not(.active) {
+    background-color: rgba(26, 32, 44, 0.8);
+    color: white;
+    transform: translateY(-2px);
+  }
+  
+  .nav-icon {
+    font-size: 16px;
+  }
+  
+  .nav-button.active::after {
+    content: '';
+    position: absolute;
+    bottom: -6px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 0;
+    height: 0;
+    border-left: 6px solid transparent;
+    border-right: 6px solid transparent;
+    border-top: 6px solid rgba(52, 152, 219, 0.3);
+  }
+  
+  /* Control buttons */
+  .control-button {
+    background-color: rgba(16, 22, 26, 0.6);
+    border: none;
+    color: white;
+    display: flex;
+    align-items: center;
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+  }
+  
+  .control-button:hover {
+    background-color: rgba(26, 32, 36, 0.8);
+    transform: translateY(-2px);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2),
+                0 4px 8px rgba(0, 0, 0, 0.3);
+  }
+  
+  .button-icon {
+    margin-right: 6px;
     font-size: 14px;
-    box-shadow: inset 0 0 5px rgba(0, 0, 0, 0.5);
+  }
+  
+  .button-text {
+    font-size: 12px;
+    font-weight: 500;
   }
   
   .pause-button {
-    background-color: #e74c3c;
-    color: white;
-    border: none;
-    padding: 8px 16px;
-    border-radius: 20px;
-    cursor: pointer;
-    font-weight: bold;
-    transition: all 0.2s ease;
-    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
+    background-color: rgba(231, 76, 60, 0.2);
   }
   
   .pause-button:hover {
-    background-color: #c0392b;
-    transform: translateY(-2px);
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.4);
+    background-color: rgba(231, 76, 60, 0.4);
   }
   
   /* Game Content */
@@ -1063,25 +2229,95 @@ Resources: {JSON.stringify($gameState.resources, null, 2)}
   }
   
   .sidebar {
-    width: 250px;
-    background-color: rgba(26, 37, 47, 0.9);
-    padding: 15px;
-    overflow-y: auto;
+    width: 280px;
+    background: linear-gradient(to right, rgba(16, 24, 36, 0.95), rgba(20, 29, 38, 0.9));
     z-index: 50;
     box-shadow: 2px 0 10px rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(10px);
+    border-right: 1px solid rgba(255, 255, 255, 0.05);
+    overflow: hidden;
+    transition: width 0.3s ease;
+  }
+  
+  .panel {
+    padding: 16px;
+    height: 100%;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+  }
+  
+  .panel::-webkit-scrollbar {
+    width: 6px;
+  }
+  
+  .panel::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  
+  .panel::-webkit-scrollbar-thumb {
+    background-color: rgba(255, 255, 255, 0.2);
+    border-radius: 3px;
+  }
+  
+  .file-save-section {
+    margin-top: 20px;
+    padding-top: 20px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+  }
+  
+  .file-save-section h3 {
+    margin-top: 0;
+    font-size: 16px;
+    color: #3498db;
+    margin-bottom: 12px;
+  }
+  
+  .action-button {
+    width: 100%;
+    background-color: #34495e;
+    color: white;
+    border: none;
+    padding: 10px;
+    border-radius: 4px;
+    margin-bottom: 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-size: 14px;
+    font-weight: 500;
+    display: block;
+    text-align: center;
+  }
+  
+  .action-button.save-file {
+    background-color: #2980b9;
+  }
+  
+  .action-button.save-file:hover {
+    background-color: #3498db;
+  }
+  
+  .action-button.load-file {
+    background-color: #27ae60;
+  }
+  
+  .action-button.load-file:hover {
+    background-color: #2ecc71;
   }
   
   .game-area {
     flex: 1;
     position: relative;
     overflow: auto;
-    background-color: #0a1016;
+    background-color: #0a0d12;
   }
   
   .game-map {
     padding: 20px;
     display: flex;
     flex-direction: column;
+    position: relative;
+    transition: transform 0.2s ease;
   }
   
   .map-row {
@@ -1092,27 +2328,176 @@ Resources: {JSON.stringify($gameState.resources, null, 2)}
     position: relative;
     border: 1px solid rgba(0, 0, 0, 0.3);
     box-sizing: border-box;
-    transition: all 0.1s ease;
+    transition: all 0.15s ease;
     cursor: pointer;
+    background-size: cover;
+    overflow: hidden;
   }
   
   .map-tile:hover {
-    transform: scale(1.1);
+    transform: translateZ(5px);
     z-index: 10;
-    box-shadow: 0 0 10px rgba(255, 255, 255, 0.3);
+    box-shadow: 0 0 15px rgba(255, 255, 255, 0.3);
+  }
+  
+  .tile-water {
+    animation: water-ripple 10s infinite alternate;
+  }
+  
+  .tile-forest {
+    animation: forest-sway 8s infinite alternate;
+  }
+  
+  .tile-alien {
+    animation: alien-pulse 5s infinite alternate;
+  }
+  
+  .tile-volcanic {
+    animation: volcanic-glow 3s infinite alternate;
+  }
+  
+  .tile-placement-effect {
+    animation: placement-effect 1s;
   }
   
   .resource-indicator {
     position: absolute;
     top: 50%;
     left: 50%;
-    width: 6px;
-    height: 6px;
+    width: 12px;
+    height: 12px;
     background-color: white;
     border-radius: 50%;
     transform: translate(-50%, -50%);
-    box-shadow: 0 0 5px rgba(255, 255, 255, 0.8);
-    animation: pulse 2s infinite;
+    box-shadow: 0 0 10px rgba(255, 255, 255, 0.8);
+    animation: pulse 3s infinite;
+    background-size: cover;
+    z-index: 2;
+  }
+  
+  .decoration {
+    position: absolute;
+    border-radius: 50%;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
+    z-index: 1;
+    transition: transform 0.3s ease;
+  }
+  
+  .map-tile:hover .decoration {
+    transform: scale(1.1);
+  }
+  
+  .building-indicator {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 100%;
+    height: 100%;
+    transform: translate(-50%, -50%);
+    box-shadow: 0 0 12px rgba(255, 255, 255, 0.3);
+    animation: building-activate 0.5s ease;
+    background-size: contain;
+    background-position: center;
+    background-repeat: no-repeat;
+    z-index: 3;
+  }
+  
+  .building-working-indicator {
+    position: absolute;
+    bottom: 2px;
+    right: 2px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background-color: #2ecc71;
+    animation: working-indicator 1.5s infinite alternate;
+    z-index: 4;
+  }
+  
+  .resource-flow {
+    position: absolute;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    opacity: 0.7;
+    animation: flow-animation 2s infinite;
+    z-index: 5;
+  }
+  
+  .ghost-building {
+    position: absolute;
+    background-color: rgba(255, 255, 255, 0.3);
+    border: 2px dashed rgba(255, 255, 255, 0.5);
+    box-sizing: border-box;
+    border-radius: 4px;
+    z-index: 20;
+    pointer-events: none;
+    background-size: contain;
+    background-position: center;
+    background-repeat: no-repeat;
+    animation: ghost-pulse 1.5s infinite alternate;
+  }
+  
+  .ghost-building.invalid-placement {
+    background-color: rgba(231, 76, 60, 0.3);
+    border-color: rgba(231, 76, 60, 0.5);
+  }
+  
+  /* Minimap */
+  .minimap {
+    position: absolute;
+    bottom: 20px;
+    right: 20px;
+    width: 180px;
+    height: 180px;
+    background-color: rgba(10, 15, 20, 0.8);
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    z-index: 30;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(5px);
+  }
+  
+  .minimap-content {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    padding: 10px;
+    box-sizing: border-box;
+  }
+  
+  .minimap-row {
+    display: flex;
+    height: 2px;
+  }
+  
+  .minimap-tile {
+    width: 2px;
+    height: 2px;
+  }
+  
+  .minimap-viewport {
+    position: absolute;
+    border: 1px solid rgba(52, 152, 219, 0.8);
+    box-shadow: 0 0 0 1px rgba(52, 152, 219, 0.4);
+    background-color: rgba(52, 152, 219, 0.2);
+    pointer-events: none;
+  }
+  
+  /* Tooltip */
+  .tooltip {
+    position: fixed;
+    background-color: rgba(16, 22, 26, 0.95);
+    color: white;
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-size: 12px;
+    z-index: 1000;
+    pointer-events: none;
+    white-space: nowrap;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    border: 1px solid rgba(255, 255, 255, 0.1);
   }
   
   /* Controls Info */
@@ -1121,40 +2506,117 @@ Resources: {JSON.stringify($gameState.resources, null, 2)}
     bottom: 20px;
     left: 50%;
     transform: translateX(-50%);
-    background-color: rgba(0, 0, 0, 0.6);
+    background-color: rgba(10, 15, 20, 0.8);
     color: white;
     padding: 8px 16px;
     border-radius: 20px;
-    font-size: 14px;
+    font-size: 12px;
     z-index: 200;
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
     backdrop-filter: blur(5px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    display: flex;
+    gap: 12px;
   }
   
-  /* Floating Button */
-  .floating-button {
+  .shortcut {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  
+  .key {
+    background-color: rgba(255, 255, 255, 0.1);
+    padding: 2px 5px;
+    border-radius: 3px;
+    font-family: monospace;
+    font-weight: bold;
+    box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.2);
+  }
+  
+  /* Tutorial Overlay */
+  .tutorial-overlay {
     position: fixed;
-    right: 20px;
-    bottom: 20px;
-    width: 60px;
-    height: 60px;
-    border-radius: 50%;
-    background: linear-gradient(145deg, #e74c3c, #c0392b);
-    color: white;
-    border: none;
-    font-size: 24px;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background-color: rgba(0, 0, 0, 0.7);
     display: flex;
     justify-content: center;
     align-items: center;
-    cursor: pointer;
-    z-index: 200;
-    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
-    transition: all 0.3s ease;
+    z-index: 1000;
+    backdrop-filter: blur(3px);
   }
   
-  .floating-button:hover {
-    transform: scale(1.1) rotate(10deg);
-    box-shadow: 0 6px 15px rgba(0, 0, 0, 0.6);
+  .tutorial-card {
+    background: linear-gradient(145deg, #1e3a57, #2c3e50);
+    border-radius: 8px;
+    padding: 30px;
+    width: 90%;
+    max-width: 500px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    text-align: center;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+  }
+  
+  .tutorial-card h2 {
+    margin-top: 0;
+    color: #3498db;
+    font-size: 24px;
+    margin-bottom: 16px;
+  }
+  
+  .tutorial-card p {
+    font-size: 16px;
+    line-height: 1.6;
+    margin-bottom: 24px;
+  }
+  
+  .tutorial-button {
+    background: linear-gradient(to right, #3498db, #2980b9);
+    color: white;
+    border: none;
+    padding: 10px 30px;
+    border-radius: 30px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+  }
+  
+  .tutorial-button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.4);
+    background: linear-gradient(to right, #3aa1e3, #2e8bc3);
+  }
+  
+  /* Blueprint Panel */
+  .blueprint-panel {
+    position: fixed;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: rgba(16, 22, 26, 0.9);
+    padding: 16px;
+    border-radius: 8px 8px 0 0;
+    width: 400px;
+    box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.5);
+    z-index: 100;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(10px);
+  }
+  
+  .blueprint-panel h3 {
+    margin-top: 0;
+    color: #3498db;
+  }
+  
+  .blueprint-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 16px;
   }
   
   /* Pause Menu */
@@ -1164,23 +2626,46 @@ Resources: {JSON.stringify($gameState.resources, null, 2)}
     left: 0;
     width: 100vw;
     height: 100vh;
-    background-color: rgba(0, 0, 0, 0.7);
-    backdrop-filter: blur(5px);
     display: flex;
     justify-content: center;
     align-items: center;
     z-index: 1000;
   }
   
+  .pause-backdrop {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(10, 15, 20, 0.8);
+    backdrop-filter: blur(10px);
+    z-index: -1;
+  }
+  
   .pause-menu {
-    background: linear-gradient(145deg, #1a2a3a, #2c3e50);
-    border-radius: 20px;
+    background: linear-gradient(145deg, #1e3a57, #2c3e50);
+    border-radius: 12px;
     padding: 30px;
     width: 90%;
     max-width: 400px;
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6), 
+                0 0 0 1px rgba(255, 255, 255, 0.1),
+                inset 0 0 0 1px rgba(255, 255, 255, 0.05);
     text-align: center;
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    position: relative;
+    overflow: hidden;
+  }
+  
+  .pause-menu::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(to right, #3498db, #2ecc71);
+    z-index: 1;
   }
   
   .pause-menu h2 {
@@ -1189,43 +2674,108 @@ Resources: {JSON.stringify($gameState.resources, null, 2)}
     color: #3498db;
     font-size: 28px;
     text-shadow: 0 2px 5px rgba(0, 0, 0, 0.5);
+    letter-spacing: 1px;
   }
   
   .menu-buttons {
     display: flex;
     flex-direction: column;
-    gap: 15px;
+    gap: 12px;
   }
   
-  .menu-buttons button {
-    padding: 15px;
+  .menu-button {
+    padding: 14px 20px;
     border: none;
-    border-radius: 10px;
-    background-color: #34495e;
+    border-radius: 8px;
+    background-color: rgba(52, 73, 94, 0.8);
     color: white;
     cursor: pointer;
     font-size: 16px;
-    transition: all 0.2s ease;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+    transition: all 0.3s cubic-bezier(0.165, 0.84, 0.44, 1);
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3),
+                0 0 0 1px rgba(255, 255, 255, 0.05);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-weight: 500;
+    text-align: left;
+    position: relative;
+    overflow: hidden;
   }
   
-  .menu-buttons button:hover {
-    transform: translateY(-3px);
-    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.4);
+  .menu-button::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(to bottom, rgba(255, 255, 255, 0.1), transparent);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+  }
+  
+  .menu-button:hover {
+    transform: translateY(-3px) scale(1.02);
+    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.4),
+                0 0 0 1px rgba(255, 255, 255, 0.1);
+    filter: brightness(1.1);
+  }
+  
+  .menu-button:hover::after {
+    opacity: 1;
+  }
+  
+  .menu-button:active {
+    transform: translateY(0) scale(0.98);
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
+  }
+  
+  .button-icon {
+    font-size: 20px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    width: 32px;
+    height: 32px;
   }
   
   .resume-button {
-    background: linear-gradient(145deg, #2ecc71, #27ae60) !important;
+    background: linear-gradient(to right, #27ae60, #2ecc71);
+  }
+  
+  .save-button {
+    background: linear-gradient(to right, #3498db, #2980b9);
+  }
+  
+  .load-button {
+    background: linear-gradient(to right, #9b59b6, #8e44ad);
   }
   
   .new-game-button {
-    background: linear-gradient(145deg, #3498db, #2980b9) !important;
+    background: linear-gradient(to right, #e67e22, #d35400);
+  }
+  
+  .tutorial-button {
+    background: linear-gradient(to right, #f1c40f, #f39c12);
   }
   
   .menu-footer {
     margin-top: 30px;
     font-size: 14px;
     color: #bdc3c7;
+  }
+  
+  .key-hint {
+    display: inline-block;
+    background-color: rgba(255, 255, 255, 0.1);
+    padding: 2px 8px;
+    border-radius: 4px;
+    margin: 0 3px;
+    font-family: monospace;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3),
+                inset 0 -2px 0 rgba(0, 0, 0, 0.2);
+    color: white;
   }
   
   /* Debug Panel */
@@ -1235,16 +2785,19 @@ Resources: {JSON.stringify($gameState.resources, null, 2)}
     right: 0;
     background-color: rgba(0, 0, 0, 0.8);
     padding: 10px;
-    border-top-left-radius: 10px;
+    border-top-left-radius: 8px;
     z-index: 2000;
     max-width: 300px;
     box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
     backdrop-filter: blur(5px);
+    font-size: 12px;
+    font-family: monospace;
   }
   
   .debug-panel h3 {
     margin-top: 0;
     color: #3498db;
+    font-size: 14px;
   }
   
   .debug-panel button {
@@ -1255,17 +2808,14 @@ Resources: {JSON.stringify($gameState.resources, null, 2)}
     border: none;
     border-radius: 4px;
     cursor: pointer;
-  }
-  
-  .debug-panel button:hover {
-    background-color: #2980b9;
+    font-size: 12px;
   }
   
   .debug-panel pre {
-    font-size: 12px;
+    font-size: 11px;
     background-color: rgba(0, 0, 0, 0.3);
     padding: 8px;
-    border-radius: 5px;
+    border-radius: 4px;
     max-height: 200px;
     overflow: auto;
   }
@@ -1277,12 +2827,117 @@ Resources: {JSON.stringify($gameState.resources, null, 2)}
       opacity: 1;
     }
     50% {
-      transform: translate(-50%, -50%) scale(1.5);
+      transform: translate(-50%, -50%) scale(1.3);
       opacity: 0.7;
     }
     100% {
       transform: translate(-50%, -50%) scale(1);
       opacity: 1;
+    }
+  }
+  
+  @keyframes water-ripple {
+    0% {
+      filter: brightness(1) saturate(1);
+    }
+    50% {
+      filter: brightness(1.2) saturate(1.1);
+    }
+    100% {
+      filter: brightness(1) saturate(1);
+    }
+  }
+  
+  @keyframes forest-sway {
+    0% {
+      background-position: 0 0;
+    }
+    50% {
+      background-position: 1px 0;
+    }
+    100% {
+      background-position: 0 0;
+    }
+  }
+  
+  @keyframes alien-pulse {
+    0% {
+      filter: hue-rotate(0deg) brightness(1);
+    }
+    100% {
+      filter: hue-rotate(30deg) brightness(1.2);
+    }
+  }
+  
+  @keyframes volcanic-glow {
+    0% {
+      filter: brightness(1);
+      box-shadow: inset 0 0 5px rgba(231, 76, 60, 0.5);
+    }
+    100% {
+      filter: brightness(1.3);
+      box-shadow: inset 0 0 15px rgba(231, 76, 60, 0.8);
+    }
+  }
+  
+  @keyframes building-activate {
+    0% {
+      opacity: 0;
+      transform: translate(-50%, -50%) scale(0.5);
+    }
+    70% {
+      opacity: 1;
+      transform: translate(-50%, -50%) scale(1.1);
+    }
+    100% {
+      transform: translate(-50%, -50%) scale(1);
+    }
+  }
+  
+  @keyframes working-indicator {
+    0% {
+      opacity: 0.7;
+      box-shadow: 0 0 3px #2ecc71;
+    }
+    100% {
+      opacity: 1;
+      box-shadow: 0 0 8px #2ecc71;
+    }
+  }
+  
+  @keyframes flow-animation {
+    0% {
+      left: 10%;
+      top: 10%;
+      opacity: 0;
+    }
+    50% {
+      opacity: 1;
+    }
+    100% {
+      left: 90%;
+      top: 90%;
+      opacity: 0;
+    }
+  }
+  
+  @keyframes ghost-pulse {
+    0% {
+      opacity: 0.5;
+    }
+    100% {
+      opacity: 0.8;
+    }
+  }
+  
+  @keyframes placement-effect {
+    0% {
+      filter: brightness(2) saturate(1.5);
+      box-shadow: 0 0 20px rgba(255, 255, 255, 0.8);
+    }
+    100% {
+      filter: brightness(1) saturate(1);
+      box-shadow: none;
     }
   }
 </style>
@@ -3030,19 +4685,138 @@ This is a file of the type: SVG Image
     // Event dispatcher
     const dispatch = createEventDispatcher();
     
-    // Available building types
-    const buildingTypes = [
-      { id: 'extractor', name: 'Extractor', description: 'Extracts resources from the environment', cost: { energy: 100 } },
-      { id: 'storage', name: 'Storage', description: 'Stores resources for later use', cost: { energy: 80 } },
-      { id: 'reactor', name: 'Chemical Reactor', description: 'Combines chemicals to create reactions', cost: { energy: 200, methane: 50 } },
-      { id: 'powerPlant', name: 'Power Plant', description: 'Generates energy from fuel', cost: { energy: 150 } },
-      { id: 'pipe', name: 'Pipe', description: 'Connects buildings to transfer resources', cost: { energy: 20 } }
-    ];
+    // Available building types with more detailed info
+    const buildingTypesData = {
+      extractor: { 
+        name: 'Extractor', 
+        description: 'Extracts resources from the environment', 
+        cost: { energy: 100, iron: 25 },
+        category: 'production',
+        powerUsage: 10,
+        unlockTech: 'basicExtraction'
+      },
+      storageSmall: { 
+        name: 'Small Storage', 
+        description: 'Stores resources for later use', 
+        cost: { energy: 80, iron: 15 },
+        category: 'logistics',
+        powerUsage: 5,
+        unlockTech: 'basicExtraction'
+      },
+      storageFluid: { 
+        name: 'Fluid Tank', 
+        description: 'Stores liquid resources', 
+        cost: { energy: 80, iron: 20 },
+        category: 'logistics',
+        powerUsage: 5,
+        unlockTech: 'basicLogistics'
+      },
+      reactor: { 
+        name: 'Chemical Reactor', 
+        description: 'Combines chemicals to create reactions', 
+        cost: { energy: 200, methane: 50, iron: 40 },
+        category: 'production',
+        powerUsage: 25,
+        unlockTech: 'advancedMaterials'
+      },
+      powerPlant: { 
+        name: 'Power Plant', 
+        description: 'Generates energy from fuel', 
+        cost: { energy: 150, iron: 30, copper: 15 },
+        category: 'power',
+        powerGeneration: 50,
+        unlockTech: 'powerGeneration'
+      },
+      solarPanel: {
+        name: 'Solar Panel',
+        description: 'Generates clean energy from sunlight',
+        cost: { energy: 120, silicon: 20, copper: 10 },
+        category: 'power',
+        powerGeneration: 30,
+        unlockTech: 'powerGeneration'
+      },
+      pipe: { 
+        name: 'Pipe', 
+        description: 'Connects buildings to transfer fluid resources', 
+        cost: { energy: 20, iron: 5 },
+        category: 'logistics',
+        powerUsage: 0,
+        unlockTech: 'basicLogistics'
+      },
+      conveyor: { 
+        name: 'Conveyor Belt', 
+        description: 'Transports solid resources between buildings', 
+        cost: { energy: 25, iron: 10 },
+        category: 'logistics',
+        powerUsage: 1,
+        unlockTech: 'basicLogistics'
+      },
+      assembler: {
+        name: 'Assembler',
+        description: 'Crafts advanced components from basic resources',
+        cost: { energy: 300, iron: 50, copper: 30 },
+        category: 'production',
+        powerUsage: 30,
+        unlockTech: 'automation'
+      },
+      researchLab: {
+        name: 'Research Lab',
+        description: 'Generates science points for research',
+        cost: { energy: 250, iron: 30, copper: 20 },
+        category: 'research',
+        powerUsage: 40,
+        unlockTech: 'researchEfficiency'
+      },
+      dronePort: {
+        name: 'Drone Port',
+        description: 'Enables aerial transport of resources',
+        cost: { energy: 500, iron: 100, copper: 50, silicon: 25 },
+        category: 'logistics',
+        powerUsage: 60,
+        unlockTech: 'advancedLogistics'
+      }
+    };
+    
+    // Filter to show only unlocked buildings or buildings ready to unlock
+    $: availableBuildings = Object.entries(buildingTypesData)
+      .filter(([id, data]) => $gameState.unlocked.buildings.includes(id))
+      .map(([id, data]) => ({
+        id,
+        ...data
+      }));
+      
+    // Group buildings by category for the UI
+    $: buildingsByCategory = availableBuildings.reduce((groups, building) => {
+      const category = building.category || 'other';
+      if (!groups[category]) {
+        groups[category] = [];
+      }
+      groups[category].push(building);
+      return groups;
+    }, {});
+    
+    // Sort categories for display
+    const categoryOrder = ['production', 'power', 'logistics', 'research', 'other'];
+    $: sortedCategories = Object.keys(buildingsByCategory)
+      .sort((a, b) => categoryOrder.indexOf(a) - categoryOrder.indexOf(b));
+    
+    // Currently selected category for filter
+    let selectedCategory = 'all';
+    
+    // Filter buildings by selected category
+    $: filteredBuildings = selectedCategory === 'all' 
+      ? availableBuildings 
+      : availableBuildings.filter(b => b.category === selectedCategory);
     
     // Resources required to build
     function canBuild(buildingType) {
-      const building = buildingTypes.find(b => b.id === buildingType);
+      const building = buildingTypesData[buildingType];
       if (!building) return false;
+      
+      // Check if building is unlocked
+      if (!$gameState.unlocked.buildings.includes(buildingType)) {
+        return false;
+      }
       
       // Check if we have enough resources
       for (const [resource, amount] of Object.entries(building.cost)) {
@@ -3070,31 +4844,89 @@ This is a file of the type: SVG Image
     
     // Function to get color for building icon
     function getBuildingColor(buildingType) {
+      const categoryColors = {
+        production: '#3498db',
+        power: '#2ecc71',
+        logistics: '#95a5a6',
+        research: '#9b59b6',
+        other: '#bdc3c7'
+      };
+      
+      const building = buildingTypesData[buildingType];
+      if (building && building.category) {
+        return categoryColors[building.category];
+      }
+      
+      // Fallback colors for specific buildings
       switch (buildingType) {
         case 'extractor': return '#3498db';
+        case 'storageSmall': 
         case 'storage': return '#f1c40f';
         case 'reactor': return '#e74c3c';
         case 'powerPlant': return '#2ecc71';
+        case 'solarPanel': return '#f1c40f';
         case 'pipe': return '#95a5a6';
+        case 'conveyor': return '#7f8c8d';
+        case 'assembler': return '#e67e22';
+        case 'researchLab': return '#9b59b6';
         default: return '#bdc3c7';
       }
+    }
+    
+    // Get icon for the building
+    function getBuildingIcon(buildingType) {
+      // In a real implementation, this would return the path to the icon
+      return `/assets/sprites/buildings/${buildingType}_0.png`;
     }
 </script>
   
 <div class="control-panel">
   <h2>Buildings</h2>
   
-  <div class="building-list">
-    {#each buildingTypes as building}
+  <!-- Category filters -->
+  <div class="category-filters">
+    <button 
+      class="category-button" 
+      class:active={selectedCategory === 'all'}
+      on:click={() => selectedCategory = 'all'}
+    >
+      All
+    </button>
+    
+    {#each sortedCategories as category}
       <button 
-        class="building-button" 
+        class="category-button" 
+        class:active={selectedCategory === category}
+        on:click={() => selectedCategory = category}
+        style="--category-color: {getBuildingColor(buildingsByCategory[category][0].id)}"
+      >
+        {category.charAt(0).toUpperCase() + category.slice(1)}
+      </button>
+    {/each}
+  </div>
+  
+  <!-- Building list grid -->
+  <div class="building-grid">
+    {#each filteredBuildings as building}
+      <button 
+        class="building-card" 
         class:disabled={!canBuild(building.id)}
         on:click={() => selectBuilding(building.id)}
       >
-        <div class="building-icon" style="background-color: {getBuildingColor(building.id)}"></div>
+        <div class="building-icon" style="background-image: url({getBuildingIcon(building.id)}); background-color: {getBuildingColor(building.id)}"></div>
         <div class="building-info">
           <span class="building-name">{building.name}</span>
+          
+          <div class="building-stats">
+            {#if building.powerGeneration}
+              <span class="stat power-gen">+{building.powerGeneration} ⚡</span>
+            {:else if building.powerUsage}
+              <span class="stat power-use">-{building.powerUsage} ⚡</span>
+            {/if}
+          </div>
+          
           <span class="building-desc">{building.description}</span>
+          
           <div class="building-cost">
             {#each Object.entries(building.cost) as [resource, amount]}
               <span class="resource-cost {$gameState.resources[resource] < amount ? 'insufficient' : ''}">
@@ -3105,73 +4937,164 @@ This is a file of the type: SVG Image
         </div>
       </button>
     {/each}
+    
+    {#if filteredBuildings.length === 0}
+      <div class="empty-state">
+        <p>No buildings available in this category yet.</p>
+        <p>Research new technologies to unlock more buildings.</p>
+      </div>
+    {/if}
   </div>
 </div>
   
 <style>
   .control-panel {
-    background-color: #2c3e50;
+    background-color: rgba(16, 24, 36, 0.95);
     color: white;
-    border-radius: 4px;
+    border-radius: 8px;
     padding: 16px;
     width: 100%;
+    height: 100%;
+    overflow-y: auto;
   }
   
   h2 {
     margin-top: 0;
-    border-bottom: 1px solid #34495e;
-    padding-bottom: 8px;
+    border-bottom: 1px solid rgba(52, 152, 219, 0.3);
+    padding-bottom: 12px;
+    font-size: 1.2rem;
+    color: #3498db;
+    letter-spacing: 0.5px;
+    margin-bottom: 16px;
   }
   
-  .building-list {
+  .category-filters {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  }
+  
+  .category-button {
+    background-color: rgba(26, 32, 44, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #bdc3c7;
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: 16px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    outline: none;
+  }
+  
+  .category-button.active {
+    background-color: var(--category-color, #3498db);
+    color: white;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
+    border-color: rgba(255, 255, 255, 0.3);
+  }
+  
+  .category-button:hover:not(.active) {
+    background-color: rgba(52, 73, 94, 0.8);
+    transform: translateY(-1px);
+  }
+  
+  .building-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 16px;
+  }
+  
+  .building-card {
     display: flex;
     flex-direction: column;
-    gap: 8px;
-  }
-  
-  .building-button {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    background-color: #34495e;
-    border: none;
-    padding: 12px;
-    border-radius: 4px;
-    color: white;
+    background: linear-gradient(to bottom, rgba(28, 40, 55, 0.9), rgba(16, 24, 36, 0.9));
+    border: 1px solid rgba(52, 152, 219, 0.1);
+    border-radius: 8px;
+    overflow: hidden;
+    padding: 0;
     text-align: left;
     cursor: pointer;
-    transition: background-color 0.2s;
+    transition: all 0.3s cubic-bezier(0.165, 0.84, 0.44, 1);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    position: relative;
   }
   
-  .building-button:hover:not(.disabled) {
-    background-color: #3d566e;
+  .building-card:hover:not(.disabled) {
+    transform: translateY(-4px);
+    box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
+    border-color: rgba(52, 152, 219, 0.5);
   }
   
-  .building-button.disabled {
-    opacity: 0.6;
+  .building-card.disabled {
+    opacity: 0.5;
     cursor: not-allowed;
+    filter: grayscale(70%);
+  }
+  
+  .building-card.disabled:hover {
+    transform: none;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
   }
   
   .building-icon {
-    width: 32px;
-    height: 32px;
-    border-radius: 4px;
-    flex-shrink: 0;
+    width: 100%;
+    height: 100px;
+    background-size: contain;
+    background-position: center;
+    background-repeat: no-repeat;
+    background-color: rgba(0, 0, 0, 0.3);
+    position: relative;
+    transition: all 0.3s ease;
+  }
+  
+  .building-card:hover:not(.disabled) .building-icon {
+    filter: brightness(1.2);
   }
   
   .building-info {
+    padding: 12px;
     display: flex;
     flex-direction: column;
+    gap: 6px;
   }
   
   .building-name {
-    font-weight: bold;
+    font-weight: 600;
+    font-size: 16px;
+    margin-bottom: 2px;
+    color: white;
+  }
+  
+  .building-stats {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+  
+  .stat {
+    font-size: 12px;
+    font-weight: 500;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background-color: rgba(0, 0, 0, 0.2);
+  }
+  
+  .power-gen {
+    color: #2ecc71;
+  }
+  
+  .power-use {
+    color: #e74c3c;
   }
   
   .building-desc {
     font-size: 12px;
+    line-height: 1.4;
     color: #bdc3c7;
-    margin-bottom: 4px;
+    margin-bottom: 8px;
   }
   
   .building-cost {
@@ -3179,16 +5102,39 @@ This is a file of the type: SVG Image
     flex-wrap: wrap;
     gap: 6px;
     font-size: 11px;
+    margin-top: auto;
   }
   
   .resource-cost {
     background-color: rgba(0, 0, 0, 0.2);
-    padding: 2px 4px;
-    border-radius: 2px;
+    padding: 3px 6px;
+    border-radius: 3px;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
   }
   
   .resource-cost.insufficient {
     color: #e74c3c;
+    box-shadow: inset 0 0 0 1px rgba(231, 76, 60, 0.3);
+  }
+  
+  .empty-state {
+    grid-column: 1 / -1;
+    text-align: center;
+    padding: 24px;
+    background-color: rgba(28, 40, 55, 0.5);
+    border-radius: 8px;
+    border: 1px dashed rgba(255, 255, 255, 0.1);
+  }
+  
+  .empty-state p {
+    margin: 4px 0;
+    color: #bdc3c7;
+    font-size: 14px;
+  }
+  
+  .empty-state p:first-child {
+    font-weight: 500;
+    color: white;
   }
 </style>
 ```
@@ -4371,6 +6317,910 @@ This is a file of the type: SVG Image
   </script>
 ```
 
+# frontend/src/components/ui/ResearchPanel.svelte
+
+```svelte
+<script lang="ts">
+  import { gameState, technologies } from '../../stores/gameState';
+  import { onMount } from 'svelte';
+  import { tweened } from 'svelte/motion';
+  import { cubicOut } from 'svelte/easing';
+  
+  let availableTechnologies = [];
+  let completedTechnologies = [];
+  let queuedTechnologies = [];
+  let currentResearch = null;
+  
+  // Progress bar animation
+  const progress = tweened(0, {
+    duration: 800,
+    easing: cubicOut
+  });
+  
+  // Tech info panel
+  let selectedTech = null;
+  let canResearch = false;
+  
+  // Update available technologies based on completed research and prerequisites
+  $: {
+    currentResearch = $gameState.research.currentResearch;
+    
+    // Sync progress bar
+    if (currentResearch) {
+      const tech = technologies[currentResearch];
+      if (tech) {
+        progress.set($gameState.research.progress / tech.cost);
+      }
+    } else {
+      progress.set(0);
+    }
+    
+    // Filter completed technologies
+    completedTechnologies = $gameState.research.completed;
+    
+    // Get queued technologies
+    queuedTechnologies = $gameState.research.unlockQueue;
+    
+    // Update available technologies
+    availableTechnologies = Object.entries(technologies)
+      .filter(([id, tech]) => {
+        // Skip completed and queued technologies
+        if (completedTechnologies.includes(id) || 
+            queuedTechnologies.includes(id) || 
+            currentResearch === id) {
+          return false;
+        }
+        
+        // Check prerequisites
+        return tech.prerequisites.every(prereq => 
+          completedTechnologies.includes(prereq));
+      })
+      .map(([id, tech]) => ({
+        id,
+        ...tech
+      }));
+      
+    // Check if selected tech can be researched
+    if (selectedTech) {
+      canResearch = !currentResearch || currentResearch === selectedTech.id;
+    }
+  }
+  
+  // Start researching a technology
+  function startResearch(techId) {
+    if (!techId || (currentResearch && currentResearch !== techId)) return;
+    
+    // If already queued, remove from queue first
+    const queueIndex = queuedTechnologies.indexOf(techId);
+    if (queueIndex !== -1) {
+      queuedTechnologies.splice(queueIndex, 1);
+    }
+    
+    // Set as current research if no current research
+    if (!currentResearch) {
+      gameState.update(state => {
+        state.research.currentResearch = techId;
+        state.research.progress = 0;
+        return state;
+      });
+    }
+  }
+  
+  // Queue a technology for research
+  function queueResearch(techId) {
+    if (!techId || completedTechnologies.includes(techId)) return;
+    
+    // Don't add if already in queue or current research
+    if (queuedTechnologies.includes(techId) || currentResearch === techId) return;
+    
+    gameState.update(state => {
+      // If no current research, make this the current research
+      if (!state.research.currentResearch) {
+        state.research.currentResearch = techId;
+        state.research.progress = 0;
+      } else {
+        // Otherwise add to queue
+        state.research.unlockQueue.push(techId);
+      }
+      return state;
+    });
+  }
+  
+  // Cancel research
+  function cancelResearch(techId) {
+    if (!techId) return;
+    
+    gameState.update(state => {
+      // If it's the current research
+      if (state.research.currentResearch === techId) {
+        state.research.currentResearch = state.research.unlockQueue.shift() || null;
+        state.research.progress = 0;
+      } else {
+        // If it's in the queue
+        const index = state.research.unlockQueue.indexOf(techId);
+        if (index !== -1) {
+          state.research.unlockQueue.splice(index, 1);
+        }
+      }
+      return state;
+    });
+  }
+  
+  // Get CSS class for tech to show research state
+  function getTechClass(techId) {
+    if (completedTechnologies.includes(techId)) {
+      return 'completed';
+    } else if (currentResearch === techId) {
+      return 'current';
+    } else if (queuedTechnologies.includes(techId)) {
+      return 'queued';
+    } else if (isResearchable(techId)) {
+      return 'available';
+    } else {
+      return 'locked';
+    }
+  }
+  
+  // Check if a tech is researchable
+  function isResearchable(techId) {
+    const tech = technologies[techId];
+    if (!tech) return false;
+    
+    // Check if all prerequisites are completed
+    return tech.prerequisites.every(prereq => completedTechnologies.includes(prereq));
+  }
+  
+  // Get tech icon path
+  function getTechIcon(tech) {
+    return `/assets/research/${tech.icon || 'default'}.png`;
+  }
+  
+  // Select a tech to show details
+  function selectTech(tech) {
+    selectedTech = tech;
+    canResearch = isResearchable(tech.id) && (!currentResearch || currentResearch === tech.id);
+  }
+  
+  // Get the current progress in percentage
+  $: progressPercent = $progress * 100;
+  
+  // Estimate time to completion based on science production
+  function getTimeEstimate() {
+    if (!currentResearch) return 'N/A';
+    
+    const tech = technologies[currentResearch];
+    if (!tech) return 'N/A';
+    
+    // Get science production rate
+    const scienceRate = $gameState.resources.science || 0.1;
+    
+    // Calculate remaining science needed
+    const remaining = tech.cost - $gameState.research.progress;
+    
+    // Calculate estimated seconds
+    const seconds = remaining / scienceRate;
+    
+    if (seconds < 60) {
+      return `${Math.ceil(seconds)}s`;
+    } else if (seconds < 3600) {
+      return `${Math.ceil(seconds / 60)}m`;
+    } else {
+      return `${Math.floor(seconds / 3600)}h ${Math.ceil((seconds % 3600) / 60)}m`;
+    }
+  }
+  
+  // Connect tech nodes in a force-directed layout (simplified for this implementation)
+  // In a real implementation, this would use a proper graph layout algorithm
+  function getTechPosition(techId, index) {
+    const angleStep = 2 * Math.PI / Object.keys(technologies).length;
+    const radius = 180;
+    const tech = technologies[techId];
+    
+    let angle = index * angleStep;
+    
+    // Prerequisites pull nodes closer together
+    if (tech.prerequisites.length > 0) {
+      let sumX = 0;
+      let sumY = 0;
+      let count = 0;
+      
+      tech.prerequisites.forEach(prereq => {
+        const prereqIndex = Object.keys(technologies).indexOf(prereq);
+        if (prereqIndex !== -1) {
+          const prereqAngle = prereqIndex * angleStep;
+          sumX += Math.cos(prereqAngle);
+          sumY += Math.sin(prereqAngle);
+          count++;
+        }
+      });
+      
+      if (count > 0) {
+        angle = Math.atan2(sumY / count, sumX / count);
+      }
+    }
+    
+    const x = radius * Math.cos(angle) + 250;
+    const y = radius * Math.sin(angle) + 250;
+    
+    return { x, y };
+  }
+  
+  // Get connections between tech nodes
+  function getTechConnections() {
+    const connections = [];
+    
+    Object.entries(technologies).forEach(([id, tech]) => {
+      const targetIndex = Object.keys(technologies).indexOf(id);
+      const target = getTechPosition(id, targetIndex);
+      
+      tech.prerequisites.forEach(prereq => {
+        const sourceIndex = Object.keys(technologies).indexOf(prereq);
+        const source = getTechPosition(prereq, sourceIndex);
+        
+        connections.push({
+          x1: source.x,
+          y1: source.y,
+          x2: target.x,
+          y2: target.y,
+          state: getTechClass(id)
+        });
+      });
+    });
+    
+    return connections;
+  }
+</script>
+
+<div class="research-panel">
+  <h2>Research</h2>
+  
+  <!-- Research tree visualization -->
+  <div class="research-tree-container">
+    <svg class="research-tree" viewBox="0 0 500 500">
+      <!-- Connection lines between technologies -->
+      {#each getTechConnections() as connection}
+        <line 
+          x1={connection.x1} 
+          y1={connection.y1} 
+          x2={connection.x2} 
+          y2={connection.y2}
+          class="tech-connection {connection.state}"
+        />
+      {/each}
+      
+      <!-- Technology nodes -->
+      {#each Object.entries(technologies) as [id, tech], i}
+        {@const position = getTechPosition(id, i)}
+        <g 
+          class="tech-node {getTechClass(id)}"
+          transform="translate({position.x}, {position.y})"
+          on:click={() => selectTech({id, ...tech})}
+        >
+          <circle r="22" />
+          <image 
+            href={getTechIcon(tech)} 
+            x="-16" 
+            y="-16" 
+            width="32" 
+            height="32"
+          />
+          <title>{tech.name}</title>
+        </g>
+      {/each}
+    </svg>
+  </div>
+  
+  <!-- Current research progress -->
+  <div class="current-research">
+    <h3>Current Research</h3>
+    
+    {#if currentResearch}
+      <div class="research-progress">
+        <div class="progress-info">
+          <img 
+            src={getTechIcon(technologies[currentResearch])} 
+            alt={technologies[currentResearch].name}
+            class="tech-icon"
+          />
+          <div>
+            <h4>{technologies[currentResearch].name}</h4>
+            <div class="progress-stats">
+              <span>{Math.floor($gameState.research.progress)}/{technologies[currentResearch].cost} points</span>
+              <span class="time-estimate">Est: {getTimeEstimate()}</span>
+            </div>
+          </div>
+          <button class="cancel-button" on:click={() => cancelResearch(currentResearch)}>✕</button>
+        </div>
+        
+        <div class="progress-bar">
+          <div class="progress-fill" style="width: {progressPercent}%"></div>
+        </div>
+      </div>
+      
+      <!-- Research queue -->
+      {#if queuedTechnologies.length > 0}
+        <div class="research-queue">
+          <h4>Queue</h4>
+          <ul>
+            {#each queuedTechnologies as techId}
+              <li>
+                <img 
+                  src={getTechIcon(technologies[techId])} 
+                  alt={technologies[techId].name}
+                  class="queue-icon"
+                />
+                <span>{technologies[techId].name}</span>
+                <button class="remove-button" on:click={() => cancelResearch(techId)}>✕</button>
+              </li>
+            {/each}
+          </ul>
+        </div>
+      {/if}
+    {:else}
+      <div class="no-research">
+        <p>No active research</p>
+        <p class="hint">Select a technology from the tree or list to begin research</p>
+      </div>
+    {/if}
+  </div>
+  
+  <!-- Technology details -->
+  {#if selectedTech}
+    <div class="tech-details">
+      <h3>{selectedTech.name}</h3>
+      <p class="tech-description">{selectedTech.description}</p>
+      
+      <div class="tech-info">
+        <div class="tech-cost">
+          <span class="label">Cost:</span>
+          <span class="value">{selectedTech.cost} science points</span>
+        </div>
+        
+        <div class="tech-time">
+          <span class="label">Research time:</span>
+          <span class="value">{selectedTech.time}s base time</span>
+        </div>
+        
+        {#if selectedTech.prerequisites.length > 0}
+          <div class="tech-prerequisites">
+            <span class="label">Prerequisites:</span>
+            <ul>
+              {#each selectedTech.prerequisites as prereqId}
+                <li class={completedTechnologies.includes(prereqId) ? 'completed' : 'missing'}>
+                  {technologies[prereqId].name}
+                </li>
+              {/each}
+            </ul>
+          </div>
+        {/if}
+        
+        <div class="tech-unlocks">
+          <span class="label">Unlocks:</span>
+          <ul>
+            {#each selectedTech.unlocks as unlock}
+              <li>{unlock}</li>
+            {/each}
+          </ul>
+        </div>
+      </div>
+      
+      <div class="tech-actions">
+        <button 
+          class="research-button" 
+          disabled={!canResearch || completedTechnologies.includes(selectedTech.id)}
+          on:click={() => startResearch(selectedTech.id)}
+        >
+          {#if completedTechnologies.includes(selectedTech.id)}
+            Researched
+          {:else if currentResearch === selectedTech.id}
+            Researching
+          {:else}
+            Research Now
+          {/if}
+        </button>
+        
+        <button 
+          class="queue-button" 
+          disabled={
+            !isResearchable(selectedTech.id) || 
+            completedTechnologies.includes(selectedTech.id) || 
+            queuedTechnologies.includes(selectedTech.id) ||
+            currentResearch === selectedTech.id
+          }
+          on:click={() => queueResearch(selectedTech.id)}
+        >
+          {#if queuedTechnologies.includes(selectedTech.id)}
+            In Queue
+          {:else}
+            Queue Research
+          {/if}
+        </button>
+      </div>
+    </div>
+  {:else}
+    <div class="tech-details empty">
+      <p>Select a technology to view details</p>
+    </div>
+  {/if}
+  
+  <!-- Available technologies list -->
+  <div class="available-techs">
+    <h3>Available Research</h3>
+    
+    {#if availableTechnologies.length > 0}
+      <div class="tech-list">
+        {#each availableTechnologies as tech}
+          <button 
+            class="tech-item" 
+            class:active={selectedTech && selectedTech.id === tech.id}
+            on:click={() => selectTech(tech)}
+          >
+            <img src={getTechIcon(tech)} alt={tech.name} class="tech-list-icon" />
+            <div class="tech-list-info">
+              <span class="tech-list-name">{tech.name}</span>
+              <span class="tech-list-cost">{tech.cost} points</span>
+            </div>
+          </button>
+        {/each}
+      </div>
+    {:else}
+      <div class="no-available-techs">
+        <p>No available technologies to research</p>
+        {#if completedTechnologies.length === 0}
+          <p class="hint">Research basic technologies to unlock more options</p>
+        {:else}
+          <p class="hint">All available technologies are researched or in queue</p>
+        {/if}
+      </div>
+    {/if}
+  </div>
+</div>
+
+<style>
+  .research-panel {
+    background-color: rgba(16, 24, 36, 0.95);
+    color: white;
+    border-radius: 8px;
+    padding: 16px;
+    width: 100%;
+    height: 100%;
+    display: grid;
+    grid-template-rows: auto auto auto 1fr;
+    gap: 16px;
+    overflow-y: auto;
+  }
+  
+  h2 {
+    margin: 0 0 8px;
+    border-bottom: 1px solid rgba(155, 89, 182, 0.3);
+    padding-bottom: 12px;
+    font-size: 1.2rem;
+    color: #9b59b6;
+    letter-spacing: 0.5px;
+  }
+  
+  h3 {
+    font-size: 1rem;
+    margin: 0 0 12px;
+    color: #3498db;
+  }
+  
+  h4 {
+    font-size: 14px;
+    margin: 0 0 4px;
+  }
+  
+  /* Research tree visualization */
+  .research-tree-container {
+    width: 100%;
+    height: 300px;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    background-color: rgba(16, 22, 36, 0.8);
+    position: relative;
+  }
+  
+  .research-tree {
+    width: 100%;
+    height: 100%;
+  }
+  
+  .tech-connection {
+    stroke-width: 2;
+    stroke: rgba(52, 152, 219, 0.3);
+    stroke-dasharray: 4;
+  }
+  
+  .tech-connection.completed {
+    stroke: rgba(46, 204, 113, 0.6);
+    stroke-width: 3;
+    stroke-dasharray: none;
+  }
+  
+  .tech-connection.current, .tech-connection.queued {
+    stroke: rgba(155, 89, 182, 0.6);
+    stroke-width: 2.5;
+    animation: pulse 2s infinite;
+  }
+  
+  .tech-node {
+    cursor: pointer;
+    transition: all 0.3s ease;
+  }
+  
+  .tech-node circle {
+    fill: rgba(28, 40, 55, 0.9);
+    stroke: rgba(52, 152, 219, 0.5);
+    stroke-width: 2;
+    transition: all 0.3s ease;
+  }
+  
+  .tech-node:hover circle {
+    fill: rgba(52, 73, 94, 0.9);
+    stroke: rgba(52, 152, 219, 0.8);
+    stroke-width: 3;
+  }
+  
+  .tech-node.locked circle {
+    fill: rgba(28, 40, 55, 0.7);
+    stroke: rgba(127, 140, 141, 0.5);
+  }
+  
+  .tech-node.available circle {
+    fill: rgba(28, 40, 55, 0.9);
+    stroke: rgba(52, 152, 219, 0.7);
+  }
+  
+  .tech-node.current circle {
+    fill: rgba(155, 89, 182, 0.2);
+    stroke: rgba(155, 89, 182, 0.8);
+    stroke-width: 3;
+    animation: pulse 2s infinite;
+  }
+  
+  .tech-node.queued circle {
+    fill: rgba(155, 89, 182, 0.1);
+    stroke: rgba(155, 89, 182, 0.5);
+    stroke-dasharray: 4;
+  }
+  
+  .tech-node.completed circle {
+    fill: rgba(46, 204, 113, 0.2);
+    stroke: rgba(46, 204, 113, 0.7);
+    stroke-width: 2;
+  }
+  
+  /* Current research display */
+  .current-research {
+    padding: 12px;
+    background: linear-gradient(to right, rgba(28, 40, 55, 0.8), rgba(20, 29, 47, 0.8));
+    border-radius: 6px;
+    border: 1px solid rgba(155, 89, 182, 0.2);
+  }
+  
+  .research-progress {
+    margin-bottom: 12px;
+  }
+  
+  .progress-info {
+    display: flex;
+    align-items: center;
+    margin-bottom: 8px;
+  }
+  
+  .tech-icon {
+    width: 32px;
+    height: 32px;
+    margin-right: 10px;
+    border-radius: 4px;
+    background-color: rgba(0, 0, 0, 0.3);
+    padding: 4px;
+  }
+  
+  .progress-stats {
+    display: flex;
+    gap: 12px;
+    font-size: 12px;
+    color: #bdc3c7;
+  }
+  
+  .time-estimate {
+    color: #3498db;
+  }
+  
+  .cancel-button {
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: #e74c3c;
+    font-size: 16px;
+    cursor: pointer;
+    opacity: 0.7;
+    transition: all 0.2s ease;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  
+  .cancel-button:hover {
+    opacity: 1;
+    background-color: rgba(231, 76, 60, 0.2);
+  }
+  
+  .progress-bar {
+    width: 100%;
+    height: 8px;
+    background-color: rgba(0, 0, 0, 0.2);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  
+  .progress-fill {
+    height: 100%;
+    background: linear-gradient(to right, #9b59b6, #3498db);
+    border-radius: 4px;
+    transition: width 0.5s ease;
+  }
+  
+  .research-queue {
+    margin-top: 16px;
+  }
+  
+  .research-queue h4 {
+    font-size: 13px;
+    margin-bottom: 8px;
+    color: #bdc3c7;
+  }
+  
+  .research-queue ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+  
+  .research-queue li {
+    display: flex;
+    align-items: center;
+    padding: 6px 8px;
+    background-color: rgba(0, 0, 0, 0.2);
+    border-radius: 4px;
+    margin-bottom: 6px;
+    font-size: 13px;
+  }
+  
+  .queue-icon {
+    width: 20px;
+    height: 20px;
+    margin-right: 8px;
+  }
+  
+  .remove-button {
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: #e74c3c;
+    font-size: 14px;
+    cursor: pointer;
+    opacity: 0.7;
+    transition: opacity 0.2s ease;
+  }
+  
+  .remove-button:hover {
+    opacity: 1;
+  }
+  
+  .no-research {
+    padding: 20px;
+    text-align: center;
+  }
+  
+  .no-research p {
+    margin: 4px 0;
+  }
+  
+  .no-research .hint {
+    font-size: 12px;
+    color: #bdc3c7;
+    margin-top: 8px;
+  }
+  
+  /* Technology details panel */
+  .tech-details {
+    padding: 12px;
+    background: linear-gradient(to right, rgba(28, 40, 55, 0.8), rgba(20, 29, 47, 0.8));
+    border-radius: 6px;
+    border: 1px solid rgba(52, 152, 219, 0.2);
+  }
+  
+  .tech-details.empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #bdc3c7;
+    font-style: italic;
+  }
+  
+  .tech-description {
+    font-size: 14px;
+    line-height: 1.4;
+    color: #bdc3c7;
+    margin-bottom: 16px;
+  }
+  
+  .tech-info {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  
+  .tech-info > div {
+    font-size: 13px;
+  }
+  
+  .tech-prerequisites, .tech-unlocks {
+    grid-column: 1 / -1;
+  }
+  
+  .label {
+    color: #3498db;
+    display: block;
+    margin-bottom: 4px;
+  }
+  
+  .tech-info ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+  
+  .tech-info li {
+    padding: 2px 0;
+  }
+  
+  .tech-prerequisites li.completed {
+    color: #2ecc71;
+  }
+  
+  .tech-prerequisites li.missing {
+    color: #e74c3c;
+  }
+  
+  .tech-actions {
+    display: flex;
+    gap: 10px;
+  }
+  
+  .research-button, .queue-button {
+    flex: 1;
+    padding: 8px 12px;
+    border: none;
+    border-radius: 4px;
+    font-weight: 500;
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+  
+  .research-button {
+    background: linear-gradient(to right, #9b59b6, #8e44ad);
+    color: white;
+  }
+  
+  .research-button:hover:not(:disabled) {
+    background: linear-gradient(to right, #a569bd, #9b59b6);
+    transform: translateY(-2px);
+  }
+  
+  .queue-button {
+    background: rgba(52, 152, 219, 0.2);
+    color: #3498db;
+    border: 1px solid rgba(52, 152, 219, 0.5);
+  }
+  
+  .queue-button:hover:not(:disabled) {
+    background: rgba(52, 152, 219, 0.3);
+    transform: translateY(-2px);
+  }
+  
+  .research-button:disabled, .queue-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+  }
+  
+  /* Available technologies list */
+  .available-techs {
+    overflow-y: auto;
+  }
+  
+  .tech-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 10px;
+  }
+  
+  .tech-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px;
+    background-color: rgba(28, 40, 55, 0.8);
+    border: 1px solid rgba(52, 152, 219, 0.1);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-align: left;
+    color: white;
+  }
+  
+  .tech-item:hover {
+    background-color: rgba(52, 73, 94, 0.8);
+    transform: translateY(-2px);
+    border-color: rgba(52, 152, 219, 0.3);
+  }
+  
+  .tech-item.active {
+    background-color: rgba(52, 152, 219, 0.2);
+    border-color: rgba(52, 152, 219, 0.5);
+  }
+  
+  .tech-list-icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 4px;
+    background-color: rgba(0, 0, 0, 0.3);
+    padding: 4px;
+  }
+  
+  .tech-list-info {
+    display: flex;
+    flex-direction: column;
+  }
+  
+  .tech-list-name {
+    font-size: 13px;
+    font-weight: 500;
+  }
+  
+  .tech-list-cost {
+    font-size: 11px;
+    color: #bdc3c7;
+  }
+  
+  .no-available-techs {
+    padding: 24px;
+    text-align: center;
+    background-color: rgba(28, 40, 55, 0.5);
+    border-radius: 8px;
+    border: 1px dashed rgba(255, 255, 255, 0.1);
+  }
+  
+  .hint {
+    font-size: 12px;
+    color: #bdc3c7;
+    margin-top: 8px;
+  }
+  
+  /* Animations */
+  @keyframes pulse {
+    0% {
+      opacity: 0.6;
+    }
+    50% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 0.6;
+    }
+  }
+</style>
+```
+
 # frontend/src/components/ui/ResourceDisplay.svelte
 
 ```svelte
@@ -5297,6 +8147,813 @@ This is a file of the type: SVG Image
       background-color: #e74c3c;
     }
   </style>
+```
+
+# frontend/src/components/ui/StatisticsPanel.svelte
+
+```svelte
+<script lang="ts">
+  import { gameState } from '../../stores/gameState';
+  import { onMount } from 'svelte';
+  
+  // Imported Stats Data
+  let productionHistory = [];
+  let powerHistory = [];
+  let pollutionHistory = [];
+  let resourceProduction = {};
+  let resourceConsumption = {};
+  
+  // Time selection for graphs
+  let timeRangeOptions = ["Last 10m", "Last 30m", "Last 1h", "All Time"];
+  let selectedTimeRange = "Last 30m";
+  
+  // Active tab for stats
+  let activeTab = "production";
+  
+  // Chart size
+  let chartWidth = 0;
+  let chartHeight = 0;
+  let chartContainer;
+  
+  onMount(() => {
+    // Get initial chart dimensions
+    updateChartDimensions();
+    
+    // Listen for resize events
+    window.addEventListener('resize', updateChartDimensions);
+    
+    return () => {
+      window.removeEventListener('resize', updateChartDimensions);
+    };
+  });
+  
+  function updateChartDimensions() {
+    if (chartContainer) {
+      chartWidth = chartContainer.clientWidth;
+      chartHeight = 200; // Fixed height
+    }
+  }
+  
+  // Update data from game state
+  $: {
+    productionHistory = $gameState.statistics.production.history;
+    powerHistory = $gameState.statistics.power.history;
+    pollutionHistory = $gameState.statistics.pollution.history;
+    resourceProduction = $gameState.statistics.resources.produced;
+    resourceConsumption = $gameState.statistics.resources.consumed;
+  }
+  
+  // Get data for a specific time range
+  function getTimeRangeData(data, range) {
+    if (!data || data.length === 0) return [];
+    
+    const now = $gameState.tick;
+    let timeCutoff;
+    
+    switch (range) {
+      case "Last 10m":
+        timeCutoff = now - 600; // 10 minutes * 60 ticks
+        break;
+      case "Last 30m":
+        timeCutoff = now - 1800; // 30 minutes * 60 ticks
+        break;
+      case "Last 1h":
+        timeCutoff = now - 3600; // 60 minutes * 60 ticks
+        break;
+      default: // All time
+        return data;
+    }
+    
+    return data.filter(entry => entry.tick >= timeCutoff);
+  }
+  
+  // Format resource data for production chart
+  $: filteredProductionData = getTimeRangeData(productionHistory, selectedTimeRange);
+  $: filteredPowerData = getTimeRangeData(powerHistory, selectedTimeRange);
+  $: filteredPollutionData = getTimeRangeData(pollutionHistory, selectedTimeRange);
+  
+  // Create chart data points for production
+  function getProductionChartPoints(resource) {
+    if (!filteredProductionData || filteredProductionData.length === 0) {
+      return "";
+    }
+    
+    // Get min/max for scaling
+    const minTick = filteredProductionData[0].tick;
+    const maxTick = filteredProductionData[filteredProductionData.length - 1].tick;
+    const tickRange = maxTick - minTick || 1;
+    
+    // Find resource min/max
+    let maxValue = 0;
+    filteredProductionData.forEach(entry => {
+      const value = entry.resources[resource] || 0;
+      if (value > maxValue) maxValue = value;
+    });
+    maxValue = maxValue || 100; // Avoid division by zero
+    
+    // Generate points
+    return filteredProductionData.map((entry, i) => {
+      const x = ((entry.tick - minTick) / tickRange) * chartWidth;
+      const value = entry.resources[resource] || 0;
+      const y = chartHeight - (value / maxValue) * (chartHeight - 20);
+      
+      return `${x},${y}`;
+    }).join(" ");
+  }
+  
+  // Create chart for power generation/consumption
+  function getPowerChartPoints(type) {
+    if (!filteredPowerData || filteredPowerData.length === 0) {
+      return "";
+    }
+    
+    // Get min/max for scaling
+    const minTick = filteredPowerData[0].tick;
+    const maxTick = filteredPowerData[filteredPowerData.length - 1].tick;
+    const tickRange = maxTick - minTick || 1;
+    
+    // Find max value
+    let maxValue = 0;
+    filteredPowerData.forEach(entry => {
+      const value = type === 'generation' ? entry.generated : entry.consumed;
+      if (value > maxValue) maxValue = value;
+    });
+    maxValue = maxValue || 100; // Avoid division by zero
+    
+    // Generate points
+    return filteredPowerData.map((entry, i) => {
+      const x = ((entry.tick - minTick) / tickRange) * chartWidth;
+      const value = type === 'generation' ? entry.generated : entry.consumed;
+      const y = chartHeight - (value / maxValue) * (chartHeight - 20);
+      
+      return `${x},${y}`;
+    }).join(" ");
+  }
+  
+  // Create chart for pollution levels
+  function getPollutionChartPoints() {
+    if (!filteredPollutionData || filteredPollutionData.length === 0) {
+      return "";
+    }
+    
+    // Get min/max for scaling
+    const minTick = filteredPollutionData[0].tick;
+    const maxTick = filteredPollutionData[filteredPollutionData.length - 1].tick;
+    const tickRange = maxTick - minTick || 1;
+    
+    // Find max pollution
+    let maxValue = 0;
+    filteredPollutionData.forEach(entry => {
+      if (entry.level > maxValue) maxValue = entry.level;
+    });
+    maxValue = maxValue || 100; // Avoid division by zero
+    
+    // Generate points
+    return filteredPollutionData.map((entry, i) => {
+      const x = ((entry.tick - minTick) / tickRange) * chartWidth;
+      const y = chartHeight - (entry.level / maxValue) * (chartHeight - 20);
+      
+      return `${x},${y}`;
+    }).join(" ");
+  }
+  
+  // Get color for resource lines
+  function getResourceColor(resource) {
+    const colors = {
+      energy: '#f39c12',
+      methane: '#1abc9c',
+      water: '#3498db',
+      oxygen: '#2ecc71',
+      iron: '#e67e22',
+      copper: '#e74c3c',
+      silicon: '#7f8c8d',
+      rare_metals: '#95a5a6',
+      uranium: '#f1c40f',
+      xenocrystals: '#9b59b6',
+      science: '#9b59b6',
+      sulfur: '#f39c12'
+    };
+    
+    return colors[resource] || '#bdc3c7';
+  }
+  
+  // Format number with K, M suffixes
+  function formatNumber(num) {
+    if (num >= 1_000_000) {
+      return (num / 1_000_000).toFixed(1) + 'M';
+    } else if (num >= 1_000) {
+      return (num / 1_000).toFixed(1) + 'K';
+    } else {
+      return num.toFixed(1);
+    }
+  }
+  
+  // Get current production/consumption rates
+  function getResourceRate(resource, type) {
+    const buildings = $gameState.buildings;
+    let rate = 0;
+    
+    // Calculate based on building types and efficiencies
+    buildings.forEach(building => {
+      if (building.isActive && building.efficiency > 0.1) {
+        if (building.type === 'extractor') {
+          // Simplified - in reality would check resource type at position
+          const resourceType = ['iron', 'copper', 'water', 'methane', 'oxygen'][Math.floor(Math.random() * 5)];
+          if (resourceType === resource && type === 'production') {
+            rate += 0.2 * building.efficiency;
+          }
+        } else if (building.type === 'researchLab' && resource === 'science' && type === 'production') {
+          rate += 0.1 * building.efficiency;
+        } else if (building.type === 'assembler') {
+          // Would depend on recipes
+        }
+      }
+    });
+    
+    return rate;
+  }
+  
+  // Get total power generation/consumption
+  function getTotalPower(type) {
+    return type === 'generation' 
+      ? $gameState.statistics.power.generated 
+      : $gameState.statistics.power.consumed;
+  }
+  
+  // Get resources to display sorted by amount
+  $: productionResources = Object.entries(resourceProduction)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6)
+    .map(([resource]) => resource);
+  
+  // Tab switching
+  function setActiveTab(tab) {
+    activeTab = tab;
+    // Reset chart when switching tabs
+    setTimeout(updateChartDimensions, 50);
+  }
+</script>
+
+<div class="stats-panel">
+  <h2>Statistics</h2>
+  
+  <!-- Tab selector -->
+  <div class="tabs">
+    <button 
+      class="tab-button" 
+      class:active={activeTab === "production"}
+      on:click={() => setActiveTab("production")}
+    >
+      Production
+    </button>
+    <button 
+      class="tab-button" 
+      class:active={activeTab === "power"}
+      on:click={() => setActiveTab("power")}
+    >
+      Power
+    </button>
+    <button 
+      class="tab-button" 
+      class:active={activeTab === "pollution"}
+      on:click={() => setActiveTab("pollution")}
+    >
+      Pollution
+    </button>
+  </div>
+  
+  <!-- Time range selector -->
+  <div class="time-range">
+    <span class="range-label">Time Range:</span>
+    {#each timeRangeOptions as range}
+      <button 
+        class="range-button" 
+        class:active={selectedTimeRange === range}
+        on:click={() => selectedTimeRange = range}
+      >
+        {range}
+      </button>
+    {/each}
+  </div>
+  
+  <!-- Charts -->
+  <div class="chart-container" bind:this={chartContainer}>
+    {#if activeTab === "production"}
+      <div class="chart-title">Resource Levels</div>
+      
+      {#if chartWidth > 0 && chartHeight > 0}
+        <svg class="chart" width={chartWidth} height={chartHeight}>
+          <!-- Grid lines -->
+          <line x1="0" y1={chartHeight - 10} x2={chartWidth} y2={chartHeight - 10} class="grid-line" />
+          
+          <!-- Resource lines -->
+          {#each productionResources as resource}
+            <polyline 
+              points={getProductionChartPoints(resource)} 
+              class="chart-line"
+              style="stroke: {getResourceColor(resource)}"
+            />
+          {/each}
+          
+          <!-- Legend -->
+          <g class="chart-legend">
+            {#each productionResources as resource, i}
+              <g transform="translate(10, {20 + i * 20})">
+                <rect width="10" height="10" fill={getResourceColor(resource)} />
+                <text x="15" y="9">{resource} ({formatNumber($gameState.resources[resource] || 0)})</text>
+              </g>
+            {/each}
+          </g>
+        </svg>
+      {/if}
+      
+      <!-- Production stats -->
+      <div class="stats-grid">
+        <h3>Production Rates</h3>
+        
+        <div class="stats-row header">
+          <div class="resource-name">Resource</div>
+          <div class="rate-value">Production</div>
+          <div class="rate-value">Consumption</div>
+          <div class="rate-value">Net</div>
+        </div>
+        
+        {#each Object.keys($gameState.resources) as resource}
+          {@const prodRate = getResourceRate(resource, 'production')}
+          {@const consRate = getResourceRate(resource, 'consumption')}
+          {@const netRate = prodRate - consRate}
+          
+          {#if prodRate > 0 || consRate > 0}
+            <div class="stats-row">
+              <div class="resource-name">
+                <span class="resource-dot" style="background-color: {getResourceColor(resource)}"></span>
+                {resource}
+              </div>
+              <div class="rate-value">{prodRate.toFixed(1)}/s</div>
+              <div class="rate-value">{consRate.toFixed(1)}/s</div>
+              <div class="rate-value {netRate > 0 ? 'positive' : netRate < 0 ? 'negative' : ''}">
+                {netRate > 0 ? '+' : ''}{netRate.toFixed(1)}/s
+              </div>
+            </div>
+          {/if}
+        {/each}
+      </div>
+    {:else if activeTab === "power"}
+      <div class="chart-title">Power Generation & Consumption</div>
+      
+      {#if chartWidth > 0 && chartHeight > 0}
+        <svg class="chart" width={chartWidth} height={chartHeight}>
+          <!-- Grid lines -->
+          <line x1="0" y1={chartHeight - 10} x2={chartWidth} y2={chartHeight - 10} class="grid-line" />
+          
+          <!-- Power generation line -->
+          <polyline 
+            points={getPowerChartPoints('generation')} 
+            class="chart-line"
+            style="stroke: #2ecc71"
+          />
+          
+          <!-- Power consumption line -->
+          <polyline 
+            points={getPowerChartPoints('consumption')} 
+            class="chart-line"
+            style="stroke: #e74c3c"
+          />
+          
+          <!-- Legend -->
+          <g class="chart-legend">
+            <g transform="translate(10, 20)">
+              <rect width="10" height="10" fill="#2ecc71" />
+              <text x="15" y="9">Generation ({formatNumber(getTotalPower('generation'))}/s)</text>
+            </g>
+            <g transform="translate(10, 40)">
+              <rect width="10" height="10" fill="#e74c3c" />
+              <text x="15" y="9">Consumption ({formatNumber(getTotalPower('consumption'))}/s)</text>
+            </g>
+          </g>
+        </svg>
+      {/if}
+      
+      <!-- Power stats by building type -->
+      <div class="stats-grid">
+        <h3>Power Production</h3>
+        
+        <div class="stats-row header">
+          <div class="resource-name">Building Type</div>
+          <div class="rate-value">Count</div>
+          <div class="rate-value">Total Output</div>
+          <div class="rate-value">Efficiency</div>
+        </div>
+        
+        {#each ['powerPlant', 'solarPanel', 'nuclearReactor'] as buildingType}
+          {#if $gameState.buildings.filter(b => b.type === buildingType).length > 0}
+            {#if buildingType === 'powerPlant'}
+              <div class="stats-row">
+                <div class="resource-name">{buildingType}</div>
+                <div class="rate-value">{$gameState.buildings.filter(b => b.type === buildingType).length}</div>
+                <div class="rate-value positive">
+                  {($gameState.buildings.filter(b => b.type === buildingType)
+                    .reduce((sum, b) => sum + (b.productionRate || 0), 0)).toFixed(1)}/s
+                </div>
+                <div class="rate-value">
+                  {($gameState.buildings.filter(b => b.type === buildingType).length > 0 
+                    ? $gameState.buildings.filter(b => b.type === buildingType)
+                      .reduce((sum, b) => sum + (b.efficiency || 0), 0) 
+                      / $gameState.buildings.filter(b => b.type === buildingType).length * 100
+                    : 0).toFixed(0)}%
+                </div>
+              </div>
+            {:else if buildingType === 'solarPanel'}
+              <div class="stats-row">
+                <div class="resource-name">{buildingType}</div>
+                <div class="rate-value">{$gameState.buildings.filter(b => b.type === buildingType).length}</div>
+                <div class="rate-value positive">
+                  {($gameState.buildings.filter(b => b.type === buildingType)
+                    .reduce((sum, b) => sum + (b.productionRate || 0), 0)).toFixed(1)}/s
+                </div>
+                <div class="rate-value">
+                  {($gameState.buildings.filter(b => b.type === buildingType).length > 0 
+                    ? $gameState.buildings.filter(b => b.type === buildingType)
+                      .reduce((sum, b) => sum + (b.efficiency || 0), 0) 
+                      / $gameState.buildings.filter(b => b.type === buildingType).length * 100
+                    : 0).toFixed(0)}%
+                </div>
+              </div>
+            {:else if buildingType === 'nuclearReactor'}
+              <div class="stats-row">
+                <div class="resource-name">{buildingType}</div>
+                <div class="rate-value">{$gameState.buildings.filter(b => b.type === buildingType).length}</div>
+                <div class="rate-value positive">
+                  {($gameState.buildings.filter(b => b.type === buildingType)
+                    .reduce((sum, b) => sum + (b.productionRate || 0), 0)).toFixed(1)}/s
+                </div>
+                <div class="rate-value">
+                  {($gameState.buildings.filter(b => b.type === buildingType).length > 0 
+                    ? $gameState.buildings.filter(b => b.type === buildingType)
+                      .reduce((sum, b) => sum + (b.efficiency || 0), 0) 
+                      / $gameState.buildings.filter(b => b.type === buildingType).length * 100
+                    : 0).toFixed(0)}%
+                </div>
+              </div>
+            {/if}
+          {/if}
+        {/each}
+        
+        <h3>Power Consumption</h3>
+        
+        <div class="stats-row header">
+          <div class="resource-name">Building Type</div>
+          <div class="rate-value">Count</div>
+          <div class="rate-value">Total Usage</div>
+        </div>
+        
+        {#each ['extractor', 'reactor', 'assembler', 'researchLab'] as buildingType}
+          {#if $gameState.buildings.filter(b => b.type === buildingType).length > 0}
+            <div class="stats-row">
+              <div class="resource-name">{buildingType}</div>
+              <div class="rate-value">{$gameState.buildings.filter(b => b.type === buildingType).length}</div>
+              <div class="rate-value negative">
+                {($gameState.buildings.filter(b => b.type === buildingType)
+                  .reduce((sum, b) => sum + (b.powerConsumption || 0), 0)).toFixed(1)}/s
+              </div>
+            </div>
+          {/if}
+        {/each}
+      </div>
+    {:else if activeTab === "pollution"}
+      <div class="chart-title">Pollution Levels</div>
+      
+      {#if chartWidth > 0 && chartHeight > 0}
+        <svg class="chart" width={chartWidth} height={chartHeight}>
+          <!-- Grid lines -->
+          <line x1="0" y1={chartHeight - 10} x2={chartWidth} y2={chartHeight - 10} class="grid-line" />
+          
+          <!-- Pollution line -->
+          <polyline 
+            points={getPollutionChartPoints()} 
+            class="chart-line"
+            style="stroke: #e74c3c"
+          />
+          
+          <!-- Legend -->
+          <g class="chart-legend">
+            <g transform="translate(10, 20)">
+              <rect width="10" height="10" fill="#e74c3c" />
+              <text x="15" y="9">Pollution ({formatNumber($gameState.statistics.pollution.level)}) units</text>
+            </g>
+          </g>
+        </svg>
+      {/if}
+      
+      <!-- Pollution summary -->
+      <div class="pollution-summary">
+        <div class="pollution-level">
+          <h3>Current Pollution Level</h3>
+          <div class="pollution-meter">
+            <div class="pollution-bar" style="width: {Math.min(100, $gameState.statistics.pollution.level / 2)}%"></div>
+          </div>
+          <div class="pollution-value">{formatNumber($gameState.statistics.pollution.level)} units</div>
+        </div>
+        
+        <div class="pollution-effects">
+          <h3>Effects</h3>
+          <ul class="effects-list">
+            {#if $gameState.statistics.pollution.level < 10}
+              <li class="effect good">Minimal environmental impact</li>
+            {:else if $gameState.statistics.pollution.level < 50}
+              <li class="effect warning">Slightly increased chances of adverse weather</li>
+            {:else if $gameState.statistics.pollution.level < 100}
+              <li class="effect warning">Moderate weather effects</li>
+              <li class="effect warning">Reduced solar panel efficiency</li>
+            {:else}
+              <li class="effect danger">Severe weather effects</li>
+              <li class="effect danger">Significantly reduced solar panel efficiency</li>
+              <li class="effect danger">Increased maintenance requirements</li>
+            {/if}
+          </ul>
+        </div>
+        
+        <div class="pollution-sources">
+          <h3>Major Sources</h3>
+          <div class="source-list">
+            <!-- Power plants -->
+            {#if $gameState.buildings.filter(b => b.type === 'powerPlant').length > 0}
+              {@const powerPlants = $gameState.buildings.filter(b => b.type === 'powerPlant').length}
+              <div class="source-item">
+                <div class="source-name">Power Plants</div>
+                <div class="source-value">{(powerPlants * 0.2).toFixed(1)} units/s</div>
+              </div>
+            {/if}
+            
+            <!-- Extractors -->
+            {#if $gameState.buildings.filter(b => b.type === 'extractor').length > 0}
+              {@const extractors = $gameState.buildings.filter(b => b.type === 'extractor').length}
+              <div class="source-item">
+                <div class="source-name">Extractors</div>
+                <div class="source-value">{(extractors * 0.1).toFixed(1)} units/s</div>
+              </div>
+            {/if}
+            
+            <div class="source-item">
+              <div class="source-name">Natural Decay</div>
+              <div class="source-value">-{($gameState.statistics.pollution.level * 0.0001).toFixed(3)} units/s</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    {/if}
+  </div>
+</div>
+
+<style>
+  .stats-panel {
+    background-color: rgba(16, 24, 36, 0.95);
+    color: white;
+    border-radius: 8px;
+    padding: 16px;
+    width: 100%;
+    height: 100%;
+    overflow-y: auto;
+  }
+  
+  h2 {
+    margin: 0 0 16px;
+    border-bottom: 1px solid rgba(52, 152, 219, 0.3);
+    padding-bottom: 12px;
+    font-size: 1.2rem;
+    color: #3498db;
+    letter-spacing: 0.5px;
+  }
+  
+  h3 {
+    font-size: 1rem;
+    margin: 16px 0 12px;
+    color: #bdc3c7;
+  }
+  
+  /* Tabs */
+  .tabs {
+    display: flex;
+    gap: 2px;
+    margin-bottom: 16px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  }
+  
+  .tab-button {
+    padding: 8px 16px;
+    background-color: rgba(26, 32, 44, 0.7);
+    border: none;
+    color: #bdc3c7;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s ease;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+  }
+  
+  .tab-button.active {
+    background-color: rgba(52, 152, 219, 0.2);
+    color: white;
+    box-shadow: inset 0 3px 0 rgba(52, 152, 219, 0.8);
+  }
+  
+  .tab-button:hover:not(.active) {
+    background-color: rgba(52, 73, 94, 0.7);
+  }
+  
+  /* Time range */
+  .time-range {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+  }
+  
+  .range-label {
+    font-size: 13px;
+    color: #bdc3c7;
+  }
+  
+  .range-button {
+    padding: 4px 10px;
+    font-size: 12px;
+    background-color: rgba(26, 32, 44, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #bdc3c7;
+    border-radius: 14px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+  
+  .range-button.active {
+    background-color: rgba(52, 152, 219, 0.2);
+    color: white;
+    border-color: rgba(52, 152, 219, 0.5);
+  }
+  
+  .range-button:hover:not(.active) {
+    background-color: rgba(52, 73, 94, 0.7);
+  }
+  
+  /* Chart */
+  .chart-container {
+    background-color: rgba(20, 29, 47, 0.5);
+    border-radius: 6px;
+    padding: 16px;
+    margin-bottom: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+  }
+  
+  .chart-title {
+    font-size: 14px;
+    font-weight: 500;
+    margin-bottom: 10px;
+    color: #bdc3c7;
+    text-align: center;
+  }
+  
+  .chart {
+    width: 100%;
+    height: 200px;
+    margin-bottom: 16px;
+  }
+  
+  .chart-line {
+    fill: none;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  
+  .grid-line {
+    stroke: rgba(255, 255, 255, 0.1);
+    stroke-width: 1;
+  }
+  
+  .chart-legend text {
+    fill: #bdc3c7;
+    font-size: 12px;
+  }
+  
+  /* Stats grid */
+  .stats-grid {
+    overflow-x: auto;
+  }
+  
+  .stats-row {
+    display: grid;
+    grid-template-columns: 2fr 1fr 1fr 1fr;
+    padding: 8px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    font-size: 13px;
+  }
+  
+  .stats-row.header {
+    font-weight: 500;
+    color: #bdc3c7;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  }
+  
+  .resource-name {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  
+  .resource-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+  
+  .rate-value {
+    text-align: center;
+  }
+  
+  .positive {
+    color: #2ecc71;
+  }
+  
+  .negative {
+    color: #e74c3c;
+  }
+  
+  /* Pollution section */
+  .pollution-summary {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  
+  .pollution-level {
+    grid-column: 1 / -1;
+  }
+  
+  .pollution-meter {
+    height: 24px;
+    background-color: rgba(0, 0, 0, 0.3);
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 8px;
+  }
+  
+  .pollution-bar {
+    height: 100%;
+    background: linear-gradient(to right, #2ecc71, #f1c40f, #e74c3c);
+    border-radius: 4px;
+    transition: width 0.5s ease;
+  }
+  
+  .pollution-value {
+    text-align: center;
+    font-size: 20px;
+    font-weight: 600;
+  }
+  
+  .effects-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+  
+  .effect {
+    padding: 8px;
+    margin-bottom: 6px;
+    border-radius: 4px;
+    font-size: 13px;
+  }
+  
+  .effect.good {
+    background-color: rgba(46, 204, 113, 0.2);
+    color: #2ecc71;
+  }
+  
+  .effect.warning {
+    background-color: rgba(241, 196, 15, 0.2);
+    color: #f1c40f;
+  }
+  
+  .effect.danger {
+    background-color: rgba(231, 76, 60, 0.2);
+    color: #e74c3c;
+  }
+  
+  .source-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  
+  .source-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px;
+    background-color: rgba(0, 0, 0, 0.2);
+    border-radius: 4px;
+    font-size: 13px;
+  }
+</style>
 ```
 
 # frontend/src/components/world/GameCanvas.svelte
@@ -11270,6 +14927,11 @@ export interface GameState {
   map?: any;
   planetType?: number;
   lastUpdated?: number;
+  research: Research;
+  statistics: Statistics;
+  weather: Weather;
+  timeOfDay: number; // 0-24 (hours)
+  unlocked: UnlockedContent;
 }
 
 export interface Building {
@@ -11277,7 +14939,193 @@ export interface Building {
   type: string;
   position: { x: number; y: number };
   connections: string[];
+  efficiency?: number; // 0-1 (percentage)
+  productionRate?: number;
+  powerConsumption?: number;
+  lastMaintenance?: number;
+  wear?: number; // 0-1 (percentage)
+  lightRadius?: number;
+  isActive?: boolean;
+  automation?: AutomationSettings;
 }
+
+export interface Research {
+  points: number;
+  currentResearch: string | null;
+  progress: number;
+  completed: string[];
+  unlockQueue: string[];
+}
+
+export interface Statistics {
+  resources: {
+    produced: Record<string, number>;
+    consumed: Record<string, number>;
+  };
+  production: {
+    history: ProductionSnapshot[];
+    efficiency: number;
+  };
+  power: {
+    generated: number;
+    consumed: number;
+    history: PowerSnapshot[];
+  };
+  pollution: {
+    level: number;
+    history: PollutionSnapshot[];
+  };
+}
+
+export interface ProductionSnapshot {
+  tick: number;
+  timestamp: number;
+  resources: Record<string, number>;
+}
+
+export interface PowerSnapshot {
+  tick: number;
+  timestamp: number;
+  generated: number;
+  consumed: number;
+}
+
+export interface PollutionSnapshot {
+  tick: number;
+  timestamp: number;
+  level: number;
+  sources: { x: number; y: number; amount: number }[];
+}
+
+export interface Weather {
+  current: string; // clear, rainy, stormy, foggy
+  intensity: number; // 0-1
+  duration: number;
+  effects: WeatherEffect[];
+}
+
+export interface WeatherEffect {
+  type: string;
+  target: string;
+  modifier: number;
+}
+
+export interface UnlockedContent {
+  buildings: string[];
+  technologies: string[];
+  blueprints: boolean;
+  automation: boolean;
+  logistics: boolean;
+  advanced: boolean;
+}
+
+export interface AutomationSettings {
+  enabled: boolean;
+  conditions: AutomationCondition[];
+  priority: number;
+}
+
+export interface AutomationCondition {
+  type: string;
+  resource?: string;
+  threshold?: number;
+  target?: string;
+  operator?: string;
+}
+
+// Define technology tree
+export const technologies = {
+  basicExtraction: {
+    name: "Basic Resource Extraction",
+    description: "Enables basic mining and drilling operations.",
+    cost: 100,
+    time: 60,
+    prerequisites: [],
+    unlocks: ["extractor", "storageSmall"],
+    icon: "mining"
+  },
+  powerGeneration: {
+    name: "Power Generation",
+    description: "Enables power plant construction for energy production.",
+    cost: 150,
+    time: 90,
+    prerequisites: ["basicExtraction"],
+    unlocks: ["powerPlant", "solarPanel"],
+    icon: "power"
+  },
+  basicLogistics: {
+    name: "Basic Logistics",
+    description: "Enables resource transportation between buildings.",
+    cost: 200,
+    time: 120,
+    prerequisites: ["basicExtraction"],
+    unlocks: ["pipe", "conveyor"],
+    icon: "logistics"
+  },
+  advancedMaterials: {
+    name: "Advanced Materials",
+    description: "Enables processing of raw materials into more useful forms.",
+    cost: 300,
+    time: 180,
+    prerequisites: ["basicExtraction", "powerGeneration"],
+    unlocks: ["reactor", "smelter"],
+    icon: "materials"
+  },
+  automation: {
+    name: "Basic Automation",
+    description: "Enables automated handling of resources and production.",
+    cost: 500,
+    time: 300,
+    prerequisites: ["basicLogistics", "advancedMaterials"],
+    unlocks: ["assembler", "autoLoader"],
+    icon: "automation"
+  },
+  circuitNetworks: {
+    name: "Circuit Networks",
+    description: "Enables complex logical control of your factory systems.",
+    cost: 800,
+    time: 480,
+    prerequisites: ["automation"],
+    unlocks: ["circuitController", "sensor"],
+    icon: "circuits"
+  },
+  advancedPower: {
+    name: "Advanced Power Generation",
+    description: "Enables high-output power generation facilities.",
+    cost: 1000,
+    time: 600,
+    prerequisites: ["powerGeneration"],
+    unlocks: ["nuclearReactor", "advancedSolarArray"],
+    icon: "nuclear"
+  },
+  researchEfficiency: {
+    name: "Research Efficiency",
+    description: "Improves research speed and resource efficiency.",
+    cost: 600,
+    time: 360,
+    prerequisites: ["automation"],
+    unlocks: ["researchLab", "dataCore"],
+    icon: "research"
+  },
+  advancedLogistics: {
+    name: "Advanced Logistics",
+    description: "Enables complex logistics networks with drones and stations.",
+    cost: 1200,
+    time: 720,
+    prerequisites: ["basicLogistics", "automation"],
+    unlocks: ["dronePort", "logisticsHub"],
+    icon: "drones"
+  },
+  spaceTechnology: {
+    name: "Space Technology",
+    description: "Enables construction of space-based structures and vehicles.",
+    cost: 2000,
+    time: 1200,
+    prerequisites: ["advancedPower", "advancedLogistics"],
+    unlocks: ["rocketSilo", "spacePlatform"],
+    icon: "space"
+  }
+};
 
 // Initialize default game state
 const createGameState = () => {
@@ -11285,12 +15133,57 @@ const createGameState = () => {
     tick: 0,
     isPaused: false,
     resources: {
+      energy: 1000,
       methane: 100,
       oxygen: 100,
       water: 100,
+      iron: 50,
+      copper: 50,
+      science: 0
     },
     buildings: [],
     energy: 1000,
+    research: {
+      points: 0,
+      currentResearch: null,
+      progress: 0,
+      completed: [],
+      unlockQueue: []
+    },
+    statistics: {
+      resources: {
+        produced: {},
+        consumed: {}
+      },
+      production: {
+        history: [],
+        efficiency: 1.0
+      },
+      power: {
+        generated: 0,
+        consumed: 0,
+        history: []
+      },
+      pollution: {
+        level: 0,
+        history: []
+      }
+    },
+    weather: {
+      current: "clear",
+      intensity: 0,
+      duration: 0,
+      effects: []
+    },
+    timeOfDay: 12, // Noon
+    unlocked: {
+      buildings: ["extractor", "storageSmall"],
+      technologies: [],
+      blueprints: false,
+      automation: false,
+      logistics: false,
+      advanced: false
+    }
   });
 };
 
@@ -11300,6 +15193,10 @@ export const gameState = createGameState();
 export function startGameLoop() {
   let animationFrame: number;
   let lastTimestamp = performance.now();
+  let statisticsTimer = 0;
+  let weatherTimer = 0;
+  const STATISTICS_INTERVAL = 600; // Collect stats every 10 minutes of game time
+  const WEATHER_CHANGE_INTERVAL = 1800; // Weather changes every 30 minutes of game time
   
   const update = (timestamp: number) => {
     // Calculate delta time in seconds
@@ -11313,8 +15210,278 @@ export function startGameLoop() {
       // Update tick counter
       state.tick += 1;
       
+      // Update time of day (full cycle every 24000 ticks - 24 mins real time = 24 hours game time)
+      state.timeOfDay = (state.timeOfDay + 0.001) % 24;
+      
+      // Process research
+      if (state.research.currentResearch) {
+        const tech = technologies[state.research.currentResearch];
+        if (tech && state.resources.science >= 0.1) {
+          // Consume science resources
+          state.resources.science -= 0.1;
+          // Progress research
+          state.research.progress += 0.1;
+          
+          // Complete research if finished
+          if (state.research.progress >= tech.cost) {
+            state.research.completed.push(state.research.currentResearch);
+            
+            // Unlock related content
+            tech.unlocks.forEach(item => {
+              if (!state.unlocked.buildings.includes(item)) {
+                state.unlocked.buildings.push(item);
+              }
+            });
+            
+            // Move to next research in queue
+            state.research.currentResearch = state.research.unlockQueue.shift() || null;
+            state.research.progress = 0;
+          }
+        }
+      }
+      
       // Process building operations
-      // This will be implemented later
+      let totalPowerGenerated = 0;
+      let totalPowerConsumed = 0;
+      let totalPollution = 0;
+      
+      // First pass - calculate available power
+      state.buildings.forEach(building => {
+        if (building.type === 'powerPlant' || building.type === 'solarPanel' || building.type === 'nuclearReactor') {
+          // Calculate power generation based on building type, efficiency, and time of day
+          let powerOutput = 0;
+          
+          if (building.type === 'powerPlant') {
+            powerOutput = 50;
+          } else if (building.type === 'solarPanel') {
+            // Solar panels produce less power at night/dawn/dusk
+            const dayFactor = getDaylight(state.timeOfDay);
+            powerOutput = 30 * dayFactor;
+          } else if (building.type === 'nuclearReactor') {
+            powerOutput = 200;
+          }
+          
+          // Apply efficiency
+          building.efficiency = building.efficiency || 1.0;
+          powerOutput *= building.efficiency;
+          
+          // Apply weather effects
+          if (state.weather.current === 'stormy' && building.type === 'solarPanel') {
+            powerOutput *= (1 - state.weather.intensity * 0.8);
+          }
+          
+          totalPowerGenerated += powerOutput;
+          building.productionRate = powerOutput;
+        }
+      });
+      
+      // Second pass - consume power and produce resources
+      state.buildings.forEach(building => {
+        // Set activity state
+        building.isActive = true;
+        
+        // Calculate power consumption
+        let powerNeeded = 0;
+        
+        switch (building.type) {
+          case 'extractor':
+            powerNeeded = 10;
+            break;
+          case 'reactor':
+            powerNeeded = 25;
+            break;
+          case 'assembler':
+            powerNeeded = 30;
+            break;
+          case 'researchLab':
+            powerNeeded = 40;
+            break;
+          default:
+            powerNeeded = 5;
+        }
+        
+        // Apply weather effects
+        if (state.weather.current === 'stormy' && building.type !== 'powerPlant') {
+          powerNeeded *= (1 + state.weather.intensity * 0.2);
+        }
+        
+        building.powerConsumption = powerNeeded;
+        totalPowerConsumed += powerNeeded;
+        
+        // If not enough power, reduce efficiency
+        const powerRatio = totalPowerGenerated / totalPowerConsumed;
+        const powerEfficiency = Math.min(1, powerRatio);
+        building.efficiency = powerEfficiency;
+        
+        // Calculate resource production based on efficiency
+        if (building.type === 'extractor' && building.isActive && building.efficiency > 0.1) {
+          // Determine resource type from position (simplified)
+          const resourceType = determineResourceFromPosition(building.position.x, building.position.y);
+          
+          if (resourceType) {
+            const baseProductionRate = 0.2;
+            const productionAmount = baseProductionRate * building.efficiency;
+            
+            state.resources[resourceType] = (state.resources[resourceType] || 0) + productionAmount;
+            
+            // Update statistics
+            state.statistics.resources.produced[resourceType] = 
+              (state.statistics.resources.produced[resourceType] || 0) + productionAmount;
+              
+            building.productionRate = productionAmount;
+            
+            // Generate pollution
+            totalPollution += 0.1 * building.efficiency;
+          }
+        } else if (building.type === 'researchLab' && building.isActive && building.efficiency > 0.1) {
+          // Research labs generate science points
+          const baseProductionRate = 0.1;
+          const productionAmount = baseProductionRate * building.efficiency;
+          
+          state.resources.science = (state.resources.science || 0) + productionAmount;
+          building.productionRate = productionAmount;
+        } else if (building.type === 'assembler' && building.isActive && building.efficiency > 0.1) {
+          // Assemblers convert basic resources into advanced materials
+          // Logic would depend on what the assembler is configured to produce
+        }
+        
+        // Increase wear over time
+        building.wear = building.wear || 0;
+        building.wear += 0.00001 * building.efficiency;
+        
+        // If a building has high wear, reduce its efficiency
+        if (building.wear > 0.7) {
+          building.efficiency *= (1 - (building.wear - 0.7) / 0.3);
+        }
+      });
+      
+      // Update power statistics
+      state.statistics.power.generated = totalPowerGenerated;
+      state.statistics.power.consumed = totalPowerConsumed;
+      
+      // Update pollution level
+      state.statistics.pollution.level += totalPollution;
+      
+      // Natural pollution decay
+      state.statistics.pollution.level *= 0.9999;
+      
+      // Weather effects on pollution
+      if (state.weather.current === 'rainy') {
+        state.statistics.pollution.level *= (1 - state.weather.intensity * 0.001);
+      }
+      
+      // Collect statistics periodically
+      statisticsTimer += 1;
+      if (statisticsTimer >= STATISTICS_INTERVAL) {
+        // Save production snapshot
+        state.statistics.production.history.push({
+          tick: state.tick,
+          timestamp: Date.now(),
+          resources: { ...state.resources }
+        });
+        
+        // Keep only the last 100 snapshots
+        if (state.statistics.production.history.length > 100) {
+          state.statistics.production.history.shift();
+        }
+        
+        // Save power snapshot
+        state.statistics.power.history.push({
+          tick: state.tick,
+          timestamp: Date.now(),
+          generated: totalPowerGenerated,
+          consumed: totalPowerConsumed
+        });
+        
+        // Keep only the last 100 snapshots
+        if (state.statistics.power.history.length > 100) {
+          state.statistics.power.history.shift();
+        }
+        
+        // Save pollution snapshot
+        state.statistics.pollution.history.push({
+          tick: state.tick,
+          timestamp: Date.now(),
+          level: state.statistics.pollution.level,
+          sources: state.buildings
+            .filter(b => b.type === 'extractor' || b.type === 'powerPlant')
+            .map(b => ({
+              x: b.position.x,
+              y: b.position.y,
+              amount: b.type === 'powerPlant' ? 0.2 : 0.1
+            }))
+        });
+        
+        // Keep only the last 100 snapshots
+        if (state.statistics.pollution.history.length > 100) {
+          state.statistics.pollution.history.shift();
+        }
+        
+        statisticsTimer = 0;
+      }
+      
+      // Weather changes
+      weatherTimer += 1;
+      if (weatherTimer >= WEATHER_CHANGE_INTERVAL) {
+        // Chance of weather changing
+        if (Math.random() < 0.3) {
+          const weatherTypes = ['clear', 'rainy', 'foggy', 'stormy'];
+          const weights = [0.5, 0.25, 0.15, 0.1];
+          
+          // Higher pollution increases chance of bad weather
+          if (state.statistics.pollution.level > 50) {
+            weights[0] -= 0.2;
+            weights[2] += 0.1;
+            weights[3] += 0.1;
+          }
+          
+          const newWeather = weightedRandomChoice(weatherTypes, weights);
+          state.weather.current = newWeather;
+          state.weather.intensity = Math.random();
+          state.weather.duration = Math.floor(Math.random() * 1200) + 600; // 10-30 minutes
+          
+          // Set weather effects
+          state.weather.effects = [];
+          
+          if (newWeather === 'stormy') {
+            state.weather.effects.push({
+              type: 'production',
+              target: 'solarPanel',
+              modifier: -0.5
+            });
+            state.weather.effects.push({
+              type: 'consumption',
+              target: 'all',
+              modifier: 0.2
+            });
+          } else if (newWeather === 'foggy') {
+            state.weather.effects.push({
+              type: 'visibility',
+              target: 'all',
+              modifier: -0.3
+            });
+          } else if (newWeather === 'rainy') {
+            state.weather.effects.push({
+              type: 'pollution',
+              target: 'all',
+              modifier: -0.2
+            });
+          }
+        }
+        
+        weatherTimer = 0;
+      }
+      
+      // Decrease weather duration
+      if (state.weather.duration > 0) {
+        state.weather.duration -= 1;
+        
+        if (state.weather.duration <= 0) {
+          state.weather.current = 'clear';
+          state.weather.intensity = 0;
+          state.weather.effects = [];
+        }
+      }
       
       return state;
     });
@@ -11334,6 +15501,50 @@ export function startGameLoop() {
   };
 }
 
+// Helper function to determine resource type based on position
+function determineResourceFromPosition(x: number, y: number): string | null {
+  // In a real implementation, this would use the tile data
+  // For now, just return a random resource type
+  const resourceTypes = ['iron', 'copper', 'methane', 'oxygen', 'water'];
+  const index = Math.floor((x * y) % resourceTypes.length);
+  return resourceTypes[index];
+}
+
+// Helper function to calculate daylight factor based on time of day
+function getDaylight(timeOfDay: number): number {
+  // Night: 0-6 and 18-24 hours
+  if (timeOfDay < 6 || timeOfDay > 18) {
+    return 0.1;
+  }
+  
+  // Dawn/Dusk: 6-8 and 16-18 hours
+  if (timeOfDay < 8 || timeOfDay > 16) {
+    // Linear interpolation
+    if (timeOfDay < 8) {
+      return 0.1 + (timeOfDay - 6) / 2 * 0.9;
+    } else {
+      return 0.1 + (18 - timeOfDay) / 2 * 0.9;
+    }
+  }
+  
+  // Full day: 8-16 hours
+  return 1.0;
+}
+
+// Weighted random choice helper
+function weightedRandomChoice<T>(items: T[], weights: number[]): T {
+  const totalWeight = weights.reduce((sum, w) => sum + w, 0);
+  let random = Math.random() * totalWeight;
+  
+  for (let i = 0; i < items.length; i++) {
+    if (random < weights[i]) {
+      return items[i];
+    }
+    random -= weights[i];
+  }
+  
+  return items[0]; // Fallback
+}
 ```
 
 # frontend/src/vite-env.d.ts

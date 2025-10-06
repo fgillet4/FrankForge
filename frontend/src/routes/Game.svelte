@@ -2,6 +2,9 @@
   import { onMount, onDestroy } from 'svelte';
   import PixiGame from '../components/world/PixiGame.svelte';
   import BuildingControlPanel from '../components/ui/BuildingControlPanel.svelte';
+  import CharacterAttributesPanel from '../components/ui/CharacterAttributesPanel.svelte';
+  import ObjectiveTracker from '../components/ui/ObjectiveTracker.svelte';
+  import ChemistryPanel from '../components/ui/ChemistryPanel.svelte';
   import { gameState } from '../stores/gameState';
   import { mapGenerator } from '../lib/mapGenerator';
   import { PlanetType } from '../lib/types';
@@ -20,6 +23,9 @@
   // UI state
   let selectedBuildingType: string | null = null;
   let isPlacementMode = false;
+  let showCharacterPanel = false;
+  let showObjectiveTracker = true;
+  let showChemistryPanel = false;
   
   // Resources display
   let resources = {
@@ -28,6 +34,16 @@
     oxygen: $gameState.resources?.oxygen || 100,
     methane: $gameState.resources?.methane || 100
   };
+  
+  // Subscription to game state for resource updates
+  const unsubscribe = gameState.subscribe(state => {
+    resources = {
+      energy: state.resources?.energy || 0,
+      water: state.resources?.water || 0,
+      oxygen: state.resources?.oxygen || 0,
+      methane: state.resources?.methane || 0
+    };
+  });
   
   // Navigate back to menu
   function handleBackToMenu() {
@@ -48,15 +64,25 @@
   function ensureMapExists() {
     const state = $gameState;
     if (!state.map) {
-      console.log(`Generating ${planetType} map (${mapWidth}x${mapHeight})`);
+      // Use larger map for exploration - at least 200x200
+      const explorationMapWidth = Math.max(200, mapWidth);
+      const explorationMapHeight = Math.max(200, mapHeight);
+      
+      console.log(`Generating ${planetType} map (${explorationMapWidth}x${explorationMapHeight})`);
       
       const generatedMap = mapGenerator.generateMap({
         planetType,
-        width: mapWidth,
-        height: mapHeight,
+        width: explorationMapWidth,
+        height: explorationMapHeight,
         resourceRichness,
-        specialFeatureCount: 3
+        specialFeatureCount: 15,  // More features for exploration
+        smoothness: 0.6,          // More gradual terrain transitions
+        alienness: 0.4            // Slightly more alien features
       });
+      
+      // Set player position to center of map
+      const centerX = Math.floor(explorationMapWidth / 2);
+      const centerY = Math.floor(explorationMapHeight / 2);
       
       gameState.update(state => ({
         ...state,
@@ -64,7 +90,11 @@
         planetType,
         tick: 0,
         buildings: [],
-        lastUpdated: Date.now()
+        lastUpdated: Date.now(),
+        player: {
+          ...state.player,
+          position: { x: centerX, y: centerY }
+        }
       }));
       
       console.log('Map generated:', generatedMap.name);
@@ -86,9 +116,99 @@
     // Ensure we have a map
     ensureMapExists();
     
+    // Add an exploration starter quest if none exists
+    addStarterQuest();
+    
     // Log when game is ready
     console.log("Game component fully initialized");
   });
+  
+  onDestroy(() => {
+    // Clean up subscriptions
+    if (unsubscribe) unsubscribe();
+  });
+  
+  // Toggle character panel
+  function toggleCharacterPanel() {
+    showCharacterPanel = !showCharacterPanel;
+  }
+  
+  // Toggle objective tracker
+  function toggleObjectiveTracker() {
+    showObjectiveTracker = !showObjectiveTracker;
+  }
+  
+  // Toggle chemistry panel
+  function toggleChemistryPanel() {
+    showChemistryPanel = !showChemistryPanel;
+  }
+  
+  // Add a starter exploration quest if there are none
+  function addStarterQuest() {
+    gameState.update(state => {
+      if (!state.exploration) {
+        state.exploration = {
+          discoveredTiles: 0,
+          discoveredPOIs: [],
+          activeQuests: [],
+          completedQuests: [],
+          fogOfWar: true,
+          visibilityRadius: 15
+        };
+      }
+      
+      if (state.exploration.activeQuests.length === 0) {
+        // Add an exploration starter quest
+        state.exploration.activeQuests.push({
+          id: 'q1',
+          name: 'Getting Started',
+          description: 'Explore the area around your landing site to establish a base.',
+          status: 'active',
+          objectives: [
+            {
+              id: 'obj1',
+              description: 'Discover 50 tiles by exploring the map',
+              type: 'discover',
+              target: 'tiles',
+              quantity: 50,
+              progress: state.exploration.discoveredTiles || 0,
+              completed: (state.exploration.discoveredTiles || 0) >= 50
+            },
+            {
+              id: 'obj2',
+              description: 'Find at least 1 point of interest',
+              type: 'discover',
+              target: 'poi',
+              quantity: 1,
+              progress: state.exploration.discoveredPOIs?.length || 0,
+              completed: (state.exploration.discoveredPOIs?.length || 0) >= 1
+            },
+            {
+              id: 'obj3',
+              description: 'Harvest resources from the environment',
+              type: 'collect',
+              target: 'resources',
+              quantity: 10,
+              progress: 0,
+              completed: false
+            }
+          ],
+          reward: {
+            resources: {
+              energy: 200,
+              iron: 50,
+              copper: 50
+            },
+            skills: {
+              exploration: 1
+            }
+          }
+        });
+      }
+      
+      return state;
+    });
+  }
 </script>
 
 <div class="game-page">
@@ -124,6 +244,15 @@
       >
         {$gameState.isPaused ? 'Resume' : 'Pause'}
       </button>
+      <button class="control-button" on:click={toggleCharacterPanel}>
+        Character
+      </button>
+      <button class="control-button" on:click={toggleObjectiveTracker}>
+        {showObjectiveTracker ? 'Hide Objectives' : 'Show Objectives'}
+      </button>
+      <button class="control-button" on:click={toggleChemistryPanel}>
+        Chemistry
+      </button>
       <button class="menu-button" on:click={handleBackToMenu}>
         Back to Menu
       </button>
@@ -140,6 +269,25 @@
         bind:this={pixiGameComponent}
         on:ready={handleGameReady}
       />
+      
+      <!-- Floating UI Elements -->
+      {#if showCharacterPanel}
+        <div class="floating-panel character-panel-container">
+          <CharacterAttributesPanel on:close={() => (showCharacterPanel = false)} />
+        </div>
+      {/if}
+      
+      {#if showObjectiveTracker}
+        <div class="floating-panel objective-tracker-container">
+          <ObjectiveTracker />
+        </div>
+      {/if}
+      
+      {#if showChemistryPanel}
+        <div class="floating-panel chemistry-panel-container">
+          <ChemistryPanel on:close={() => (showChemistryPanel = false)} />
+        </div>
+      {/if}
     </div>
   </main>
 </div>
@@ -256,5 +404,25 @@
     flex: 1;
     overflow: hidden;
     position: relative;
+  }
+  
+  .floating-panel {
+    position: absolute;
+    z-index: 100;
+  }
+  
+  .character-panel-container {
+    top: 70px;
+    right: 10px;
+  }
+  
+  .objective-tracker-container {
+    top: 70px;
+    left: 270px;
+  }
+  
+  .chemistry-panel-container {
+    top: 70px;
+    right: 340px;
   }
 </style>

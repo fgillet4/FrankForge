@@ -1,4 +1,5 @@
 import { writable } from 'svelte/store';
+import { Character, InventoryItem, Quest, PointOfInterest } from '../lib/types';
 
 // Game state interface
 export interface GameState {
@@ -15,6 +16,30 @@ export interface GameState {
   weather: Weather;
   timeOfDay: number; // 0-24 (hours)
   unlocked: UnlockedContent;
+  player: Character; // Player character information
+  camera: CameraState; // Camera/viewport information
+  exploration: ExplorationState; // Exploration-related state
+}
+
+// Camera state for viewport management
+export interface CameraState {
+  x: number;
+  y: number;
+  zoom: number;
+  followPlayer: boolean;
+  viewportWidth: number;
+  viewportHeight: number;
+  chunks: string[]; // Currently loaded chunk IDs in format "x,y"
+}
+
+// Exploration-related state
+export interface ExplorationState {
+  discoveredTiles: number; // Count of tiles discovered
+  discoveredPOIs: PointOfInterest[]; // Points of interest that have been found
+  activeQuests: Quest[]; // Currently active quests
+  completedQuests: Quest[]; // Completed quests
+  fogOfWar: boolean; // Whether fog of war is enabled
+  visibilityRadius: number; // How far the player can see
 }
 
 export interface Building {
@@ -222,6 +247,17 @@ const createGameState = () => {
       water: 100,
       iron: 50,
       copper: 50,
+      silicon: 30,
+      sulfur: 20,
+      uranium: 5,
+      rare_metals: 10,
+      xenocrystals: 2,
+      // Chemistry molecules in mol units
+      CH4: 10,  // Methane
+      O2: 20,   // Oxygen
+      CO2: 5,   // Carbon dioxide
+      H2O: 50,  // Water
+      H2: 5,    // Hydrogen
       science: 0
     },
     buildings: [],
@@ -266,6 +302,45 @@ const createGameState = () => {
       automation: false,
       logistics: false,
       advanced: false
+    },
+    player: {
+      position: { x: 100, y: 100 }, // Starting position (will be adjusted to map center)
+      direction: 'down',
+      stats: {
+        health: 100,
+        maxHealth: 100,
+        energy: 100,
+        maxEnergy: 100,
+        speed: 2.5, // Tiles per second
+        carryingCapacity: 10,
+        harvestingSpeed: 1
+      },
+      inventory: [],
+      skills: {
+        mining: 1,
+        construction: 1,
+        exploration: 1,
+        survival: 1,
+        engineering: 1
+      },
+      questLog: []
+    },
+    camera: {
+      x: 0,
+      y: 0,
+      zoom: 1,
+      followPlayer: true,
+      viewportWidth: 800,
+      viewportHeight: 600,
+      chunks: []
+    },
+    exploration: {
+      discoveredTiles: 0,
+      discoveredPOIs: [],
+      activeQuests: [],
+      completedQuests: [],
+      fogOfWar: true,
+      visibilityRadius: 15
     }
   });
 };

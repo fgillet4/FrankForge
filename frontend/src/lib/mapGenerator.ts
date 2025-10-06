@@ -380,7 +380,7 @@ export function generatePlanetMap(params: MapGeneratorParams): PlanetMap {
   const heightScale = params.heightScale || 0.005;
   const temperatureScale = params.temperatureScale || 0.008;
   const biomeScale = params.biomeScale || 0.02;
-  const specialFeatureCount = params.specialFeatureCount || 5;
+  const specialFeatureCount = params.specialFeatureCount || 15; // Increased count for larger maps
   
   // Get planet template
   const planetType = params.planetType || PlanetType.EARTH_LIKE;
@@ -402,8 +402,21 @@ export function generatePlanetMap(params: MapGeneratorParams): PlanetMap {
     basePressure: template.basePressure,
     gravity: template.gravity,
     atmosphere: template.atmosphere,
-    specialFeatures: []
+    specialFeatures: [],
+    discoveredChunks: new Set(), // Track which chunks have been discovered
+    pointsOfInterest: [] // Store points of interest for exploration
   };
+  
+  // Generate biome noise for the entire map first to create coherent biome regions
+  const biomeNoise: number[][] = [];
+  for (let y = 0; y < params.height; y++) {
+    biomeNoise[y] = [];
+    for (let x = 0; x < params.width; x++) {
+      const nx = x * biomeScale;
+      const ny = y * biomeScale;
+      biomeNoise[y][x] = (noise.biomeNoise(nx, ny) + 1) / 2;
+    }
+  }
   
   // Initialize tiles array
   for (let y = 0; y < params.height; y++) {
@@ -442,42 +455,244 @@ export function generatePlanetMap(params: MapGeneratorParams): PlanetMap {
       const temperatureNoise = noise.temperatureNoise(x * temperatureScale, y * temperatureScale);
       const temperature = (temperatureNoise + 1) / 4 + latitudeFactor * 0.5;
       
+      // Use biome noise to create larger contiguous biome regions
+      const biomeFactor = biomeNoise[y][x];
+      
+      // Blend moisture and height based on biome factor for natural transitions
+      const blendedMoisture = moisture * (1 - biomeFactor * 0.5) + biomeFactor * 0.5;
+      const blendedHeight = height * (1 - biomeFactor * 0.3) + biomeFactor * 0.3;
+      
       // Resources
       const resourceNoise = noise.resourceNoise(x * 0.02, y * 0.02);
+      const terrainType = determineTerrainType(blendedHeight, blendedMoisture, temperature, oceanLevel, mountainLevel, alienness);
       const resourceData = determineResourceType(
-        determineTerrainType(height, moisture, temperature, oceanLevel, mountainLevel, alienness),
+        terrainType,
         (resourceNoise + 1) / 2,
         resourceRichness
       );
       
       // Create the tile
       map.tiles[y][x] = {
-        terrain: determineTerrainType(height, moisture, temperature, oceanLevel, mountainLevel, alienness),
+        terrain: terrainType,
         resource: resourceData.type,
         resourceDensity: resourceData.density,
         temperature: template.baseTemperature + (temperature - 0.5) * 40, // Adjust based on planet template
-        pressure: template.basePressure + (height - 0.5) * 10000, // Higher elevation = lower pressure
+        pressure: template.basePressure + (blendedHeight - 0.5) * 10000, // Higher elevation = lower pressure
         radiation: template.atmosphere === AtmosphereType.THIN ? 0.2 + Math.random() * 0.1 : 0,
-        height,
-        moisture,
+        height: blendedHeight,
+        moisture: blendedMoisture,
         traversable: true, // Will be updated later
-        decorations: []
+        decorations: [],
+        discovered: false // Tile starts undiscovered
       };
+      
+      // Add decorative elements based on terrain type (trees, rocks, etc.)
+      addDecorativeElements(map.tiles[y][x], terrainType, biomeFactor);
       
       // Some terrain types are not traversable
       if (
         map.tiles[y][x].terrain === TerrainType.DEEP_WATER ||
-        map.tiles[y][x].terrain === TerrainType.LAVA
+        map.tiles[y][x].terrain === TerrainType.LAVA ||
+        map.tiles[y][x].terrain === TerrainType.MOUNTAINS
       ) {
         map.tiles[y][x].traversable = false;
       }
     }
   }
   
-  // Add special features
+  // Add special features and points of interest
   addSpecialFeatures(map, specialFeatureCount);
+  generatePointsOfInterest(map, seed, Math.floor(params.width * params.height / 2000)); // One POI per 2000 tiles on average
+  
+  // Mark spawn area as discovered (center of map)
+  const centerX = Math.floor(params.width / 2);
+  const centerY = Math.floor(params.height / 2);
+  const viewRadius = 15; // Initial visibility radius
+  
+  for (let y = Math.max(0, centerY - viewRadius); y < Math.min(params.height, centerY + viewRadius); y++) {
+    for (let x = Math.max(0, centerX - viewRadius); x < Math.min(params.width, centerX + viewRadius); x++) {
+      map.tiles[y][x].discovered = true;
+    }
+  }
+  
+  // Add the center chunk to discovered chunks
+  map.discoveredChunks.add(`${Math.floor(centerX/32)},${Math.floor(centerY/32)}`);
   
   return map;
+}
+
+// Add decorative elements based on terrain type
+function addDecorativeElements(tile: MapTile, terrainType: TerrainType, biomeFactor: number) {
+  // Only add decorations to certain terrain types
+  switch (terrainType) {
+    case TerrainType.GRASS:
+      // Add trees, bushes, rocks
+      if (Math.random() < 0.2) {
+        tile.decorations.push(Math.random() < 0.7 ? 0 : 1); // Bush variants
+      }
+      if (Math.random() < 0.05) {
+        tile.decorations.push(Math.random() < 0.5 ? 8 : 9); // Rock variants
+      }
+      break;
+      
+    case TerrainType.FOREST:
+      // Add more trees, dense vegetation
+      if (Math.random() < 0.8) {
+        tile.decorations.push(Math.random() < 0.5 ? 0 : 2); // Bush/plant variants
+      }
+      break;
+      
+    case TerrainType.SAND:
+      // Add rocks, dead trees
+      if (Math.random() < 0.1) {
+        tile.decorations.push(8 + Math.floor(Math.random() * 3)); // Rock variants
+      }
+      break;
+      
+    case TerrainType.ALIEN_GRASS:
+    case TerrainType.ALIEN_FOREST:
+      // Add alien crystal formations
+      if (Math.random() < 0.2) {
+        tile.decorations.push(4 + Math.floor(Math.random() * 2)); // Crystal variants
+      }
+      break;
+      
+    case TerrainType.HILLS:
+    case TerrainType.MOUNTAINS:
+      // Add rocks, small caves
+      if (Math.random() < 0.3) {
+        tile.decorations.push(8 + Math.floor(Math.random() * 3)); // Rock variants
+      }
+      break;
+      
+    case TerrainType.ALIEN_CRYSTAL:
+      // Add more crystals
+      if (Math.random() < 0.6) {
+        tile.decorations.push(4 + Math.floor(Math.random() * 3)); // Crystal variants
+      }
+      break;
+  }
+}
+
+// Generate points of interest for exploration
+function generatePointsOfInterest(map: PlanetMap, seed: number, count: number) {
+  const rng = seedrandom(seed.toString());
+  
+  const poiTypes = [
+    { type: 'ancient_ruins', name: 'Ancient Ruins', discoveryBonus: 'tech' },
+    { type: 'crashed_ship', name: 'Crashed Ship', discoveryBonus: 'resources' },
+    { type: 'alien_artifact', name: 'Alien Artifact', discoveryBonus: 'research' },
+    { type: 'resource_cache', name: 'Resource Cache', discoveryBonus: 'materials' },
+    { type: 'abandoned_outpost', name: 'Abandoned Outpost', discoveryBonus: 'blueprints' },
+    { type: 'strange_formation', name: 'Strange Formation', discoveryBonus: 'map' },
+    { type: 'underground_entrance', name: 'Underground Entrance', discoveryBonus: 'exploration' },
+    { type: 'signal_source', name: 'Mysterious Signal', discoveryBonus: 'story' }
+  ];
+  
+  // Place POIs in suitable locations
+  for (let i = 0; i < count; i++) {
+    let attempts = 0;
+    let placed = false;
+    
+    while (!placed && attempts < 50) {
+      attempts++;
+      
+      const x = Math.floor(rng() * map.width);
+      const y = Math.floor(rng() * map.height);
+      
+      // Check if location is suitable (not water, not too close to other POIs)
+      if (map.tiles[y][x].traversable) {
+        // Check for minimum distance from other POIs
+        let tooClose = false;
+        for (const poi of map.pointsOfInterest) {
+          const distance = Math.sqrt(Math.pow(poi.x - x, 2) + Math.pow(poi.y - y, 2));
+          if (distance < 30) { // Minimum distance of 30 tiles
+            tooClose = true;
+            break;
+          }
+        }
+        
+        if (!tooClose) {
+          // Select a random POI type
+          const poiType = poiTypes[Math.floor(rng() * poiTypes.length)];
+          
+          // Add POI
+          map.pointsOfInterest.push({
+            id: `poi_${i}`,
+            x,
+            y,
+            type: poiType.type,
+            name: poiType.name,
+            discovered: false,
+            discoveryBonus: poiType.discoveryBonus,
+            description: generatePOIDescription(poiType.type, rng)
+          });
+          
+          // Add visual marker or decoration
+          map.tiles[y][x].decorations.push(12 + Math.floor(rng() * 5)); // Special decoration IDs for POIs
+          
+          placed = true;
+        }
+      }
+    }
+  }
+}
+
+// Generate a description for a point of interest
+function generatePOIDescription(type: string, rng: () => number): string {
+  const descriptions = {
+    'ancient_ruins': [
+      'Crumbling structures of an unknown civilization.',
+      'Ancient stone buildings covered in strange symbols.',
+      'The remnants of what appears to be a research facility.',
+      'A series of interconnected chambers buried partially underground.'
+    ],
+    'crashed_ship': [
+      'The wreckage of a spacecraft of unknown origin.',
+      'A damaged vessel that seems to have crashed recently.',
+      'A transport ship split in two, surrounded by scattered cargo.',
+      'The remains of what appears to be an escape pod.'
+    ],
+    'alien_artifact': [
+      'A pulsating crystal formation emitting strange energy.',
+      'A metallic object that seems to defy conventional physics.',
+      'A geometric structure that slowly rotates without any power source.',
+      'A containment unit housing something that shifts and changes as you watch.'
+    ],
+    'resource_cache': [
+      'A collection of containers, some partially buried in the soil.',
+      'What appears to be a mining outpost, abandoned but full of resources.',
+      'A cargo drop with the parachute still attached.',
+      'A sealed vault that could contain valuable materials.'
+    ],
+    'abandoned_outpost': [
+      'A small research station with equipment still powered on.',
+      'Living quarters and lab facilities, evacuated in a hurry.',
+      'A communications relay station with logs still intact.',
+      'A fortified position with defensive systems still active.'
+    ],
+    'strange_formation': [
+      'A perfect circle of altered terrain, unlike anything natural.',
+      'Crystalline growths that seem to form complex patterns.',
+      'A series of perfectly aligned rock formations.',
+      'A crater with unusual material properties.'
+    ],
+    'underground_entrance': [
+      'A cave opening with warm air flowing from within.',
+      'A metal hatch built into the side of a hill.',
+      'A sinkhole revealing a network of tunnels below.',
+      'A fissure in the ground emitting strange light.'
+    ],
+    'signal_source': [
+      'A beacon transmitting an encrypted message on repeat.',
+      'Equipment generating unusual electromagnetic patterns.',
+      'A terminal displaying coordinates to another location.',
+      'A distress signal coming from what appears to be empty space.'
+    ]
+  };
+  
+  const options = descriptions[type] || ['A mysterious discovery worth investigating.'];
+  return options[Math.floor(rng() * options.length)];
 }
 
 // Generate a unique name for the planet

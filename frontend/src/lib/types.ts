@@ -125,6 +125,90 @@
     moisture: number; // 0-1
     traversable: boolean;
     decorations: number[]; // IDs of decorative elements
+    discovered?: boolean; // Whether this tile has been seen by the player
+  }
+  
+  // Point of Interest for exploration
+  export interface PointOfInterest {
+    id: string;
+    x: number;
+    y: number;
+    type: string;
+    name: string;
+    description: string;
+    discovered: boolean;
+    discoveryBonus: string; // What kind of reward is granted for discovery
+  }
+  
+  // Player Character
+  export interface Character {
+    position: { x: number; y: number };
+    direction: string;
+    stats: CharacterStats;
+    inventory: InventoryItem[];
+    skills: Record<string, number>; // Skill name to level mapping
+    questLog: Quest[];
+  }
+  
+  // Character statistics
+  export interface CharacterStats {
+    health: number;
+    maxHealth: number;
+    energy: number;
+    maxEnergy: number;
+    speed: number;
+    carryingCapacity: number;
+    harvestingSpeed: number;
+  }
+  
+  // Character inventory item
+  export interface InventoryItem {
+    id: string;
+    type: string;
+    name: string;
+    quantity: number;
+    weight: number;
+    description?: string;
+  }
+  
+  // Quest for character progression
+  export interface Quest {
+    id: string;
+    name: string;
+    description: string;
+    objectives: QuestObjective[];
+    status: 'active' | 'completed' | 'failed';
+    reward: QuestReward;
+  }
+  
+  // Quest objective
+  export interface QuestObjective {
+    id: string;
+    description: string;
+    type: 'discover' | 'collect' | 'build' | 'interact';
+    target: string;
+    quantity: number;
+    progress: number;
+    completed: boolean;
+  }
+  
+  // Quest reward
+  export interface QuestReward {
+    resources?: Record<string, number>;
+    items?: { type: string; quantity: number }[];
+    skills?: Record<string, number>;
+    unlocks?: string[];
+  }
+  
+  // Map chunk for optimization
+  export interface MapChunk {
+    x: number;
+    y: number;
+    width: number; // Usually 32
+    height: number; // Usually 32
+    tiles: MapTile[][];
+    visible: boolean;
+    loaded: boolean;
   }
   
   // Planet map
@@ -141,6 +225,8 @@
     gravity: number; // 1 = Earth
     atmosphere: AtmosphereType;
     specialFeatures: SpecialFeature[];
+    discoveredChunks?: Set<string>; // Chunks the player has discovered in format "x,y"
+    pointsOfInterest?: PointOfInterest[]; // Special locations worth exploring
   }
   
   // Atmosphere types
