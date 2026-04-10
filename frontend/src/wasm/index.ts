@@ -27,7 +27,8 @@ export async function initWasm() {
     console.log('Initializing WASM module...');
     
     // Import the WASM module from the Rust pkg directory
-    const wasmImport = await import('../../rust/pkg/frankforge_core');
+    // @vite-ignore – built separately; skip when pkg not present
+    const wasmImport = await import(/* @vite-ignore */ '../../rust/pkg/frankforge_core');
     wasmModule = wasmImport;
     
     // Initialize chemistry data

@@ -1,10 +1,23 @@
-import './app.css'
-import App from './App.svelte'
+import './app.css';
+import Phaser from 'phaser';
+import { MenuScene }  from './scenes/MenuScene';
+import { PauseScene } from './scenes/PauseScene';
+import { WorldScene } from './lib/phaser/WorldScene';
 
-// For Svelte 5, use this:
-const target = document.getElementById('app')
-if (target) {
-  new App({ target })
-}
+// Make the #app div fill the screen
+const app = document.getElementById('app')!;
+Object.assign(app.style, { width: '100%', height: '100vh', overflow: 'hidden' });
 
-export default App
+new Phaser.Game({
+  type:            Phaser.AUTO,
+  parent:          app,
+  backgroundColor: '#0a0a14',
+  banner:          false,
+  scene:           [MenuScene, WorldScene, PauseScene],
+  scale: {
+    mode:       Phaser.Scale.RESIZE,
+    autoCenter: Phaser.Scale.CENTER_BOTH,
+    width:      window.innerWidth,
+    height:     window.innerHeight,
+  },
+});

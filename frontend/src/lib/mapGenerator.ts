@@ -30,7 +30,7 @@ function initNoiseGenerators(seed: number) {
   const temperatureNoise = createNoise2D(seedrandom((seed + 2).toString()));
   const resourceNoise = createNoise2D(seedrandom((seed + 3).toString()));
   const biomeNoise = createNoise2D(seedrandom((seed + 4).toString()));
-  
+
   return {
     heightNoise,
     moistureNoise,
@@ -42,32 +42,33 @@ function initNoiseGenerators(seed: number) {
 
 // Determine terrain type based on height, moisture, temperature
 function determineTerrainType(
-  height: number, 
-  moisture: number, 
+  height: number,
+  moisture: number,
   temperature: number,
   oceanLevel: number,
   mountainLevel: number,
-  alienness: number
+  alienness: number,
+  rng: () => number
 ): TerrainType {
   // Ocean
   if (height < oceanLevel) {
     if (height < oceanLevel - 0.2) {
       return TerrainType.DEEP_WATER;
     }
-    
+
     // Check for methane lakes if the planet is very alien
-    if (alienness > 0.7 && Math.random() < alienness - 0.7) {
+    if (alienness > 0.7 && rng() < alienness - 0.7) {
       return TerrainType.METHANE_LAKE;
     }
-    
+
     return TerrainType.SHALLOW_WATER;
   }
-  
+
   // Very cold areas become ice
   if (temperature < 0.2) {
     return TerrainType.ICE;
   }
-  
+
   // Mountains
   if (height > mountainLevel) {
     if (height > mountainLevel + 0.2) {
@@ -75,9 +76,9 @@ function determineTerrainType(
     }
     return TerrainType.HILLS;
   }
-  
+
   // Alien features
-  if (Math.random() < alienness * 0.3) {
+  if (rng() < alienness * 0.3) {
     if (moisture > 0.6) {
       return TerrainType.ALIEN_FOREST;
     } else if (moisture > 0.3) {
@@ -86,12 +87,12 @@ function determineTerrainType(
       return TerrainType.ALIEN_CRYSTAL;
     }
   }
-  
+
   // Volcanic areas
-  if (temperature > 0.8 && Math.random() < 0.3) {
+  if (temperature > 0.8 && rng() < 0.3) {
     return height > 0.6 ? TerrainType.VOLCANIC : TerrainType.LAVA;
   }
-  
+
   // Normal biomes
   if (moisture > 0.65) {
     return TerrainType.FOREST;
@@ -110,14 +111,14 @@ function determineResourceType(
 ): { type: ResourceType, density: number } {
   let possibleResources: ResourceType[] = [];
   let density = 0;
-  
+
   // Base chance of resource based on richness
   const hasResource = resourceNoise < resourceRichness * 0.5;
-  
+
   if (!hasResource) {
     return { type: ResourceType.NONE, density: 0 };
   }
-  
+
   // Different terrains have different resource probabilities
   switch (terrain) {
     case TerrainType.DEEP_WATER:
@@ -125,30 +126,30 @@ function determineResourceType(
       possibleResources = [ResourceType.WATER, ResourceType.OXYGEN];
       density = resourceNoise * 0.5 + resourceRichness * 0.5;
       break;
-    
+
     case TerrainType.METHANE_LAKE:
       return { type: ResourceType.METHANE, density: 0.7 + resourceNoise * 0.3 };
-    
+
     case TerrainType.SAND:
       possibleResources = [ResourceType.SILICON, ResourceType.IRON];
       density = resourceNoise * 0.4 + resourceRichness * 0.3;
       break;
-    
+
     case TerrainType.MOUNTAINS:
     case TerrainType.HILLS:
       possibleResources = [ResourceType.IRON, ResourceType.COPPER, ResourceType.RARE_METALS];
       density = resourceNoise * 0.6 + resourceRichness * 0.4;
       break;
-    
+
     case TerrainType.VOLCANIC:
     case TerrainType.LAVA:
       possibleResources = [ResourceType.SULFUR, ResourceType.RARE_METALS];
       density = resourceNoise * 0.7 + resourceRichness * 0.3;
       break;
-    
+
     case TerrainType.ALIEN_CRYSTAL:
       return { type: ResourceType.XENOCRYSTALS, density: 0.5 + resourceNoise * 0.5 };
-    
+
     case TerrainType.GRASS:
     case TerrainType.FOREST:
     case TerrainType.ALIEN_GRASS:
@@ -156,29 +157,29 @@ function determineResourceType(
       possibleResources = [ResourceType.OXYGEN, ResourceType.WATER];
       density = resourceNoise * 0.5 + resourceRichness * 0.2;
       break;
-    
+
     case TerrainType.SNOW:
     case TerrainType.ICE:
       possibleResources = [ResourceType.WATER];
       density = resourceNoise * 0.6 + resourceRichness * 0.2;
       break;
-    
+
     default:
       possibleResources = [ResourceType.NONE];
       density = 0;
   }
-  
+
   // Rarely add uranium or other special resources
   if (resourceNoise > 0.95 && resourceRichness > 0.7) {
     possibleResources.push(ResourceType.URANIUM);
     density = Math.max(density, 0.8);
   }
-  
+
   // Select a random resource from the possible ones
   const resourceIndex = Math.floor(Math.random() * possibleResources.length);
-  return { 
-    type: possibleResources[resourceIndex], 
-    density: Math.min(Math.max(density, 0), 1) 
+  return {
+    type: possibleResources[resourceIndex],
+    density: Math.min(Math.max(density, 0), 1)
   };
 }
 
@@ -202,21 +203,21 @@ function addSpecialFeatures(map: PlanetMap, count: number): void {
     'strange_signal',
     'ancient_technology'
   ];
-  
+
   const selectedFeatures: string[] = [];
-  
+
   // Randomly select features
   for (let i = 0; i < count; i++) {
     const feature = features[Math.floor(Math.random() * features.length)];
-    
+
     // Avoid duplicates unless we've used all features
     if (!selectedFeatures.includes(feature) || selectedFeatures.length >= features.length) {
       selectedFeatures.push(feature);
     }
   }
-  
+
   map.specialFeatures = selectedFeatures;
-  
+
   // For each feature, modify the map (this would be expanded in a full implementation)
   for (const feature of selectedFeatures) {
     // Make sure map dimensions are valid
@@ -224,21 +225,21 @@ function addSpecialFeatures(map: PlanetMap, count: number): void {
       console.warn("Invalid map dimensions for feature placement");
       continue;
     }
-    
+
     const x = Math.floor(Math.random() * map.width);
     const y = Math.floor(Math.random() * map.height);
-    
+
     // Make sure indices are valid
     if (!map.tiles[y] || !map.tiles[y][x]) {
       console.warn(`Invalid map coordinates (${x},${y}) for feature placement`);
       continue;
     }
-    
+
     // Ensure we're not placing in deep water
     if (map.tiles[y][x].terrain === TerrainType.DEEP_WATER) {
       continue;
     }
-    
+
     // Create the feature based on type
     switch (feature) {
       case 'meteor_crater':
@@ -263,22 +264,22 @@ function addSpecialFeatures(map: PlanetMap, count: number): void {
 // Create a meteor crater at the specified location
 function createMeteorCrater(map: PlanetMap, centerX: number, centerY: number): void {
   const radius = 5 + Math.floor(Math.random() * 10);
-  
+
   // Modify terrain in a circle around the center
   for (let y = Math.max(0, centerY - radius); y < Math.min(map.height, centerY + radius); y++) {
     for (let x = Math.max(0, centerX - radius); x < Math.min(map.width, centerX + radius); x++) {
       const distance = Math.sqrt(Math.pow(x - centerX, 2) + Math.pow(y - centerY, 2));
-      
+
       if (distance <= radius) {
         const tile = map.tiles[y][x];
-        
+
         // Center of crater has rare resources
         if (distance < radius * 0.3) {
           tile.terrain = TerrainType.ALIEN_CRYSTAL;
           tile.resource = ResourceType.RARE_METALS;
           tile.resourceDensity = 0.8;
           tile.radiation = 0.5; // Some radiation
-        } 
+        }
         // Crater rim
         else if (distance > radius * 0.8) {
           tile.terrain = TerrainType.HILLS;
@@ -297,21 +298,21 @@ function createMeteorCrater(map: PlanetMap, centerX: number, centerY: number): v
 // Create a volcano at the specified location
 function createVolcano(map: PlanetMap, centerX: number, centerY: number): void {
   const radius = 7 + Math.floor(Math.random() * 8);
-  
+
   // Modify terrain in a circle around the center
   for (let y = Math.max(0, centerY - radius); y < Math.min(map.height, centerY + radius); y++) {
     for (let x = Math.max(0, centerX - radius); x < Math.min(map.width, centerX + radius); x++) {
       const distance = Math.sqrt(Math.pow(x - centerX, 2) + Math.pow(y - centerY, 2));
-      
+
       if (distance <= radius) {
         const tile = map.tiles[y][x];
-        
+
         // Center is lava
         if (distance < radius * 0.2) {
           tile.terrain = TerrainType.LAVA;
           tile.temperature = 873; // 600°C in Kelvin
           tile.traversable = false;
-        } 
+        }
         // Inner slopes are volcanic
         else if (distance < radius * 0.6) {
           tile.terrain = TerrainType.VOLCANIC;
@@ -333,15 +334,15 @@ function createVolcano(map: PlanetMap, centerX: number, centerY: number): void {
 // Create alien ruins at the specified location
 function createAlienRuins(map: PlanetMap, centerX: number, centerY: number): void {
   const radius = 4 + Math.floor(Math.random() * 6);
-  
+
   // Modify terrain in a circle around the center
   for (let y = Math.max(0, centerY - radius); y < Math.min(map.height, centerY + radius); y++) {
     for (let x = Math.max(0, centerX - radius); x < Math.min(map.width, centerX + radius); x++) {
       const distance = Math.sqrt(Math.pow(x - centerX, 2) + Math.pow(y - centerY, 2));
-      
+
       if (distance <= radius) {
         const tile = map.tiles[y][x];
-        
+
         // Center has alien crystals and technology
         if (distance < radius * 0.5) {
           tile.terrain = TerrainType.ALIEN_CRYSTAL;
@@ -349,7 +350,7 @@ function createAlienRuins(map: PlanetMap, centerX: number, centerY: number): voi
           tile.resourceDensity = 0.7 + Math.random() * 0.3;
           // Add decoration for ruins
           tile.decorations = [100 + Math.floor(Math.random() * 10)]; // Specific decoration IDs for ruins
-        } 
+        }
         // Outer area has some scattered resources
         else {
           // Keep original terrain but add some resources
@@ -361,6 +362,73 @@ function createAlienRuins(map: PlanetMap, centerX: number, centerY: number): voi
           if (Math.random() < 0.2) {
             tile.decorations = [110 + Math.floor(Math.random() * 5)]; // Scattered ruins decorations
           }
+        }
+      }
+    }
+  }
+}
+
+// Place ore patches using seeded RNG
+function placeOrePatches(map: PlanetMap, seed: number): void {
+  // First clear all per-tile resources
+  for (let y = 0; y < map.height; y++) {
+    for (let x = 0; x < map.width; x++) {
+      map.tiles[y][x].resource = ResourceType.NONE;
+      map.tiles[y][x].resourceDensity = 0;
+    }
+  }
+
+  const rng = seedrandom((seed + 100).toString());
+
+  const patchConfigs: Array<{
+    resource: ResourceType;
+    count: number;
+    minDist: number;
+    maxDist: number;
+    minRadius: number;
+    maxRadius: number;
+  }> = [
+    { resource: ResourceType.IRON,        count: 7, minDist:  8, maxDist: 40, minRadius: 6, maxRadius: 14 },
+    { resource: ResourceType.COPPER,      count: 6, minDist: 10, maxDist: 45, minRadius: 5, maxRadius: 12 },
+    { resource: ResourceType.WATER,       count: 4, minDist:  5, maxDist: 30, minRadius: 4, maxRadius: 10 },
+    { resource: ResourceType.OXYGEN,      count: 3, minDist:  8, maxDist: 35, minRadius: 4, maxRadius:  9 },
+    { resource: ResourceType.SILICON,     count: 4, minDist: 25, maxDist: 55, minRadius: 5, maxRadius: 11 },
+    { resource: ResourceType.SULFUR,      count: 3, minDist: 35, maxDist: 58, minRadius: 4, maxRadius: 10 },
+    { resource: ResourceType.METHANE,     count: 2, minDist: 30, maxDist: 58, minRadius: 4, maxRadius:  9 },
+    { resource: ResourceType.URANIUM,     count: 2, minDist: 45, maxDist: 58, minRadius: 3, maxRadius:  8 },
+    { resource: ResourceType.RARE_METALS, count: 3, minDist: 40, maxDist: 58, minRadius: 3, maxRadius:  9 },
+    { resource: ResourceType.XENOCRYSTALS,count: 2, minDist: 48, maxDist: 58, minRadius: 3, maxRadius:  7 },
+  ];
+
+  const centerX = map.width  / 2;
+  const centerY = map.height / 2;
+
+  for (const cfg of patchConfigs) {
+    for (let p = 0; p < cfg.count; p++) {
+      const angle  = rng() * Math.PI * 2;
+      const dist   = cfg.minDist + rng() * (cfg.maxDist - cfg.minDist);
+      const radius = cfg.minRadius + rng() * (cfg.maxRadius - cfg.minRadius);
+
+      const patchCX = centerX + Math.cos(angle) * dist;
+      const patchCY = centerY + Math.sin(angle) * dist;
+
+      const r = Math.ceil(radius);
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          const tileDist = Math.sqrt(dx * dx + dy * dy);
+          if (tileDist > radius) continue;
+
+          const tx = Math.round(patchCX + dx);
+          const ty = Math.round(patchCY + dy);
+          if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) continue;
+
+          const tile = map.tiles[ty][tx];
+          if (!tile.traversable) continue;
+
+          const rawDensity = 1 - (tileDist / radius) * 0.65 + 0.35;
+          const density    = Math.min(1.0, Math.max(0.3, rawDensity));
+          tile.resource        = cfg.resource;
+          tile.resourceDensity = density;
         }
       }
     }
@@ -381,14 +449,17 @@ export function generatePlanetMap(params: MapGeneratorParams): PlanetMap {
   const temperatureScale = params.temperatureScale || 0.008;
   const biomeScale = params.biomeScale || 0.02;
   const specialFeatureCount = params.specialFeatureCount || 15; // Increased count for larger maps
-  
+
   // Get planet template
   const planetType = params.planetType || PlanetType.EARTH_LIKE;
   const template = planetTemplates[planetType];
-  
+
   // Initialize noise generators
   const noise = initNoiseGenerators(seed);
-  
+
+  // Seeded RNG for terrain-type and decoration randomness
+  const terrainRng = seedrandom((seed + 50).toString());
+
   // Create empty map
   const map: PlanetMap = {
     name: generatePlanetName(seed),
@@ -406,7 +477,7 @@ export function generatePlanetMap(params: MapGeneratorParams): PlanetMap {
     discoveredChunks: new Set(), // Track which chunks have been discovered
     pointsOfInterest: [] // Store points of interest for exploration
   };
-  
+
   // Generate biome noise for the entire map first to create coherent biome regions
   const biomeNoise: number[][] = [];
   for (let y = 0; y < params.height; y++) {
@@ -417,7 +488,7 @@ export function generatePlanetMap(params: MapGeneratorParams): PlanetMap {
       biomeNoise[y][x] = (noise.biomeNoise(nx, ny) + 1) / 2;
     }
   }
-  
+
   // Initialize tiles array
   for (let y = 0; y < params.height; y++) {
     map.tiles[y] = [];
@@ -425,70 +496,66 @@ export function generatePlanetMap(params: MapGeneratorParams): PlanetMap {
       // Generate base noise values
       const nx = x * heightScale;
       const ny = y * heightScale;
-      
+
       // Height is a combination of different octaves for more natural-looking terrain
       let height = 0;
       const octaves = 4;
       let amplitude = 1;
       let frequency = 1;
       let maxValue = 0;
-      
+
       for (let o = 0; o < octaves; o++) {
         height += noise.heightNoise(nx * frequency, ny * frequency) * amplitude;
         maxValue += amplitude;
         amplitude *= 0.5;
         frequency *= 2;
       }
-      
+
       // Normalize to 0-1
       height = (height / maxValue + 1) / 2;
-      
+
       // Apply smoothness factor (higher smoothness = more plateaus and less extreme variations)
       height = Math.pow(height, 1 - smoothness * 0.5);
-      
+
       // Generate moisture
       const moistureNoise = noise.moistureNoise(x * moistureScale, y * moistureScale);
       const moisture = (moistureNoise + 1) / 2;
-      
+
       // Generate temperature with latitude effect (poles are colder)
       const latitudeFactor = 1 - Math.abs((y / params.height) - 0.5) * 2;
       const temperatureNoise = noise.temperatureNoise(x * temperatureScale, y * temperatureScale);
       const temperature = (temperatureNoise + 1) / 4 + latitudeFactor * 0.5;
-      
+
       // Use biome noise to create larger contiguous biome regions
       const biomeFactor = biomeNoise[y][x];
-      
+
       // Blend moisture and height based on biome factor for natural transitions
       const blendedMoisture = moisture * (1 - biomeFactor * 0.5) + biomeFactor * 0.5;
       const blendedHeight = height * (1 - biomeFactor * 0.3) + biomeFactor * 0.3;
-      
-      // Resources
-      const resourceNoise = noise.resourceNoise(x * 0.02, y * 0.02);
-      const terrainType = determineTerrainType(blendedHeight, blendedMoisture, temperature, oceanLevel, mountainLevel, alienness);
-      const resourceData = determineResourceType(
-        terrainType,
-        (resourceNoise + 1) / 2,
-        resourceRichness
+
+      const terrainType = determineTerrainType(
+        blendedHeight, blendedMoisture, temperature,
+        oceanLevel, mountainLevel, alienness, terrainRng
       );
-      
-      // Create the tile
+
+      // Create the tile — resources will be set by placeOrePatches below
       map.tiles[y][x] = {
         terrain: terrainType,
-        resource: resourceData.type,
-        resourceDensity: resourceData.density,
+        resource: ResourceType.NONE,
+        resourceDensity: 0,
         temperature: template.baseTemperature + (temperature - 0.5) * 40, // Adjust based on planet template
         pressure: template.basePressure + (blendedHeight - 0.5) * 10000, // Higher elevation = lower pressure
-        radiation: template.atmosphere === AtmosphereType.THIN ? 0.2 + Math.random() * 0.1 : 0,
+        radiation: template.atmosphere === AtmosphereType.THIN ? 0.2 + terrainRng() * 0.1 : 0,
         height: blendedHeight,
         moisture: blendedMoisture,
         traversable: true, // Will be updated later
         decorations: [],
         discovered: false // Tile starts undiscovered
       };
-      
+
       // Add decorative elements based on terrain type (trees, rocks, etc.)
-      addDecorativeElements(map.tiles[y][x], terrainType, biomeFactor);
-      
+      addDecorativeElements(map.tiles[y][x], terrainType, biomeFactor, terrainRng);
+
       // Some terrain types are not traversable
       if (
         map.tiles[y][x].terrain === TerrainType.DEEP_WATER ||
@@ -499,76 +566,79 @@ export function generatePlanetMap(params: MapGeneratorParams): PlanetMap {
       }
     }
   }
-  
+
+  // Place ore patches (after tile generation, before special features)
+  placeOrePatches(map, seed);
+
   // Add special features and points of interest
   addSpecialFeatures(map, specialFeatureCount);
   generatePointsOfInterest(map, seed, Math.floor(params.width * params.height / 2000)); // One POI per 2000 tiles on average
-  
+
   // Mark spawn area as discovered (center of map)
   const centerX = Math.floor(params.width / 2);
   const centerY = Math.floor(params.height / 2);
   const viewRadius = 15; // Initial visibility radius
-  
+
   for (let y = Math.max(0, centerY - viewRadius); y < Math.min(params.height, centerY + viewRadius); y++) {
     for (let x = Math.max(0, centerX - viewRadius); x < Math.min(params.width, centerX + viewRadius); x++) {
       map.tiles[y][x].discovered = true;
     }
   }
-  
+
   // Add the center chunk to discovered chunks
   map.discoveredChunks.add(`${Math.floor(centerX/32)},${Math.floor(centerY/32)}`);
-  
+
   return map;
 }
 
 // Add decorative elements based on terrain type
-function addDecorativeElements(tile: MapTile, terrainType: TerrainType, biomeFactor: number) {
+function addDecorativeElements(tile: MapTile, terrainType: TerrainType, biomeFactor: number, rng: () => number) {
   // Only add decorations to certain terrain types
   switch (terrainType) {
     case TerrainType.GRASS:
       // Add trees, bushes, rocks
-      if (Math.random() < 0.2) {
-        tile.decorations.push(Math.random() < 0.7 ? 0 : 1); // Bush variants
+      if (rng() < 0.2) {
+        tile.decorations.push(rng() < 0.7 ? 0 : 1); // Bush variants
       }
-      if (Math.random() < 0.05) {
-        tile.decorations.push(Math.random() < 0.5 ? 8 : 9); // Rock variants
+      if (rng() < 0.05) {
+        tile.decorations.push(rng() < 0.5 ? 8 : 9); // Rock variants
       }
       break;
-      
+
     case TerrainType.FOREST:
       // Add more trees, dense vegetation
-      if (Math.random() < 0.8) {
-        tile.decorations.push(Math.random() < 0.5 ? 0 : 2); // Bush/plant variants
+      if (rng() < 0.8) {
+        tile.decorations.push(rng() < 0.5 ? 0 : 2); // Bush/plant variants
       }
       break;
-      
+
     case TerrainType.SAND:
       // Add rocks, dead trees
-      if (Math.random() < 0.1) {
-        tile.decorations.push(8 + Math.floor(Math.random() * 3)); // Rock variants
+      if (rng() < 0.1) {
+        tile.decorations.push(8 + Math.floor(rng() * 3)); // Rock variants
       }
       break;
-      
+
     case TerrainType.ALIEN_GRASS:
     case TerrainType.ALIEN_FOREST:
       // Add alien crystal formations
-      if (Math.random() < 0.2) {
-        tile.decorations.push(4 + Math.floor(Math.random() * 2)); // Crystal variants
+      if (rng() < 0.2) {
+        tile.decorations.push(4 + Math.floor(rng() * 2)); // Crystal variants
       }
       break;
-      
+
     case TerrainType.HILLS:
     case TerrainType.MOUNTAINS:
       // Add rocks, small caves
-      if (Math.random() < 0.3) {
-        tile.decorations.push(8 + Math.floor(Math.random() * 3)); // Rock variants
+      if (rng() < 0.3) {
+        tile.decorations.push(8 + Math.floor(rng() * 3)); // Rock variants
       }
       break;
-      
+
     case TerrainType.ALIEN_CRYSTAL:
       // Add more crystals
-      if (Math.random() < 0.6) {
-        tile.decorations.push(4 + Math.floor(Math.random() * 3)); // Crystal variants
+      if (rng() < 0.6) {
+        tile.decorations.push(4 + Math.floor(rng() * 3)); // Crystal variants
       }
       break;
   }
@@ -577,7 +647,7 @@ function addDecorativeElements(tile: MapTile, terrainType: TerrainType, biomeFac
 // Generate points of interest for exploration
 function generatePointsOfInterest(map: PlanetMap, seed: number, count: number) {
   const rng = seedrandom(seed.toString());
-  
+
   const poiTypes = [
     { type: 'ancient_ruins', name: 'Ancient Ruins', discoveryBonus: 'tech' },
     { type: 'crashed_ship', name: 'Crashed Ship', discoveryBonus: 'resources' },
@@ -588,18 +658,18 @@ function generatePointsOfInterest(map: PlanetMap, seed: number, count: number) {
     { type: 'underground_entrance', name: 'Underground Entrance', discoveryBonus: 'exploration' },
     { type: 'signal_source', name: 'Mysterious Signal', discoveryBonus: 'story' }
   ];
-  
+
   // Place POIs in suitable locations
   for (let i = 0; i < count; i++) {
     let attempts = 0;
     let placed = false;
-    
+
     while (!placed && attempts < 50) {
       attempts++;
-      
+
       const x = Math.floor(rng() * map.width);
       const y = Math.floor(rng() * map.height);
-      
+
       // Check if location is suitable (not water, not too close to other POIs)
       if (map.tiles[y][x].traversable) {
         // Check for minimum distance from other POIs
@@ -611,11 +681,11 @@ function generatePointsOfInterest(map: PlanetMap, seed: number, count: number) {
             break;
           }
         }
-        
+
         if (!tooClose) {
           // Select a random POI type
           const poiType = poiTypes[Math.floor(rng() * poiTypes.length)];
-          
+
           // Add POI
           map.pointsOfInterest.push({
             id: `poi_${i}`,
@@ -627,10 +697,10 @@ function generatePointsOfInterest(map: PlanetMap, seed: number, count: number) {
             discoveryBonus: poiType.discoveryBonus,
             description: generatePOIDescription(poiType.type, rng)
           });
-          
+
           // Add visual marker or decoration
           map.tiles[y][x].decorations.push(12 + Math.floor(rng() * 5)); // Special decoration IDs for POIs
-          
+
           placed = true;
         }
       }
@@ -640,7 +710,7 @@ function generatePointsOfInterest(map: PlanetMap, seed: number, count: number) {
 
 // Generate a description for a point of interest
 function generatePOIDescription(type: string, rng: () => number): string {
-  const descriptions = {
+  const descriptions: Record<string, string[]> = {
     'ancient_ruins': [
       'Crumbling structures of an unknown civilization.',
       'Ancient stone buildings covered in strange symbols.',
@@ -690,7 +760,7 @@ function generatePOIDescription(type: string, rng: () => number): string {
       'A distress signal coming from what appears to be empty space.'
     ]
   };
-  
+
   const options = descriptions[type] || ['A mysterious discovery worth investigating.'];
   return options[Math.floor(rng() * options.length)];
 }
@@ -699,31 +769,31 @@ function generatePOIDescription(type: string, rng: () => number): string {
 function generatePlanetName(seed: number): string {
     // Simple name generator
     const prefixes = [
-      'Nova', 'Alpha', 'Beta', 'Gamma', 'Delta', 'Epsilon', 'Zeta', 'Eta', 'Theta', 'Iota', 
-      'Kappa', 'Lambda', 'Mu', 'Xi', 'Omicron', 'Pi', 'Rho', 'Sigma', 'Tau', 'Upsilon', 
+      'Nova', 'Alpha', 'Beta', 'Gamma', 'Delta', 'Epsilon', 'Zeta', 'Eta', 'Theta', 'Iota',
+      'Kappa', 'Lambda', 'Mu', 'Xi', 'Omicron', 'Pi', 'Rho', 'Sigma', 'Tau', 'Upsilon',
       'Phi', 'Chi', 'Psi', 'Omega'
     ];
-    
+
     const middles = [
-      'Proxi', 'Cen', 'Siri', 'Veg', 'Alt', 'Ant', 'Arc', 'Alde', 'Caph', 'Dene', 
+      'Proxi', 'Cen', 'Siri', 'Veg', 'Alt', 'Ant', 'Arc', 'Alde', 'Caph', 'Dene',
       'Elec', 'Fomal', 'Gem', 'Hyad', 'Iol', 'Jup', 'Keid', 'Lyr', 'Mira', 'Nix'
     ];
-    
+
     const suffixes = [
-      'a', 'b', 'c', 'd', 'e', 'i', 'ia', 'on', 'us', 'um', 'is', 'ar', 'oid', 
+      'a', 'b', 'c', 'd', 'e', 'i', 'ia', 'on', 'us', 'um', 'is', 'ar', 'oid',
       'or', 'ium', 'ix', 'an', 'ius', 'ese', 'ov', 'ax', 'es', 'ine'
     ];
-    
+
     // Use seed to deterministically generate name
     const random = seedrandom(seed.toString());
-    
+
     let name = '';
-    
+
     // 20% chance of using a prefix
     if (random() < 0.2) {
       name += prefixes[Math.floor(random() * prefixes.length)] + ' ';
     }
-    
+
     // Main name - either a middle + suffix or a completely random generated name
     if (random() < 0.7) {
       name += middles[Math.floor(random() * middles.length)];
@@ -733,7 +803,7 @@ function generatePlanetName(seed: number): string {
       const consonants = 'bcdfghjklmnpqrstvwxyz';
       const vowels = 'aeiou';
       const nameLength = 4 + Math.floor(random() * 5);
-      
+
       for (let i = 0; i < nameLength; i++) {
         if (i % 2 === 0) {
           name += consonants[Math.floor(random() * consonants.length)];
@@ -741,21 +811,21 @@ function generatePlanetName(seed: number): string {
           name += vowels[Math.floor(random() * vowels.length)];
         }
       }
-      
+
       // 50% chance to add a suffix
       if (random() < 0.5) {
         name += suffixes[Math.floor(random() * suffixes.length)];
       }
     }
-    
+
     // 30% chance to add a designation
     if (random() < 0.3) {
       name += ' ' + (Math.floor(random() * 999) + 1);
     }
-    
+
     return name.charAt(0).toUpperCase() + name.slice(1);
   }
-  
+
   // Export a function to generate Mars
   export function generateMars(width: number, height: number): PlanetMap {
     return generatePlanetMap({

@@ -1,5 +1,5 @@
 import { writable } from 'svelte/store';
-import { Character, InventoryItem, Quest, PointOfInterest } from '../lib/types';
+import type { Character, InventoryItem, Quest, PointOfInterest } from '../lib/types';
 
 // Game state interface
 export interface GameState {
