@@ -1,0 +1,110 @@
+{
+ "air_intake": {
+  "w": 256,
+  "h": 219
+ },
+ "ammonia_converter": {
+  "w": 384,
+  "h": 418
+ },
+ "battery_bank": {
+  "w": 256,
+  "h": 268
+ },
+ "check_valve": {
+  "w": 128,
+  "h": 94
+ },
+ "compressor": {
+  "w": 256,
+  "h": 240
+ },
+ "condenser": {
+  "w": 384,
+  "h": 378
+ },
+ "cracker_furnace": {
+  "w": 384,
+  "h": 475
+ },
+ "electric_heater": {
+  "w": 256,
+  "h": 250
+ },
+ "electrolyser": {
+  "w": 384,
+  "h": 440
+ },
+ "fired_boiler": {
+  "w": 384,
+  "h": 585
+ },
+ "flare_stack": {
+  "w": 128,
+  "h": 335
+ },
+ "flash_drum": {
+  "w": 256,
+  "h": 666
+ },
+ "gas_sphere": {
+  "w": 384,
+  "h": 509
+ },
+ "gas_well": {
+  "w": 256,
+  "h": 406
+ },
+ "heat_exchanger": {
+  "w": 256,
+  "h": 205
+ },
+ "methanol_reactor": {
+  "w": 256,
+  "h": 383
+ },
+ "power_pole": {
+  "w": 128,
+  "h": 207
+ },
+ "pump": {
+  "w": 128,
+  "h": 112
+ },
+ "shift_reactor": {
+  "w": 256,
+  "h": 582
+ },
+ "smr_reformer": {
+  "w": 512,
+  "h": 639
+ },
+ "solar_array": {
+  "w": 256,
+  "h": 265
+ },
+ "steam_turbine": {
+  "w": 384,
+  "h": 313
+ },
+ "storage_tank": {
+  "w": 384,
+  "h": 811
+ },
+ "valve": {
+  "w": 128,
+  "h": 129
+ },
+ "vent": {
+  "w": 128,
+  "h": 281
+ },
+ "water_well": {
+  "w": 256,
+  "h": 374
+ },
+ "wreck": {
+  "w": 256,
+  "h": 310
+ }
+}

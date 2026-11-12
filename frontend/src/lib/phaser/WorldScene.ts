@@ -13,7 +13,7 @@
 import Phaser   from 'phaser';
 import { get }  from 'svelte/store';
 import { gameState } from '../../stores/gameState';
-import { ResourceType, PlanetType } from '../types';
+import { ResourceType, PlanetType, TerrainType } from '../types';
 import type { PlanetMap } from '../types';
 import { mapGenerator } from '../mapGenerator';
 
@@ -24,9 +24,22 @@ import { drawBuilding }                                      from './buildingRen
 import { createEnemyState, updateEnemies }                   from './enemySystem';
 import type { EnemyState } from './enemySystem';
 
-// Simulation imports
-import { stepSimulation, createBuildingState, makeFlowVector } from '../simulationEngine';
-import type { BuildingSimState, PipeConnection }               from '../simulationEngine';
+// Process plant: the Rust/WASM engine, its renderer and its HTML overlay
+import * as engine from '../process/engine';
+import { ProcessLayer, preloadProcessAssets } from '../process/render';
+import { ProcessUI, entityTooltip, segmentTooltip } from '../process/ui';
+
+const LAYOUT_KEY = 'frankforge.layout.v1';
+
+/** Ground texture for each terrain type (atlas frames are `<name>_<0..3>`). */
+const TERRAIN_TEXTURES: Record<number, string> = {
+  [TerrainType.DEEP_WATER]: 'deep_water', [TerrainType.SHALLOW_WATER]: 'shallow_water', [TerrainType.SAND]: 'sand',
+  [TerrainType.GRASS]: 'grass', [TerrainType.FOREST]: 'forest', [TerrainType.HILLS]: 'hills',
+  [TerrainType.MOUNTAINS]: 'mountains', [TerrainType.SNOW]: 'snow', [TerrainType.VOLCANIC]: 'volcanic',
+  [TerrainType.LAVA]: 'lava', [TerrainType.CAVE]: 'cave', [TerrainType.ALIEN_GRASS]: 'alien_grass',
+  [TerrainType.ALIEN_FOREST]: 'alien_forest', [TerrainType.ALIEN_CRYSTAL]: 'alien_crystal',
+  [TerrainType.METHANE_LAKE]: 'methane_lake', [TerrainType.ICE]: 'ice',
+};
 
 // ── Module-level shared state (reset on destroy) ─────────────────────────────
 let currentMap:       PlanetMap | null = null;
@@ -38,8 +51,9 @@ export let simSpeed  = 1;
 export function toggleSimPause()        { simPaused = !simPaused; return simPaused; }
 export function setSimSpeed(s: number)  { simSpeed = s; }
 
-let simStates:      Map<string, BuildingSimState> = new Map();
-let simConnections: PipeConnection[]              = [];
+let processLayer: ProcessLayer | null = null;
+let processUI:    ProcessUI | null    = null;
+let lastSnapshot: engine.Snapshot | null = null;
 
 // ── Scene ────────────────────────────────────────────────────────────────────
 
@@ -67,6 +81,12 @@ export class WorldScene extends Phaser.Scene {
   private dragCamY   = 0;
   private dragOffset = { x: 0, y: 0 };   // temporary pan offset (decays)
 
+  // Textured ground: one bob per tile, moved and scaled with the camera.
+  private terrainBlit:  Phaser.GameObjects.Blitter | null = null;
+  private depositBlit:  Phaser.GameObjects.Blitter | null = null;
+  private depositBobs = new Map<string, Phaser.GameObjects.Bob>();
+  private blitMap: PlanetMap | null = null;
+
   // Hover tile
   private hoverTX = -1;
   private hoverTY = -1;
@@ -83,6 +103,11 @@ export class WorldScene extends Phaser.Scene {
   // Placement mode
   private placementMode = false;
   private placementType: string | null = null;
+  private placementRot  = 0;
+  private layingPipe    = false;
+  private lastPipeTile: { x: number; y: number } | null = null;
+  private snapshotTimer = 0;
+  private saveTimer     = 0;
 
   // WASD movement keys
   private keys!: Phaser.Types.Input.Keyboard.CursorKeys & {
@@ -93,6 +118,19 @@ export class WorldScene extends Phaser.Scene {
   };
 
   constructor() { super({ key: 'WorldScene' }); }
+
+  preload() {
+    preloadProcessAssets(this);
+    this.load.atlas('terrain', 'assets/process/terrain.png', 'assets/process/terrain.json');
+    this.load.atlas('deposits', 'assets/process/deposits.png', 'assets/process/deposits.json');
+    for (const name of ['rupture', 'alarm', 'ambient', 'place', 'remove']) {
+      this.load.audio(`pp_${name}`, `assets/process/audio/${name}.mp3`);
+    }
+  }
+
+  private playSound(name: string, volume = 0.5) {
+    if (this.cache.audio.exists(`pp_${name}`)) this.sound.play(`pp_${name}`, { volume });
+  }
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
@@ -106,6 +144,9 @@ export class WorldScene extends Phaser.Scene {
     this.enemyGfx    = this.add.graphics();
     this.playerGfx   = this.add.graphics();
     this.hoverGfx    = this.add.graphics();
+    this.enemyGfx.setDepth(40);
+    this.playerGfx.setDepth(41);
+    this.hoverGfx.setDepth(42);
 
     // HUD text
     this.simText = this.add.text(8, H - 28, '', {
@@ -154,8 +195,17 @@ export class WorldScene extends Phaser.Scene {
       d: kb.addKey(Phaser.Input.Keyboard.KeyCodes.D),
     };
     kb.on('keydown-SPACE', () => { simPaused = !simPaused; });
-    kb.on('keydown-PLUS',  () => { simSpeed = Math.min(8,   simSpeed * 2); });
-    kb.on('keydown-MINUS', () => { simSpeed = Math.max(0.25, simSpeed / 2); });
+    kb.on('keydown-R',     () => { this.placementRot = (this.placementRot + 1) % 4; });
+    kb.on('keydown-ESC',   () => {
+      if (this.placementMode) processUI?.selectProto(null);
+      else this.select(null);
+    });
+    this.input.mouse?.disableContextMenu();
+    // "+" and "−" on either the main keyboard or the numpad.
+    kb.on('keydown', (e: KeyboardEvent) => {
+      if (e.key === '+' || e.key === '=') simSpeed = Math.min(16, simSpeed * 2);
+      if (e.key === '-' || e.key === '_') simSpeed = Math.max(0.25, simSpeed / 2);
+    });
 
     // Pointer input
     this.input.on('pointerdown',  this.onDown,  this);
@@ -176,6 +226,23 @@ export class WorldScene extends Phaser.Scene {
         this.dirtyTerrain = true;
       }
     });
+
+    // The plant's background hum (starts once the browser allows audio).
+    if (this.cache.audio.exists('pp_ambient')) this.sound.add('pp_ambient', { loop: true, volume: 0.18 }).play();
+
+    // The process engine loads asynchronously; the world runs without it until then.
+    engine.startEngine().then(() => {
+      if (!this.sys.isActive()) return;
+      processLayer = new ProcessLayer(this);
+      processUI = new ProcessUI();
+      processUI.onSelectProto = id => this.setPlacementMode(id !== null, id);
+      processUI.onCloseInspector = () => this.select(null);
+      try {
+        const saved = JSON.parse(localStorage.getItem(LAYOUT_KEY) ?? '[]');
+        if (Array.isArray(saved)) engine.restore(saved);
+      } catch { /* no saved layout */ }
+      lastSnapshot = engine.snapshot();
+    }).catch(err => console.error('Process engine failed to load', err));
 
     // Grab current state if map already exists
     const snap = get(gameState);
@@ -224,9 +291,27 @@ export class WorldScene extends Phaser.Scene {
           });
         }
       }
-      this.runSimulation(dt);
+      engine.advance(dt);
       this.pickupResources();
     }
+
+    this.snapshotTimer -= delta;
+    if (this.snapshotTimer <= 0 && engine.engineReady()) {
+      this.snapshotTimer = 100;
+      const wasBlackout = lastSnapshot?.grid.blackout ?? false;
+      lastSnapshot = engine.snapshot();
+      if (lastSnapshot) {
+        if (lastSnapshot.events.some(e => e.includes('ruptured'))) this.playSound('rupture', 0.8);
+        if (lastSnapshot.grid.blackout && !wasBlackout) this.playSound('alarm', 0.5);
+        processUI?.update(lastSnapshot);
+      }
+    }
+    this.saveTimer -= delta;
+    if (this.saveTimer <= 0 && engine.engineReady()) {
+      this.saveTimer = 5000;
+      this.saveLayout();
+    }
+    this.drawProcess();
 
     this.redrawEnemies();
     this.redrawPlayer();
@@ -268,7 +353,11 @@ export class WorldScene extends Phaser.Scene {
   shutdown() {
     gsUnsub?.(); gsUnsub = null;
     currentMap = null; currentBuildings = [];
-    simStates.clear();
+    this.terrainBlit?.destroy(); this.depositBlit?.destroy();
+    this.terrainBlit = this.depositBlit = null; this.blitMap = null; this.depositBobs.clear();
+    processLayer?.destroy(); processLayer = null;
+    processUI?.destroy();    processUI = null;
+    lastSnapshot = null;
     this.floatLabels.forEach(f => f.text.destroy());
     this.floatLabels = [];
   }
@@ -322,6 +411,10 @@ export class WorldScene extends Phaser.Scene {
   private redrawTerrain() {
     this.terrainGfx.clear();
     if (!currentMap) return;
+    if (this.textures.exists('terrain')) {
+      this.placeTerrainBlitters();
+      return;
+    }
 
     const W = this.scale.width  || 800;
     const H = this.scale.height || 600;
@@ -355,6 +448,48 @@ export class WorldScene extends Phaser.Scene {
           drawResource(this.terrainGfx, ix, iy, tile.resource, tile.resourceDensity ?? 0.5, camX, camY, this.zoom);
         }
       }
+    }
+  }
+
+  /** Builds the textured ground for the current map once, then just follows the camera. */
+  private placeTerrainBlitters() {
+    if (!currentMap) return;
+    if (this.blitMap !== currentMap) {
+      this.terrainBlit?.destroy();
+      this.depositBlit?.destroy();
+      this.depositBobs.clear();
+      this.terrainBlit = this.add.blitter(0, 0, 'terrain').setDepth(-2);
+      const hasDeposits = this.textures.exists('deposits');
+      this.depositBlit = hasDeposits ? this.add.blitter(0, 0, 'deposits').setDepth(-1) : null;
+      const tFrames = this.textures.get('terrain').getFrameNames();
+      const dFrames = new Set(hasDeposits ? this.textures.get('deposits').getFrameNames() : []);
+      for (let iy = 0; iy < currentMap.height; iy++) {
+        for (let ix = 0; ix < currentMap.width; ix++) {
+          const tile = currentMap.tiles[iy][ix];
+          // Texture space is 128 px per tile: the tile's top corner sits at ((ix−iy)·64, (ix+iy)·32).
+          const lx = (ix - iy) * 64;
+          const ly = (ix + iy) * 32;
+          const variant = (ix * 73856093 ^ iy * 19349663) >>> 0;
+          const name = TERRAIN_TEXTURES[tile.terrain] ?? 'grass';
+          const frame = `${name}_${variant % 4}`;
+          this.terrainBlit.create(lx - 65, ly - 1, tFrames.includes(frame) ? frame : tFrames[0]);
+          const deposit = tile.resource !== ResourceType.NONE ? RESOURCE_NAMES[tile.resource] : undefined;
+          // Decals on rich tiles and a scattering of the rest, so deposits read as patches.
+          const shown = (tile.resourceDensity ?? 0.5) > 0.75 || variant % 3 === 0;
+          if (deposit && shown && this.depositBlit && dFrames.has(deposit)) {
+            const f = this.textures.getFrame('deposits', deposit);
+            // Decals stand on the tile's bottom corner, a little smaller than the tile.
+            const bob = this.depositBlit.create(lx - f.width / 2, ly + 64 - f.height, deposit);
+            this.depositBobs.set(`${ix},${iy}`, bob);
+          }
+        }
+      }
+      this.blitMap = currentMap;
+    }
+    const camX = this.camX + this.dragOffset.x;
+    const camY = this.camY + this.dragOffset.y;
+    for (const b of [this.terrainBlit, this.depositBlit]) {
+      b?.setPosition(camX, camY).setScale(this.zoom / 2);
     }
   }
 
@@ -421,6 +556,7 @@ export class WorldScene extends Phaser.Scene {
 
     // Remove resource from tile
     currentMap.tiles[ty][tx].resource = ResourceType.NONE;
+    this.depositBobs.get(`${tx},${ty}`)?.setVisible(false);
     currentMap.tiles[ty][tx].resourceDensity = 0;
     this.dirtyTerrain = true;
 
@@ -455,27 +591,6 @@ export class WorldScene extends Phaser.Scene {
 
   // ── Simulation ─────────────────────────────────────────────────────────────
 
-  private runSimulation(dt: number) {
-    if (!currentBuildings.length) return;
-    for (const b of currentBuildings) {
-      const id = b.id ?? `${b.position?.x},${b.position?.y}`;
-      if (!simStates.has(id)) simStates.set(id, createBuildingState(id, b.type ?? 'storage'));
-    }
-    stepSimulation(simStates, simConnections, dt);
-
-    let org1 = 0, org2 = 0, inorg = 0;
-    for (const s of simStates.values()) {
-      org1  += s.mass[5]; org2 += s.mass[6]; inorg += s.mass[4];
-    }
-    gameState.update(gs => {
-      if (!gs.resources) return gs;
-      gs.resources.methane = Math.round(org1  / 100);
-      gs.resources.oxygen  = Math.round(org2  / 100);
-      gs.resources.energy  = Math.round(inorg / 10);
-      return gs;
-    });
-  }
-
   // ── HUD ────────────────────────────────────────────────────────────────────
 
   private updateHUD() {
@@ -495,6 +610,25 @@ export class WorldScene extends Phaser.Scene {
   // ── Pointer input ──────────────────────────────────────────────────────────
 
   private onDown(p: Phaser.Input.Pointer) {
+    const tile = this.tileAt(p.x, p.y);
+    if (p.rightButtonDown()) {
+      // Right-click removes what is under the cursor.
+      const id = engine.entityAt(tile.x, tile.y);
+      if (id >= 0) {
+        engine.remove(id);
+        this.playSound('remove', 0.35);
+        if (processLayer?.selected === id) this.select(null);
+        this.saveLayout();
+      }
+      return;
+    }
+    if (this.placementMode && this.placementType === 'pipe') {
+      // Pipes are laid by dragging.
+      this.layingPipe = true;
+      this.lastPipeTile = null;
+      this.layPipeTo(tile.x, tile.y);
+      return;
+    }
     this.dragActive = true;
     this.dragStartX = p.x; this.dragStartY = p.y;
     this.dragCamX   = this.dragOffset.x;
@@ -514,6 +648,8 @@ export class WorldScene extends Phaser.Scene {
         drawHover(this.hoverGfx, tx, ty, camX, camY, this.zoom);
       }
     }
+    if (this.layingPipe) this.layPipeTo(tx, ty);
+    this.updateHover(p, tx, ty);
     if (this.dragActive) {
       this.dragOffset.x = this.dragCamX + (p.x - this.dragStartX);
       this.dragOffset.y = this.dragCamY + (p.y - this.dragStartY);
@@ -522,10 +658,21 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private onUp(p: Phaser.Input.Pointer) {
+    if (this.layingPipe) {
+      this.layingPipe = false;
+      this.saveLayout();
+      return;
+    }
+    if (!this.dragActive) return;
     const wasDrag = Math.abs(p.x - this.dragStartX) > 5 || Math.abs(p.y - this.dragStartY) > 5;
     this.dragActive = false;
-    if (!wasDrag && this.placementMode && this.placementType) {
-      this.placeBuilding(p.x, p.y);
+    if (wasDrag) return;
+    const tile = this.tileAt(p.x, p.y);
+    if (this.placementMode && this.placementType) {
+      this.placeProcess(this.placementType, tile.x, tile.y);
+    } else {
+      const id = engine.entityAt(tile.x, tile.y);
+      this.select(id >= 0 && this.isInspectable(id) ? id : null);
     }
   }
 
@@ -541,23 +688,97 @@ export class WorldScene extends Phaser.Scene {
 
   // ── Building placement ─────────────────────────────────────────────────────
 
-  private placeBuilding(sx: number, sy: number) {
-    const camX = this.camX + this.dragOffset.x;
-    const camY = this.camY + this.dragOffset.y;
-    const iso  = screenToIso(sx, sy, camX, camY, this.zoom);
-    const tx   = Math.floor(iso.x);
-    const ty   = Math.floor(iso.y);
-    if (!currentMap || tx < 0 || ty < 0 || tx >= currentMap.width || ty >= currentMap.height) return;
-    gameState.update(s => {
-      s.buildings.push({
-        id:   `${this.placementType}_${tx}_${ty}_${Date.now()}`,
-        type: this.placementType!,
-        position: { x: tx, y: ty },
-        connections: [],
-      });
-      return s;
-    });
-    this.dirtyTerrain = true;
+  private tileAt(sx: number, sy: number) {
+    const iso = screenToIso(sx, sy, this.camX + this.dragOffset.x, this.camY + this.dragOffset.y, this.zoom);
+    return { x: Math.floor(iso.x), y: Math.floor(iso.y) };
+  }
+
+  /** Top-left tile for a building centred under the cursor. */
+  private originFor(proto: string, tx: number, ty: number) {
+    const size = engine.PROTO[proto]?.size ?? 1;
+    const off = Math.floor((size - 1) / 2);
+    return { x: tx - off, y: ty - off };
+  }
+
+  /** Whether a building may go here: on the map, and over its resource if it needs one. */
+  private placementOk(proto: string, x: number, y: number): boolean {
+    const p = engine.PROTO[proto];
+    if (!p || !currentMap) return false;
+    let resource = !p.needs;
+    for (let dy = 0; dy < p.size; dy++) {
+      for (let dx = 0; dx < p.size; dx++) {
+        const tile = currentMap.tiles[y + dy]?.[x + dx];
+        if (!tile) return false;
+        if (engine.entityAt(x + dx, y + dy) >= 0) return false;
+        if (p.needs === 'water' && (tile.resource === ResourceType.WATER || tile.terrain === TerrainType.SHALLOW_WATER || tile.terrain === TerrainType.ICE)) resource = true;
+        if (p.needs === 'methane' && (tile.resource === ResourceType.METHANE || tile.terrain === TerrainType.METHANE_LAKE)) resource = true;
+      }
+    }
+    return resource;
+  }
+
+  private placeProcess(proto: string, tx: number, ty: number) {
+    const o = this.originFor(proto, tx, ty);
+    if (!this.placementOk(proto, o.x, o.y)) {
+      const need = engine.PROTO[proto]?.needs;
+      if (need) processUI?.alert(`${engine.PROTO[proto].name} must stand on ${need === 'water' ? 'water' : 'a methane deposit'}.`);
+      return;
+    }
+    const err = engine.place(proto, o.x, o.y, this.placementRot);
+    if (err) processUI?.alert(err);
+    else {
+      this.playSound('place', 0.35);
+      this.saveLayout();
+    }
+  }
+
+  /** Lays pipe from the last tile to this one, one axis-aligned step at a time. */
+  private layPipeTo(tx: number, ty: number) {
+    let from = this.lastPipeTile ?? { x: tx, y: ty };
+    const steps: { x: number; y: number }[] = [from];
+    while (from.x !== tx || from.y !== ty) {
+      from = from.x !== tx ? { x: from.x + Math.sign(tx - from.x), y: from.y } : { x: from.x, y: from.y + Math.sign(ty - from.y) };
+      steps.push(from);
+    }
+    for (const t of steps) {
+      if (this.placementOk('pipe', t.x, t.y)) engine.place('pipe', t.x, t.y, 0);
+    }
+    this.lastPipeTile = { x: tx, y: ty };
+  }
+
+  private isInspectable(id: number) {
+    return lastSnapshot?.entities.some(e => e.id === id) ?? false;
+  }
+
+  private select(id: number | null) {
+    if (processLayer) processLayer.selected = id;
+    processUI?.showInspector(id);
+  }
+
+  private updateHover(p: Phaser.Input.Pointer, tx: number, ty: number) {
+    if (!processUI || !lastSnapshot) return;
+    const id = engine.entityAt(tx, ty);
+    const e = id >= 0 ? lastSnapshot.entities.find(x => x.id === id) : undefined;
+    const si = processLayer?.segmentAt(tx, ty);
+    const text = e ? entityTooltip(e) : si !== undefined ? segmentTooltip(lastSnapshot.segments[si].vessel) : null;
+    processUI.hover(text, p.event instanceof MouseEvent ? p.event.clientX : p.x, p.event instanceof MouseEvent ? p.event.clientY : p.y);
+  }
+
+  private drawProcess() {
+    if (!processLayer) return;
+    let ghost = null;
+    if (this.placementMode && this.placementType && this.hoverTX >= 0) {
+      const o = this.originFor(this.placementType, this.hoverTX, this.hoverTY);
+      ghost = { proto: this.placementType, x: o.x, y: o.y, rot: this.placementRot, ok: this.placementOk(this.placementType, o.x, o.y) };
+    }
+    processLayer.draw(lastSnapshot, this.camX + this.dragOffset.x, this.camY + this.dragOffset.y, this.zoom, ghost, this.time.now);
+  }
+
+  private saveLayout() {
+    if (!engine.engineReady()) return;
+    try {
+      localStorage.setItem(LAYOUT_KEY, JSON.stringify(engine.layout()));
+    } catch { /* storage unavailable */ }
   }
 
   setPlacementMode(enabled: boolean, type?: string | null) {

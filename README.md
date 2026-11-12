@@ -11,6 +11,33 @@ Want to experience the engineering challenge of life on mars?
 
 Will you tame the volatile xenocrystals? Can you harness the planet's corrosive atmosphere? The future of this world—and your survival—depends on your chemical genius!
 
+## ⚙️ The Process Engine (real physics, Factorio-style play)
+
+The plant simulation lives in `rust/` and runs in the browser as WebAssembly. It plays like Factorio
+(place buildings, lay pipe, keep the lights on) but the fluids, heat and power behave like a real plant:
+
+- **Real fluids.** Every vessel holds a mixture (moles of 11 species plus internal energy) and is
+  flashed with the Peng–Robinson equation of state for temperature, pressure, and the liquid/vapour
+  split. Water boils at the right temperature; closed drums sit on the saturation curve.
+- **Pressure-driven flow.** Pipes carry flow with inertia, Darcy–Weisbach friction, hydrostatic head and
+  choked gas flow, solved implicitly across the whole network. Pumps follow curves, valves have
+  equal-percentage trim, compressors heat the gas, turbines expand steam isentropically.
+- **Chemistry.** Reactions run at Arrhenius rates and stop at Gibbs equilibrium. Heat of reaction isn't
+  scripted; it comes out of energy conservation.
+- **Consequences.** Vessels burst at 1.5× their rating. Vented gas counts as emissions.
+- **The grid.** Frequency follows the swing equation. Governors, batteries and solar curtailment respond
+  to it, under-frequency relays shed load, and a collapse is a blackout that needs a black start.
+
+How Factorio's own engine does it (and why we don't) is in `Reference/factorio-engine-notes.md`.
+
+```bash
+cd rust && cargo test --release --lib     # engine tests
+cd frontend && npm run wasm && npm run dev  # build the engine, then play
+```
+
+Art and sound come from `art/generate.py` (prompts in `art/prompts.tsv`) and are packed for the game by
+`art/process.py`.
+
 ## ✨ Unleash Your Inner Mad Scientist
 
 - 🧪 **Concoct Mind-Bending Reactions** - Balance chemical equations that would make your old professor faint

@@ -1,0 +1,70 @@
+# name	kind	description
+storage_tank	building	a vertical cylindrical chemical storage tank with a domed roof, a ladder up the side, a railing on top and two flanged pipe nozzles at the base, standing on a 3x3 tile footprint. Off-white steel with grey bands and orange accent stripes.
+water_well	building	a groundwater well pump station on a 2x2 tile footprint: a squat electric pump house with a motor on top, a concrete pad, a vertical pipe going into the ground and one flanged outlet pipe. Blue painted steel.
+gas_well	building	a natural-gas wellhead on a 2x2 tile footprint: a tall 'Christmas tree' stack of red valves and handwheels on a concrete cellar, pressure gauges, one flanged outlet pipe. Red and yellow painted steel.
+air_intake	building	an air intake filter house on a 2x2 tile footprint: a boxy louvred filter housing with a fan blower and a flanged outlet duct. Pale green painted steel.
+pump	building	a single centrifugal process pump on a 1x1 tile footprint: an electric motor coupled to a volute pump casing on a steel skid, flanged inlet and outlet. Blue motor, dark grey casing.
+compressor	building	a reciprocating gas compressor on a 2x2 tile footprint: a large electric motor driving horizontal cylinders with flywheel, pulsation bottles and flanged suction and discharge pipes. Dark green and grey.
+fired_boiler	building	a fired steam boiler on a 3x3 tile footprint: a brick-lined furnace box with a burner port on the front, a horizontal steam drum on top, a tall riveted chimney stack, and pipe nozzles. Dark red brick and black steel, glowing orange burner window.
+steam_turbine	building	a steam turbine generator set on a 3x3 tile footprint: a horizontal turbine casing with a large steam inlet pipe, coupled to an electric generator with cooling fins, on a heavy steel base. Green turbine casing, grey generator.
+condenser	building	an air-cooled steam condenser on a 3x3 tile footprint: an A-frame of finned tube bundles over large horizontal fans on a steel support frame, with a steam header pipe. Galvanised grey steel.
+smr_reformer	building	a steam methane reformer furnace on a 4x4 tile footprint: a tall refractory-lined box furnace with rows of vertical catalyst tubes visible through inspection windows glowing orange, burner ports along the sides, inlet and outlet headers and a convection section with a stack. Light grey with orange heat glow.
+shift_reactor	building	a water-gas shift reactor on a 2x2 tile footprint: a tall vertical pressure vessel with hemispherical heads, a support skirt, catalyst loading manway, insulation cladding and inlet/outlet nozzles. Aluminium-clad silver.
+ammonia_converter	building	a Haber-Bosch ammonia converter on a 3x3 tile footprint: a very thick-walled tall high-pressure vessel with forged bolted closure on top, heavy studs, an internal heat-exchanger nozzle and a separate small loop cooler. Dark blue-grey forged steel.
+methanol_reactor	building	a methanol synthesis reactor on a 2x2 tile footprint: a vertical tubular boiling-water reactor with a steam drum mounted beside it, insulated, with flanged nozzles. Purple-grey steel.
+cracker_furnace	building	an ethane steam-cracking furnace on a 3x3 tile footprint: a tall narrow radiant firebox with serpentine coils glowing red-hot behind windows, a transfer-line quench exchanger, and a stack. Dark grey steel with red-hot glow.
+flash_drum	building	a vertical flash separator drum on a 2x2 tile footprint: a tall vertical vessel with a mist-eliminator top, a level gauge glass on the side, a vapour outlet at the top and a liquid outlet at the bottom on a skirt. Yellow painted steel.
+heat_exchanger	building	a shell-and-tube heat exchanger on a 2x2 tile footprint: a horizontal cylindrical shell on two saddles with a bolted channel head, four flanged nozzles (two on top, two on the head). Grey steel with red and blue nozzle bands.
+electric_heater	building	an industrial electric process heater on a 2x2 tile footprint: a steel cabinet with a large terminal box, heavy cable conduits, a heating element bundle flange and warning stripes. Orange and black.
+flare_stack	building	a flare stack on a 1x1 tile footprint: a tall thin steel stack with a guy-wired lattice support, a flare tip with a bright yellow-orange flame at the top and a knockout drum at the base. Red and white striped stack.
+vent	building	a small atmospheric vent on a 1x1 tile footprint: a short vertical pipe with a weather hood, a relief valve and a flange. Grey steel with a yellow valve.
+valve	building	a large manual gate valve in a horizontal pipe on a 1x1 tile footprint: a bonnet with a big red handwheel on top, bolted flanges at both ends. Grey steel and red handwheel.
+solar_array	building	a ground-mounted solar panel array on a 2x2 tile footprint: tilted dark blue photovoltaic panels on a galvanised steel rack with an inverter box.
+battery_bank	building	an industrial battery energy storage unit on a 2x2 tile footprint: a container-like steel enclosure with louvres, cooling unit on top, high-voltage terminals and a status light panel. White and teal.
+power_pole	building	a medium wooden electric power pole on a 1x1 tile footprint with a cross arm, ceramic insulators and three wires stubs. Dark brown wood, grey insulators.
+electrolyser	building	an alkaline water electrolyser on a 3x3 tile footprint: a long stack of electrolysis cells clamped between end plates, gas separator drums for hydrogen and oxygen on top, cable busbars. Light blue and white.
+icon_h2	icon	a pale blue glass gas cylinder with a bright cyan glowing hydrogen gas swirl inside, representing hydrogen gas
+icon_o2	icon	a light blue steel gas cylinder with a pale white-blue gas swirl, representing oxygen gas
+icon_n2	icon	a grey steel gas cylinder with a faint lilac gas swirl, representing nitrogen gas
+icon_ch4	icon	a glass flask full of swirling pale orange natural gas with a small blue flame above it, representing methane
+icon_co	icon	a dark grey glass flask with ominous dark smoky gas and a skull-shaped wisp, representing toxic carbon monoxide
+icon_co2	icon	a glass flask with heavy white-grey gas pouring over the rim like fog, representing carbon dioxide
+icon_h2o	icon	a round glass flask filled with clear blue water with a droplet beside it, representing water
+icon_nh3	icon	a glass flask with pale yellow-green pungent vapour, representing ammonia
+icon_c2h4	icon	a glass flask with pale pink swirling gas and a small plastic pellet, representing ethylene
+icon_c2h6	icon	a glass flask with pale peach swirling gas, representing ethane
+icon_ch3oh	icon	a glass bottle of clear liquid with a faint purple tint and a small flame, representing methanol
+icon_steam	icon	a white billowing cloud of hot steam rising from a pipe outlet, representing steam
+tile_regolith	tile	dusty red-orange Martian regolith with small pebbles and fine cracks
+tile_basalt	tile	dark grey basalt rock ground with subtle fractures
+tile_ice	tile	pale blue-white cracked water ice ground with frost
+tile_sand	tile	fine ochre sand dunes ground with gentle ripples
+gas_sphere	building	a spherical pressure storage vessel (Horton sphere) on a 3x3 tile footprint, held up by eight steel legs with cross bracing, a stair to a top platform with a relief valve, pipe nozzles at top and bottom. White painted steel with a blue band.
+check_valve	building	a swing check valve in a horizontal pipe on a 1x1 tile footprint: a bolted bulging valve body with a cover plate and an arrow cast into the body, flanges at both ends. Grey steel with a green body.
+wreck	building	the twisted, burst remains of an exploded industrial pressure vessel on a 2x2 tile footprint: torn curled steel plates peeled open like a flower, scorched black, scattered bolts and broken pipe stubs, small fires and smoke.
+terrain_deep_water	tile	deep dark blue-green alien ocean water with subtle wave ripples
+terrain_shallow_water	tile	shallow turquoise water over pale sand with soft caustic ripples
+terrain_sand	tile	ochre desert sand with fine wind ripples and a few small pebbles
+terrain_grass	tile	lush medium-green meadow grass seen from high above, large soft clumps and gentle light-dark green variation, a few tiny yellow flowers, no dirt, low detail so it reads clearly when small
+terrain_forest	tile	deep green forest canopy floor seen from high above: large rounded dark green moss and fern clumps with soft shadowy gaps, rich saturated greens only, low detail so it reads clearly when small
+terrain_hills	tile	rocky brown-grey highland ground with gravel and sparse dry grass
+terrain_mountains	tile	rough grey mountain rock with cracks and scree
+terrain_snow	tile	compacted white snow with soft blue shadows in footprints and wind ridges
+terrain_volcanic	tile	black volcanic ash ground with dark basalt chunks and faint red mineral streaks
+terrain_lava	tile	glowing orange-red molten lava with a cracked dark crust
+terrain_cave	tile	dark purple-grey cave floor rock with small stalagmite stubs
+terrain_alien_grass	tile	alien turquoise-teal grass with tiny bioluminescent dots
+terrain_alien_forest	tile	alien dark teal jungle floor with curled fern-like growths and glowing spores
+terrain_alien_crystal	tile	violet crystalline ground with small faceted crystal shards growing out of dark rock
+terrain_methane_lake	tile	dark oily teal methane lake surface with slow bubbles and a slick sheen
+terrain_ice	tile	pale blue cracked glacier ice with frost
+deposit_methane	decal	a methane seep deposit on flat ground: a small dark wet crater with bubbling teal-green gas vents and frosted rim, flat decal lying on the ground on a 1x1 tile footprint
+deposit_water	decal	a small natural spring on flat ground: a shallow clear blue pool among wet rocks, flat decal on a 1x1 tile footprint
+deposit_iron	decal	an iron ore outcrop on flat ground: a cluster of rusty red-brown ore rocks, flat decal on a 1x1 tile footprint
+deposit_copper	decal	a copper ore outcrop on flat ground: orange-brown rocks with green verdigris streaks, flat decal on a 1x1 tile footprint
+deposit_silicon	decal	a quartz sand deposit on flat ground: a pile of glittering pale yellow quartz grains and small crystals, flat decal on a 1x1 tile footprint
+deposit_sulfur	decal	a sulfur deposit on flat ground: bright yellow sulfur crust around a steaming fumarole crack, flat decal on a 1x1 tile footprint
+deposit_uranium	decal	a uranium ore outcrop on flat ground: dark rocks with faintly glowing green veins, flat decal on a 1x1 tile footprint
+deposit_rare_metals	decal	a rare-metal ore outcrop on flat ground: dark rocks with iridescent purple-blue metallic flecks, flat decal on a 1x1 tile footprint
+deposit_xenocrystals	decal	an alien xenocrystal cluster on flat ground: a few glowing magenta crystal spikes growing from cracked rock, on a 1x1 tile footprint
+deposit_oxygen	decal	an oxygen-rich ice vent on flat ground: a pale blue frosty crack venting faint white vapour, flat decal on a 1x1 tile footprint

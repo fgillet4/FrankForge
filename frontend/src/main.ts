@@ -8,7 +8,7 @@ import { WorldScene } from './lib/phaser/WorldScene';
 const app = document.getElementById('app')!;
 Object.assign(app.style, { width: '100%', height: '100vh', overflow: 'hidden' });
 
-new Phaser.Game({
+const game = new Phaser.Game({
   type:            Phaser.AUTO,
   parent:          app,
   backgroundColor: '#0a0a14',
@@ -21,3 +21,6 @@ new Phaser.Game({
     height:     window.innerHeight,
   },
 });
+
+// Handle for browser tests and debugging.
+if (import.meta.env.DEV) (window as unknown as { game: Phaser.Game }).game = game;

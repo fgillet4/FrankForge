@@ -13,3 +13,6 @@ wasm-pack.log
 dist/
 .DS_Store
 codebase.md
+art/raw/
+art/.venv/
+art/anim/
