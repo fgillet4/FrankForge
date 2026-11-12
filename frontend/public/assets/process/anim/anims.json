@@ -1,0 +1,398 @@
+{
+ "air_intake": {
+  "fps": 8,
+  "frames": 24,
+  "h": 220,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.9965,
+  "w": 258
+ },
+ "alien_attack_ne": {
+  "fps": 8,
+  "frames": 24,
+  "h": 76,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.9971,
+  "w": 63
+ },
+ "alien_attack_se": {
+  "fps": 8,
+  "frames": 24,
+  "h": 86,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.8206,
+  "w": 116
+ },
+ "alien_walk_ne": {
+  "fps": 8,
+  "frames": 24,
+  "h": 70,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 1.0,
+  "w": 58
+ },
+ "alien_walk_se": {
+  "fps": 8,
+  "frames": 24,
+  "h": 70,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.9965,
+  "w": 86
+ },
+ "ammonia_converter": {
+  "fps": 8,
+  "frames": 24,
+  "h": 778,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 1.0,
+  "w": 403
+ },
+ "battery_bank": {
+  "fps": 8,
+  "frames": 24,
+  "h": 267,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 1.0,
+  "w": 256
+ },
+ "char_build_ne": {
+  "fps": 8,
+  "frames": 24,
+  "h": 120,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 1.0,
+  "w": 71
+ },
+ "char_build_se": {
+  "fps": 8,
+  "frames": 24,
+  "h": 121,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.9953,
+  "w": 94
+ },
+ "char_idle_ne": {
+  "fps": 8,
+  "frames": 24,
+  "h": 130,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.9886,
+  "w": 61
+ },
+ "char_idle_se": {
+  "fps": 8,
+  "frames": 24,
+  "h": 129,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.9794,
+  "w": 55
+ },
+ "char_walk_ne": {
+  "fps": 8,
+  "frames": 24,
+  "h": 125,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.9843,
+  "w": 59
+ },
+ "char_walk_se": {
+  "fps": 8,
+  "frames": 24,
+  "h": 124,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.9959,
+  "w": 60
+ },
+ "compressor": {
+  "fps": 8,
+  "frames": 24,
+  "h": 240,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.9971,
+  "w": 257
+ },
+ "condenser": {
+  "fps": 8,
+  "frames": 24,
+  "h": 465,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.9967,
+  "w": 384
+ },
+ "cracker_furnace": {
+  "fps": 8,
+  "frames": 24,
+  "h": 826,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.9977,
+  "w": 462
+ },
+ "electric_heater": {
+  "fps": 8,
+  "frames": 24,
+  "h": 250,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.9984,
+  "w": 269
+ },
+ "electrolyser": {
+  "fps": 8,
+  "frames": 24,
+  "h": 429,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.9954,
+  "w": 386
+ },
+ "fired_boiler": {
+  "fps": 8,
+  "frames": 24,
+  "h": 501,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.9954,
+  "w": 407
+ },
+ "flare_stack": {
+  "fps": 8,
+  "frames": 24,
+  "h": 623,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.9948,
+  "w": 147
+ },
+ "flash_drum": {
+  "fps": 8,
+  "frames": 24,
+  "h": 852,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.9954,
+  "w": 386
+ },
+ "fx_build": {
+  "fps": 12,
+  "frames": 24,
+  "h": 254,
+  "loop": false,
+  "ox": 0.5,
+  "oy": 0.7296,
+  "w": 256
+ },
+ "fx_explosion": {
+  "fps": 12,
+  "frames": 24,
+  "h": 417,
+  "loop": false,
+  "ox": 0.5,
+  "oy": 0.6975,
+  "w": 448
+ },
+ "fx_fire": {
+  "fps": 8,
+  "frames": 24,
+  "h": 169,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 1.0,
+  "w": 128
+ },
+ "fx_fire2": {
+  "fps": 8,
+  "frames": 24,
+  "h": 164,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.9495,
+  "w": 128
+ },
+ "fx_leak": {
+  "fps": 8,
+  "frames": 24,
+  "h": 54,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.5078,
+  "w": 192
+ },
+ "fx_sparks": {
+  "fps": 8,
+  "frames": 24,
+  "h": 107,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.86,
+  "w": 128
+ },
+ "fx_sparks2": {
+  "fps": 8,
+  "frames": 24,
+  "h": 129,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.7834,
+  "w": 128
+ },
+ "fx_spill": {
+  "fps": 8,
+  "frames": 24,
+  "h": 160,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.779,
+  "w": 192
+ },
+ "fx_toxic": {
+  "fps": 8,
+  "frames": 24,
+  "h": 208,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.9463,
+  "w": 320
+ },
+ "gas_sphere": {
+  "fps": 8,
+  "frames": 24,
+  "h": 490,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.9954,
+  "w": 434
+ },
+ "gas_well": {
+  "fps": 8,
+  "frames": 24,
+  "h": 454,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.9975,
+  "w": 258
+ },
+ "heat_exchanger": {
+  "fps": 8,
+  "frames": 24,
+  "h": 447,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.9974,
+  "w": 277
+ },
+ "methanol_reactor": {
+  "fps": 8,
+  "frames": 24,
+  "h": 632,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.9973,
+  "w": 259
+ },
+ "power_pole": {
+  "fps": 8,
+  "frames": 24,
+  "h": 235,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.9949,
+  "w": 159
+ },
+ "pump": {
+  "fps": 8,
+  "frames": 24,
+  "h": 114,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.9968,
+  "w": 129
+ },
+ "shift_reactor": {
+  "fps": 8,
+  "frames": 24,
+  "h": 1025,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.9976,
+  "w": 266
+ },
+ "smr_reformer": {
+  "fps": 8,
+  "frames": 24,
+  "h": 702,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.9954,
+  "w": 515
+ },
+ "solar_array": {
+  "fps": 8,
+  "frames": 24,
+  "h": 265,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.9973,
+  "w": 257
+ },
+ "steam_turbine": {
+  "fps": 8,
+  "frames": 24,
+  "h": 362,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.9987,
+  "w": 400
+ },
+ "storage_tank": {
+  "fps": 8,
+  "frames": 24,
+  "h": 1346,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.9963,
+  "w": 391
+ },
+ "vent": {
+  "fps": 8,
+  "frames": 24,
+  "h": 363,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.9954,
+  "w": 333
+ },
+ "water_well": {
+  "fps": 8,
+  "frames": 24,
+  "h": 373,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 1.0,
+  "w": 256
+ },
+ "wreck": {
+  "fps": 8,
+  "frames": 24,
+  "h": 368,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.9963,
+  "w": 286
+ }
+}

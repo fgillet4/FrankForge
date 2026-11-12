@@ -19,14 +19,14 @@ import { mapGenerator } from '../mapGenerator';
 
 import { TILE_W, TILE_H, isoToScreen, screenToIso, camCenterOn } from './isoMath';
 import { drawTile, drawResource, drawHover, RESOURCE_NAMES } from './terrainRenderer';
-import { drawPlayer, drawEnemy }                             from './characterRenderer';
+import { drawPlayer, drawEnemy, type Enemy }                 from './characterRenderer';
 import { drawBuilding }                                      from './buildingRenderer';
-import { createEnemyState, updateEnemies }                   from './enemySystem';
+import { ATTACK_RADIUS, createEnemyState, updateEnemies }    from './enemySystem';
 import type { EnemyState } from './enemySystem';
 
 // Process plant: the Rust/WASM engine, its renderer and its HTML overlay
 import * as engine from '../process/engine';
-import { ProcessLayer, preloadProcessAssets } from '../process/render';
+import { CharacterSprite, ProcessLayer, preloadProcessAssets } from '../process/render';
 import { ProcessUI, entityTooltip, segmentTooltip } from '../process/ui';
 
 const LAYOUT_KEY = 'frankforge.layout.v1';
@@ -107,6 +107,9 @@ export class WorldScene extends Phaser.Scene {
   private layingPipe    = false;
   private lastPipeTile: { x: number; y: number } | null = null;
   private snapshotTimer = 0;
+  private engineer: CharacterSprite | null = null;
+  private buildUntil = 0;
+  private aliens = new Map<Enemy, { sprite: CharacterSprite; x: number; y: number }>();
   private saveTimer     = 0;
 
   // WASD movement keys
@@ -335,7 +338,9 @@ export class WorldScene extends Phaser.Scene {
     if (this.keys.a.isDown || this.keys.left.isDown)  dx -= 1;
     if (this.keys.d.isDown || this.keys.right.isDown) dx += 1;
 
+    if (this.engineer) this.engineer.moving = dx !== 0 || dy !== 0;
     if (dx === 0 && dy === 0) return;
+    this.engineer?.face(dx, dy);
     if (dx !== 0 && dy !== 0) { dx *= 0.707; dy *= 0.707; }
 
     const nx = Phaser.Math.Clamp(state.player.position.x + dx * spd, 0, currentMap.width  - 1);
@@ -356,6 +361,8 @@ export class WorldScene extends Phaser.Scene {
     this.terrainBlit?.destroy(); this.depositBlit?.destroy();
     this.terrainBlit = this.depositBlit = null; this.blitMap = null; this.depositBobs.clear();
     processLayer?.destroy(); processLayer = null;
+    this.engineer?.destroy(); this.engineer = null;
+    this.aliens.forEach(a => a.sprite.destroy()); this.aliens.clear();
     processUI?.destroy();    processUI = null;
     lastSnapshot = null;
     this.floatLabels.forEach(f => f.text.destroy());
@@ -516,6 +523,9 @@ export class WorldScene extends Phaser.Scene {
     if (!state.player) return;
     const camX = this.camX + this.dragOffset.x;
     const camY = this.camY + this.dragOffset.y;
+    this.engineer ??= new CharacterSprite(this);
+    if (this.engineer.moving || this.time.now > this.buildUntil) this.engineer.action = null;
+    if (this.engineer.draw(state.player.position.x, state.player.position.y, camX, camY, this.zoom)) return;
     drawPlayer(
       this.playerGfx,
       state.player.position.x, state.player.position.y,
@@ -528,8 +538,21 @@ export class WorldScene extends Phaser.Scene {
     this.enemyGfx.clear();
     const camX = this.camX + this.dragOffset.x;
     const camY = this.camY + this.dragOffset.y;
+    const alive = new Set(this.enemyState.enemies);
+    for (const [e, a] of this.aliens) {
+      if (!alive.has(e)) { a.sprite.destroy(); this.aliens.delete(e); }
+    }
     for (const e of this.enemyState.enemies) {
-      drawEnemy(this.enemyGfx, e, camX, camY, this.zoom);
+      let a = this.aliens.get(e);
+      if (!a) this.aliens.set(e, a = { sprite: new CharacterSprite(this, 'alien'), x: e.isoX, y: e.isoY });
+      a.sprite.moving = true;
+      if (Math.abs(e.isoX - a.x) + Math.abs(e.isoY - a.y) > 1e-3) a.sprite.face(e.isoX - a.x, e.isoY - a.y);
+      const player = get(gameState).player;
+      const near = player && Math.abs(e.isoX - player.position.x) + Math.abs(e.isoY - player.position.y) < ATTACK_RADIUS;
+      a.sprite.action = near ? 'attack' : null;
+      if (near) a.sprite.face(player.position.x - e.isoX, player.position.y - e.isoY);
+      a.x = e.isoX; a.y = e.isoY;
+      if (!a.sprite.draw(e.isoX, e.isoY, camX, camY, this.zoom)) drawEnemy(this.enemyGfx, e, camX, camY, this.zoom);
     }
   }
 
@@ -728,6 +751,15 @@ export class WorldScene extends Phaser.Scene {
     if (err) processUI?.alert(err);
     else {
       this.playSound('place', 0.35);
+      processLayer?.built(proto, o.x, o.y);
+      // The engineer turns to the new building and works on it for a moment.
+      const player = get(gameState).player;
+      const n = engine.PROTO[proto]?.size ?? 1;
+      if (this.engineer && player) {
+        this.engineer.face(o.x + n / 2 - player.position.x, o.y + n / 2 - player.position.y);
+        this.engineer.action = 'build';
+        this.buildUntil = this.time.now + 1500;
+      }
       this.saveLayout();
     }
   }

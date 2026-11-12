@@ -1,0 +1,45 @@
+# name	plume (0/1: leave headroom above for smoke/flames)	loop|once	motion
+air_intake	0	loop	The fan inside the duct spins steadily, seen as a blur through the louvres. The machine stays exactly the same colour.
+ammonia_converter	1	loop	A thin wisp of white steam rises from the top flange. The whole converter stays fully visible in the middle of the frame at the same size.
+battery_bank	0	loop	The two cooling fans on the roof spin steadily and small status lights on the cabinet doors blink green.
+compressor	0	loop	The large flywheel spins, the piston rods slide back and forth, and the motor shakes slightly with each stroke.
+condenser	1	loop	The two big cooling fans under the finned coils spin fast and a light heat shimmer rises off the fins.
+cracker_furnace	1	loop	The bright orange coils inside the furnace flicker gently and a column of grey smoke rises from the top of the tall stack.
+electric_heater	0	loop	The heating element coils glow orange and pulse brighter and dimmer, and a small warning lamp blinks.
+electrolyser	1	loop	Small gas bubbles stream upward inside the cells, indicator lights blink, and a faint vapour wisp drifts from the gas separators on top.
+fired_boiler	1	loop	Fire flickers brightly behind the small firebox door and a column of grey smoke rises from the top of the chimney.
+flare_stack	1	loop	The flame at the tip of the stack roars and flickers, dancing in the wind, with heat shimmer above it.
+gas_well	0	loop	Gas hisses from a valve on the wellhead in a faint translucent jet and the pressure gauge needles tremble.
+heat_exchanger	1	loop	A thin wisp of white steam escapes from one nozzle on top of the shell and drifts upward. The shell keeps exactly its grey steel colour.
+methanol_reactor	1	loop	Light white vapour puffs gently from the small vent pipe at the very top, while the rest of the plant equipment stays still.
+power_pole	0	loop	Bright blue-white electric sparks crackle and flash at the insulators on the crossarm every second.
+pump	0	loop	The motor's cooling fan and the shaft coupling spin, and the pump vibrates very slightly as it runs.
+shift_reactor	1	loop	A thin wisp of white steam drifts up from the top nozzle.
+smr_reformer	1	loop	The glowing orange burner tubes behind the furnace windows flicker and pulse, and hot exhaust shimmers and smokes out of the stack.
+solar_array	0	loop	A soft sunlight glint sweeps slowly across the solar panels.
+steam_turbine	1	loop	The shaft coupling and the generator's cooling fan spin steadily, faint wisps of steam drift from the casing glands, and small indicator lights blink.
+vent	1	loop	A plume of white vapour jets continuously out of the vent cap and billows upward.
+water_well	0	loop	The motor's cooling fan spins and the pump unit vibrates very slightly as it runs.
+wreck	1	loop	Flames lick out of the torn metal shell, embers glow, and dark smoke rises from the wreck.
+fx_explosion	1	once	The fireball bursts into a compact explosion in the middle of the frame, then collapses into a small puff of dark smoke that thins out and vanishes. The flash does not light up the background; the magenta background stays exactly the same colour throughout.
+fx_fire	1	loop	The fire burns steadily, flames licking upward and flickering.
+fx_leak	0	loop	A pressurised jet of white gas sprays continuously sideways out of the crack, billowing and dispersing.
+fx_sparks	0	loop	Bright blue-white electric arcs crackle and sparks spray out in short bursts.
+storage_tank	1	loop	A thin wisp of vapour breathes out of the small vent on the roof and drifts upward.
+gas_sphere	1	loop	A small puff of white vapour escapes from the relief valve on top now and then and drifts upward.
+flash_drum	1	loop	A thin wisp of white steam rises straight up from the top of the drum and the level gauge on the side flickers.
+fx_build	0	once	The dust puff billows outward and the welding sparks fly, then everything settles and fades away completely, leaving only the empty background.
+fx_spill	0	loop	The liquid ripples and splashes gently as more liquid drips into the puddle.
+fx_toxic	0	loop	The toxic gas cloud swirls and drifts slowly, thinning at the edges.
+char_walk_se	0	loop	The engineer walks in place with a steady natural walking cycle, arms swinging, without moving across the frame.
+char_walk_ne	0	loop	The engineer walks in place with a steady natural walking cycle, arms swinging, without moving across the frame.
+char_idle_se	0	loop	The engineer settles from the stride into standing still, then stands idle, breathing gently and shifting weight slightly.
+char_idle_ne	0	loop	The engineer settles from the stride into standing still, then stands idle, breathing gently and shifting weight slightly.
+alien_walk_se	0	loop	The alien crawler scuttles in place with a steady six-legged walking gait, without moving across the frame.
+alien_walk_ne	0	loop	The alien crawler scuttles in place with a steady six-legged walking gait, without moving across the frame.
+char_build_se	0	loop	The engineer works on something on the ground in front of them, turning the wrench with firm repeated strokes.
+char_build_ne	0	loop	The engineer works on something on the ground in front of them, turning the wrench with firm repeated strokes.
+alien_attack_se	0	loop	The alien crawler lunges and strikes forward with its front claws again and again, snapping its mandibles, staying on the same spot.
+alien_attack_ne	0	loop	The alien crawler lunges and strikes forward with its front claws again and again, staying on the same spot.
+fx_fire2	1	loop	The flames burn steadily, licking upward and flickering, with wisps of dark smoke.
+fx_sparks2	0	loop	Bright electric sparks spray and crackle in short bursts.

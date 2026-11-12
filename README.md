@@ -36,7 +36,11 @@ cd frontend && npm run wasm && npm run dev  # build the engine, then play
 ```
 
 Art and sound come from `art/generate.py` (prompts in `art/prompts.tsv`) and are packed for the game by
-`art/process.py`.
+`art/process.py`. Animations come from `art/animate.py` (motions in `art/anims.tsv`): each sprite is
+animated on a magenta screen with Seedance image-to-video, then keyed and packed into sprite sheets under
+`frontend/public/assets/process/anim/` with an `anims.json` manifest. Buildings animate only while running;
+explosions, fires, spills, leaks, toxic clouds and sparks follow what the engine reports; the engineer and the
+alien crawlers walk, idle, build and attack in the four isometric diagonals.
 
 ## ✨ Unleash Your Inner Mad Scientist
 

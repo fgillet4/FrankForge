@@ -71,7 +71,7 @@ export function aStar(
 
 const SPAWN_INTERVAL = 10;   // seconds between spawns
 const MAX_ENEMIES    = 15;
-const ATTACK_RADIUS  = 1.2;  // tiles
+export const ATTACK_RADIUS  = 1.2;  // tiles
 const ATTACK_DPS     = 6;    // damage per second
 
 let idCounter = 0;
