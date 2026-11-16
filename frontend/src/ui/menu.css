@@ -134,3 +134,24 @@
   .mm-panel { left: 16px; right: 16px; width: auto; top: 16px; bottom: 16px; }
 }
 .mm-panel.center { left: 50%; transform: translateX(-50%); width: min(640px, calc(100vw - 32px)); }
+
+/* Login gate */
+.mm-gate {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(400px, calc(100vw - 32px));
+  background: var(--mm-bg); border: 1px solid var(--mm-line); border-radius: 12px; padding: 32px 30px 26px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55); display: flex; flex-direction: column;
+}
+.mm-gate .mm-logo { font-size: 40px; }
+.mm-gate .mm-stripe { margin: 12px 0 14px; }
+.mm-gate p { margin: 0 0 16px; color: var(--mm-dim); }
+.mm-gate label { display: flex; flex-direction: column; gap: 5px; font-size: 13px; color: var(--mm-dim); margin-bottom: 14px; }
+.mm-gate input {
+  background: var(--mm-card); border: 1px solid var(--mm-line); border-radius: 8px; color: var(--mm-text);
+  font: 15px 'Chakra Petch', system-ui, sans-serif; padding: 9px 12px; outline: none;
+}
+.mm-gate input:focus { border-color: var(--mm-accent); }
+.mm-gate .mm-code { text-align: center; letter-spacing: 0.25em; font-size: 18px; }
+.mm-gate .mm-warn { margin: -4px 0 12px; min-height: 1em; color: var(--mm-bad); }
+.mm-gate .mm-big { width: 100%; }
+.mm-link { background: none; border: 0; margin-top: 12px; color: var(--mm-dim) !important; font-size: 13px; }
+.mm-link:hover { color: var(--mm-text) !important; }

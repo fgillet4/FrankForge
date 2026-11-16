@@ -3,6 +3,10 @@ import Phaser from 'phaser';
 import { MenuScene }  from './scenes/MenuScene';
 import { GroundScene } from './lib/phaser/GroundScene';
 import { WorldScene } from './lib/phaser/WorldScene';
+import { authGate } from './ui/gate';
+
+// Production builds are for FrankStation accounts with FrankForge access.
+if (import.meta.env.PROD) await authGate();
 
 // Make the #app div fill the screen
 const app = document.getElementById('app')!;
