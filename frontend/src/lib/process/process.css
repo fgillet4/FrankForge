@@ -119,13 +119,8 @@
   transition: opacity 1s; box-shadow: 0 4px 18px rgba(0, 0, 0, 0.5);
 }
 .pp-alert.gone { opacity: 0; }
-.pp-help {
-  position: absolute; left: 12px; bottom: 44px; max-width: 260px; font-size: 11px; color: var(--pp-dim);
-  background: var(--pp-bg); border: 1px solid var(--pp-line); border-radius: 8px; padding: 6px 8px;
-}
 
 @media (max-width: 900px) {
   .pp-inspector { left: 12px; right: 12px; width: auto; top: auto; bottom: 150px; max-height: 45vh; }
-  .pp-help { display: none; }
-  .pp-gridpanel { width: 170px; }
+    .pp-gridpanel { width: 170px; }
 }

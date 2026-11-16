@@ -1,381 +1,347 @@
 /**
- * MenuScene — world seed & preview screen.
+ * MenuScene — loads the game's assets and shows the main menu over a small animated plant.
  *
- * Left panel : controls (seed, planet type, size, richness)
- * Right panel: live flat 2-D preview that updates as you tweak settings.
- *
- * The generated PlanetMap is stored in the Phaser registry so WorldScene
- * can use it directly without re-generating.
+ * The menu itself is DOM (src/ui/menu.ts); this scene draws the diorama behind it in texture
+ * space (128 px per tile) and lets its camera do the scaling.
  */
 
 import Phaser from 'phaser';
-import { mapGenerator }  from '../lib/mapGenerator';
 import { PlanetType, ResourceType } from '../lib/types';
 import type { PlanetMap } from '../lib/types';
 import { TERRAIN_COLORS, RESOURCE_COLORS } from '../lib/phaser/terrainRenderer';
+import { ANIMS, createAnims, preloadProcessAssets } from '../lib/process/render';
+import { DEFAULT_WORLD, generateWorld, loadSave, loadSettings, type SaveGame, type WorldSettings } from '../lib/save';
+import { el, HOW_TO_PLAY, panel, settingsBody } from '../ui/menu';
 
-// ── Planet button config ──────────────────────────────────────────────────────
+const PLANETS: { type: PlanetType; label: string; colour: string; blurb: string }[] = [
+  { type: PlanetType.EARTH_LIKE, label: 'Earth-like', colour: '#3fbf6a', blurb: 'Temperate and wet. Water and gas are easy to find.' },
+  { type: PlanetType.MARS_LIKE, label: 'Mars-like', colour: '#c4502e', blurb: 'Cold, thin air and red dust.' },
+  { type: PlanetType.DESERT, label: 'Desert', colour: '#e3923a', blurb: 'Hot and dry. Water is scarce.' },
+  { type: PlanetType.ICE, label: 'Ice', colour: '#6fb6ec', blurb: 'Frozen seas; wells can draw from the ice.' },
+  { type: PlanetType.VOLCANIC, label: 'Volcanic', colour: '#e8452a', blurb: 'Lava fields and broken ground.' },
+  { type: PlanetType.ALIEN, label: 'Alien', colour: '#a160d6', blurb: 'Crystal forests and strange terrain.' },
+  { type: PlanetType.OCEAN, label: 'Ocean', colour: '#2f86c4', blurb: 'Islands scattered across a world sea.' },
+];
 
-const PLANET_CONFIG = [
-  { type: PlanetType.EARTH_LIKE, label: 'EARTH',    color: 0x27ae60 },
-  { type: PlanetType.MARS_LIKE,  label: 'MARS',     color: 0xb03020 },
-  { type: PlanetType.DESERT,     label: 'DESERT',   color: 0xe67e22 },
-  { type: PlanetType.ICE,        label: 'ICE',      color: 0x3498db },
-  { type: PlanetType.VOLCANIC,   label: 'VOLCANIC', color: 0xdd2200 },
-  { type: PlanetType.ALIEN,      label: 'ALIEN',    color: 0x8e44ad },
-  { type: PlanetType.OCEAN,      label: 'OCEAN',    color: 0x1a6a9a },
-] as const;
+const SIZES = [{ label: 'Small', dim: 80 }, { label: 'Medium', dim: 120 }, { label: 'Large', dim: 160 }];
 
-const SIZE_CONFIG = [
-  { key: 'small',  label: 'SMALL',  dim: 80  },
-  { key: 'medium', label: 'MEDIUM', dim: 120 },
-  { key: 'large',  label: 'LARGE',  dim: 160 },
-] as const;
+/** The diorama: a little power plant on a patch of ground. Footprints in tiles. */
+const PATCH = 16;
+const DIORAMA: { name: string; x: number; y: number; n: number; still?: boolean }[] = [
+  { name: 'gas_well', x: 1, y: 4, n: 2 },
+  { name: 'flare_stack', x: 2, y: 1, n: 1 },
+  { name: 'fired_boiler', x: 4, y: 3, n: 3 },
+  { name: 'steam_turbine', x: 8, y: 3, n: 3 },
+  { name: 'condenser', x: 8, y: 7, n: 3 },
+  { name: 'gas_sphere', x: 11, y: 0, n: 3, still: true },
+  { name: 'power_pole', x: 7, y: 1, n: 1 },
+  { name: 'power_pole', x: 12, y: 5, n: 1 },
+  { name: 'cracker_furnace', x: 12, y: 7, n: 3 },
+  { name: 'storage_tank', x: 2, y: 8, n: 3 },
+  { name: 'pump', x: 5, y: 9, n: 1 },
+  { name: 'solar_array', x: 4, y: 12, n: 2 },
+  { name: 'solar_array', x: 6, y: 12, n: 2 },
+  { name: 'battery_bank', x: 9, y: 12, n: 2 },
+  { name: 'vent', x: 13, y: 11, n: 1 },
+];
 
-// ── Scene ─────────────────────────────────────────────────────────────────────
+function timeAgo(ms: number): string {
+  const s = (Date.now() - ms) / 1000;
+  if (s < 90) return 'just now';
+  if (s < 5400) return `${Math.round(s / 60)} min ago`;
+  if (s < 129600) return `${Math.round(s / 3600)} h ago`;
+  return `${Math.round(s / 86400)} days ago`;
+}
 
 export class MenuScene extends Phaser.Scene {
-
-  // DOM
-  private seedInput!:      HTMLInputElement;
-  private richnessInput!:  HTMLInputElement;
-
-  // State
-  private seed       = 42;
-  private planetType = PlanetType.EARTH_LIKE;
-  private mapSizeKey = 'medium';
-  private richness   = 0.7;
-
-  // Generated map
-  private currentMap: PlanetMap | null = null;
-
-  // Graphics & text
-  private previewGfx!:  Phaser.GameObjects.Graphics;
-  private infoText!:    Phaser.GameObjects.Text;
-  private richPctText!: Phaser.GameObjects.Text;
-
-  private planetBtns = new Map<PlanetType, Phaser.GameObjects.Text>();
-  private sizeBtns   = new Map<string,     Phaser.GameObjects.Text>();
-
-  // Preview area (set in create)
-  private pvX = 0; private pvY = 0; private pvS = 0;
-
-  // Debounce timer
+  private root: HTMLElement | null = null;
+  private side!: HTMLElement;
+  private open: { name: string; el: HTMLElement } | null = null;
+  private loaded = false;
+  private save: SaveGame | null = null;
+  private world: WorldSettings = { ...DEFAULT_WORLD };
+  private walker: { sprite: Phaser.GameObjects.Sprite; t: number } | null = null;
   private regenTimer: ReturnType<typeof setTimeout> | null = null;
+  private startNew: (() => void) | null = null;
 
   constructor() { super({ key: 'MenuScene' }); }
 
-  // ── Lifecycle ────────────────────────────────────────────────────────────────
+  init() {
+    this.loaded = this.textures.exists('terrain');
+    this.save = loadSave();
+    this.world = { ...DEFAULT_WORLD, seed: Math.floor(Math.random() * 999999) + 1 };
+    this.buildMenu();
+  }
+
+  preload() {
+    if (this.loaded) return;
+    preloadProcessAssets(this);
+    this.load.atlas('terrain', 'assets/process/terrain.png', 'assets/process/terrain.json');
+    this.load.atlas('deposits', 'assets/process/deposits.png', 'assets/process/deposits.json');
+    for (const name of ['rupture', 'alarm', 'ambient', 'place', 'remove']) {
+      this.load.audio(`pp_${name}`, `assets/process/audio/${name}.mp3`);
+    }
+    const bar = this.root?.querySelector<HTMLElement>('.mm-load span');
+    const label = this.root?.querySelector<HTMLElement>('.mm-foot em');
+    this.load.on('progress', (f: number) => {
+      if (bar) bar.style.width = `${f * 100}%`;
+      if (label) label.textContent = `Loading ${Math.round(f * 100)}%`;
+    });
+  }
 
   create() {
+    this.loaded = true;
+    this.sound.volume = loadSettings().volume;
+    createAnims(this);
+    this.root?.querySelector('.mm-load')?.remove();
+    const label = this.root?.querySelector<HTMLElement>('.mm-foot em');
+    if (label) label.textContent = '';
+    this.root?.querySelectorAll<HTMLButtonElement>('[data-needs-assets]').forEach(b => { b.disabled = false; });
+    this.buildDiorama();
+
+    this.input.keyboard!.on('keydown-ENTER', () => {
+      if (this.open?.name === 'new') this.startNew?.();
+      else if (this.save) this.play(this.save);
+      else this.toggle('new');
+    });
+    this.input.keyboard!.on('keydown-ESC', () => this.close());
+    this.scale.on('resize', this.layoutCamera, this);
+    this.events.once('shutdown', () => {
+      this.scale.off('resize', this.layoutCamera, this);
+      if (this.regenTimer) clearTimeout(this.regenTimer);
+      this.root?.remove();
+      this.root = null;
+      this.open = null;
+      this.walker = null;
+    });
+  }
+
+  update(time: number, delta: number) {
+    // A slow drift across the plant.
+    const cam = this.cameras.main;
+    cam.scrollX = this.baseScroll.x + Math.sin(time / 9000) * 90;
+    cam.scrollY = this.baseScroll.y + Math.cos(time / 11000) * 40;
+
+    // The engineer paces along the front of the plant.
+    if (this.walker) {
+      this.walker.t += delta / 1000;
+      const period = 7;
+      const phase = (this.walker.t % (2 * period)) / period;   // 0..2
+      const out = phase < 1;
+      const along = out ? phase : 2 - phase;
+      const x = 4 + along * 7;
+      const y = 14.2;
+      const dir = out ? 'se' : 'ne';
+      const key = `pa_char_walk_${dir}`;
+      const s = this.walker.sprite;
+      if (s.anims.currentAnim?.key !== key && this.anims.exists(key)) {
+        s.play(key).setOrigin(ANIMS[`char_walk_${dir}`].ox, ANIMS[`char_walk_${dir}`].oy);
+      }
+      s.setFlipX(!out).setPosition((x - y) * 64, (x + y) * 32 + 32).setDepth(100);
+    }
+  }
+
+  // ── Diorama ────────────────────────────────────────────────────────────────
+
+  private baseScroll = { x: 0, y: 0 };
+
+  private buildDiorama() {
+    this.cameras.main.setBackgroundColor('#0b0e13').setOrigin(0, 0);
+    const c = PATCH / 2;
+    for (let iy = 0; iy < PATCH; iy++) {
+      for (let ix = 0; ix < PATCH; ix++) {
+        // A round patch that fades into the dark at its edge.
+        const d = Math.hypot(ix + 0.5 - c, iy + 0.5 - c) / c;
+        if (d > 1.05) continue;
+        const v = (ix * 73856093 ^ iy * 19349663) >>> 0;
+        const kind = d > 0.86 && v % 3 === 0 ? 'sand' : 'grass';
+        this.add.image((ix - iy) * 64 - 65, (ix + iy) * 32 - 1, 'terrain', `${kind}_${v % 4}`)
+          .setOrigin(0, 0).setAlpha(Phaser.Math.Clamp((1.05 - d) * 4, 0, 1)).setDepth(-100);
+      }
+    }
+    for (const b of DIORAMA) {
+      const m = ANIMS[b.name];
+      const x = (b.x - b.y) * 64;
+      const y = (b.x + b.y + 2 * b.n) * 32 + 5;
+      const s = this.add.sprite(x, y, `pb_${b.name}`).setOrigin(0.5, 1).setDepth(b.x + b.y + 2 * b.n);
+      if (m && !b.still && this.anims.exists(`pa_${b.name}`)) {
+        s.play({ key: `pa_${b.name}`, startFrame: (b.x * 7 + b.y) % m.frames }).setOrigin(m.ox, m.oy);
+      }
+    }
+    if (ANIMS.char_walk_se) this.walker = { sprite: this.add.sprite(0, 0, 'pa_char_walk_se').setScale(0.9), t: 0 };
+    this.layoutCamera();
+  }
+
+  /** Fits the patch into the space right of the menu. */
+  private layoutCamera() {
     const W = this.scale.width;
     const H = this.scale.height;
-
-    // Background
-    this.add.rectangle(0, 0, W, H, 0x080c14).setOrigin(0, 0);
-    const g = this.add.graphics();
-    g.lineStyle(1, 0x141e2e, 1);
-    for (let x = 0; x < W; x += 48) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, H); g.strokePath(); }
-    for (let y = 0; y < H; y += 48) { g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.strokePath(); }
-
-    // ── Layout constants ────────────────────────────────────────────────────
-    const leftW  = Math.min(340, W * 0.36);
-    const pad    = 20;
-    const cx     = leftW / 2;
-    const btnH   = 24;
-
-    // Divider
-    const dg = this.add.graphics();
-    dg.lineStyle(1, 0x1e3044, 1);
-    dg.beginPath(); dg.moveTo(leftW + 10, 16); dg.lineTo(leftW + 10, H - 16); dg.strokePath();
-
-    // ── Title ───────────────────────────────────────────────────────────────
-    this.add.text(cx, 24, 'FRANKFORGE', {
-      fontSize: '38px', fontFamily: 'monospace',
-      color: '#ff9900', stroke: '#000000', strokeThickness: 5,
-    }).setOrigin(0.5, 0);
-
-    this.add.text(cx, 72, 'BUILD  ·  REACT  ·  SURVIVE', {
-      fontSize: '10px', fontFamily: 'monospace', color: '#445566',
-    }).setOrigin(0.5, 0);
-
-    // ── Seed row ────────────────────────────────────────────────────────────
-    let curY = 100;
-    this.add.text(pad, curY, 'WORLD SEED', {
-      fontSize: '10px', fontFamily: 'monospace', color: '#446688',
-    });
-    curY += 16;
-
-    // DOM seed input
-    this.seed = Math.floor(Math.random() * 999999) + 1;
-    this.seedInput = document.createElement('input');
-    this.seedInput.value = String(this.seed);
-    Object.assign(this.seedInput.style, {
-      position: 'absolute', left: `${pad}px`, top: `${curY}px`,
-      width: `${leftW - pad * 2 - 36}px`, height: '28px',
-      fontSize: '15px', fontFamily: 'monospace', textAlign: 'center',
-      background: '#0d1a2a', border: '1px solid #2a4a6a',
-      color: '#ffffff', borderRadius: '3px', outline: 'none',
-    });
-    document.body.appendChild(this.seedInput);
-    this.seedInput.addEventListener('input', () => this.scheduleRegen());
-
-    // Randomise ⟳
-    const randBtn = this.add.text(leftW - pad - 8, curY + 5, '⟳', {
-      fontSize: '20px', color: '#446688',
-    }).setOrigin(1, 0).setInteractive({ useHandCursor: true });
-    randBtn.on('pointerover',  () => randBtn.setStyle({ color: '#88bbee' }));
-    randBtn.on('pointerout',   () => randBtn.setStyle({ color: '#446688' }));
-    randBtn.on('pointerdown',  () => {
-      this.seed = Math.floor(Math.random() * 999999) + 1;
-      this.seedInput.value = String(this.seed);
-      this.generateAndPreview();
-    });
-    curY += 38;
-
-    // ── Planet type ─────────────────────────────────────────────────────────
-    this.add.text(pad, curY, 'PLANET TYPE', {
-      fontSize: '10px', fontFamily: 'monospace', color: '#446688',
-    });
-    curY += 16;
-
-    const perRow = 4;
-    const pBtnW  = Math.floor((leftW - pad * 2 - (perRow - 1) * 4) / perRow);
-    PLANET_CONFIG.forEach(({ type, label }, i) => {
-      const col = i % perRow;
-      const row = Math.floor(i / perRow);
-      const bx  = pad + col * (pBtnW + 4);
-      const by  = curY + row * (btnH + 4);
-      const btn = this.add.text(bx + pBtnW / 2, by + btnH / 2, label, {
-        fontSize: '10px', fontFamily: 'monospace',
-        color: '#778899', backgroundColor: '#0d1a2a',
-      }).setOrigin(0.5).setInteractive({ useHandCursor: true }).setFixedSize(pBtnW, btnH);
-      btn.on('pointerover',  () => { if (this.planetType !== type) btn.setStyle({ color: '#ffffff' }); });
-      btn.on('pointerout',   () => { if (this.planetType !== type) btn.setStyle({ color: '#778899', backgroundColor: '#0d1a2a' }); });
-      btn.on('pointerdown',  () => { this.planetType = type; this.refreshPlanetButtons(); this.generateAndPreview(); });
-      this.planetBtns.set(type, btn);
-    });
-    const planetRows = Math.ceil(PLANET_CONFIG.length / perRow);
-    curY += planetRows * (btnH + 4) + 8;
-
-    // ── Map size ─────────────────────────────────────────────────────────────
-    this.add.text(pad, curY, 'MAP SIZE', {
-      fontSize: '10px', fontFamily: 'monospace', color: '#446688',
-    });
-    curY += 16;
-
-    const sBtnW = Math.floor((leftW - pad * 2 - (SIZE_CONFIG.length - 1) * 6) / SIZE_CONFIG.length);
-    SIZE_CONFIG.forEach(({ key, label }, i) => {
-      const bx  = pad + i * (sBtnW + 6);
-      const btn = this.add.text(bx + sBtnW / 2, curY + btnH / 2, label, {
-        fontSize: '10px', fontFamily: 'monospace',
-        color: '#778899', backgroundColor: '#0d1a2a',
-      }).setOrigin(0.5).setInteractive({ useHandCursor: true }).setFixedSize(sBtnW, btnH);
-      btn.on('pointerover',  () => { if (this.mapSizeKey !== key) btn.setStyle({ color: '#ffffff' }); });
-      btn.on('pointerout',   () => { if (this.mapSizeKey !== key) btn.setStyle({ color: '#778899', backgroundColor: '#0d1a2a' }); });
-      btn.on('pointerdown',  () => { this.mapSizeKey = key; this.refreshSizeButtons(); this.generateAndPreview(); });
-      this.sizeBtns.set(key, btn);
-    });
-    curY += btnH + 12;
-
-    // ── Resource richness ────────────────────────────────────────────────────
-    this.add.text(pad, curY, 'RESOURCE RICHNESS', {
-      fontSize: '10px', fontFamily: 'monospace', color: '#446688',
-    });
-    this.richPctText = this.add.text(leftW - pad, curY, `${Math.round(this.richness * 100)}%`, {
-      fontSize: '10px', fontFamily: 'monospace', color: '#88aacc',
-    }).setOrigin(1, 0);
-    curY += 16;
-
-    this.richnessInput = document.createElement('input');
-    this.richnessInput.type  = 'range';
-    this.richnessInput.min   = '0.1';
-    this.richnessInput.max   = '1.0';
-    this.richnessInput.step  = '0.05';
-    this.richnessInput.value = String(this.richness);
-    Object.assign(this.richnessInput.style, {
-      position: 'absolute', left: `${pad}px`, top: `${curY}px`,
-      width: `${leftW - pad * 2}px`, accentColor: '#ff9900',
-    });
-    document.body.appendChild(this.richnessInput);
-    this.richnessInput.addEventListener('input', () => {
-      this.richness = parseFloat(this.richnessInput.value);
-      this.richPctText.setText(`${Math.round(this.richness * 100)}%`);
-      this.scheduleRegen();
-    });
-    curY += 32;
-
-    // ── Play button ──────────────────────────────────────────────────────────
-    const playY = Math.max(curY + 16, H - 60);
-    const playBtn = this.add.text(cx, playY, '▶  PLAY THIS WORLD', {
-      fontSize: '17px', fontFamily: 'monospace',
-      color: '#ffcc00', backgroundColor: '#0d2030',
-      padding: { x: 18, y: 9 },
-      stroke: '#000000', strokeThickness: 2,
-    }).setOrigin(0.5, 0).setInteractive({ useHandCursor: true });
-    playBtn.on('pointerover',  () => playBtn.setStyle({ color: '#ffffff', backgroundColor: '#1a4060' }));
-    playBtn.on('pointerout',   () => playBtn.setStyle({ color: '#ffcc00', backgroundColor: '#0d2030' }));
-    playBtn.on('pointerdown',  () => this.startGame());
-    this.input.keyboard!.on('keydown-ENTER', () => this.startGame());
-
-    // ── Preview panel ────────────────────────────────────────────────────────
-    const pvPad  = 20;
-    const pvLeft = leftW + 22 + pvPad;
-    const pvTop  = pvPad + 16;
-    const pvSize = Math.min(W - pvLeft - pvPad, H - pvTop - 50);
-
-    this.pvX = pvLeft; this.pvY = pvTop; this.pvS = pvSize;
-
-    this.add.text(pvLeft + pvSize / 2, pvTop - 4, 'WORLD PREVIEW', {
-      fontSize: '10px', fontFamily: 'monospace', color: '#2a3a4a',
-    }).setOrigin(0.5, 1);
-
-    this.previewGfx = this.add.graphics();
-
-    this.infoText = this.add.text(pvLeft, pvTop + pvSize + 8, '', {
-      fontSize: '10px', fontFamily: 'monospace', color: '#4a6a88', lineSpacing: 3,
-    });
-
-    // ── Init ─────────────────────────────────────────────────────────────────
-    this.refreshPlanetButtons();
-    this.refreshSizeButtons();
-    this.generateAndPreview();
+    const narrow = W < 900;
+    const zoom = Math.min((narrow ? 0.95 : 0.58) * W / (PATCH * 128), 0.95 * H / (PATCH * 64 + 300));
+    const cam = this.cameras.main.setZoom(zoom);
+    // Patch centre (texture space) goes to this point on screen.
+    const sx = narrow ? W / 2 : W * 0.64;
+    const sy = H * 0.6;
+    this.baseScroll = { x: 0 - sx / zoom, y: PATCH * 32 - 60 - sy / zoom };
+    cam.setScroll(this.baseScroll.x, this.baseScroll.y);
   }
 
-  // ── Button refresh ────────────────────────────────────────────────────────
+  // ── Menu ───────────────────────────────────────────────────────────────────
 
-  private refreshPlanetButtons() {
-    PLANET_CONFIG.forEach(({ type, color }) => {
-      const btn = this.planetBtns.get(type);
-      if (!btn) return;
-      if (type === this.planetType) {
-        btn.setStyle({ color: '#' + color.toString(16).padStart(6, '0'), backgroundColor: '#0d2030' });
-      } else {
-        btn.setStyle({ color: '#778899', backgroundColor: '#0d1a2a' });
-      }
-    });
+  private buildMenu() {
+    this.root = el('div', 'mm');
+    this.side = el('div', 'mm-side');
+    this.side.innerHTML = `
+      <h1 class="mm-logo">FRANK<span>FORGE</span></h1>
+      <div class="mm-stripe"></div>
+      <p class="mm-tag">Build a chemical plant on an alien world, with real thermodynamics, real pressure and real explosions.</p>`;
+    const nav = el('nav', 'mm-nav');
+    const item = (label: string, sub: string | null, fn: () => void, opts: { primary?: boolean; needsAssets?: boolean; name?: string } = {}) => {
+      const b = el('button', opts.primary ? 'primary' : undefined, label + (sub ? `<small>${sub}</small>` : ''));
+      b.onclick = fn;
+      if (opts.name) b.dataset.panel = opts.name;
+      if (opts.needsAssets) { b.dataset.needsAssets = ''; b.disabled = !this.loaded; }
+      nav.append(b);
+    };
+    if (this.save) {
+      const s = this.save;
+      const planet = PLANETS.find(p => p.type === s.world.planet)?.label ?? 'Unknown world';
+      const count = s.layout.filter(p => p.proto !== 'pipe').length;
+      const when = s.savedAt ? ` · saved ${timeAgo(s.savedAt)}` : '';
+      item('Continue', `${planet} · seed ${s.world.seed} · ${count} building${count === 1 ? '' : 's'}${when}`, () => this.play(s), { primary: true, needsAssets: true });
+    }
+    item('New world', null, () => this.toggle('new'), { primary: !this.save, name: 'new' });
+    item('How to play', null, () => this.toggle('help'), { name: 'help' });
+    item('Settings', null, () => this.toggle('settings'), { name: 'settings' });
+    const foot = el('div', 'mm-foot', '<em>Loading…</em><div class="mm-load"><span></span></div>');
+    this.side.append(nav, foot);
+    this.root.append(this.side);
+    document.body.append(this.root);
   }
 
-  private refreshSizeButtons() {
-    SIZE_CONFIG.forEach(({ key }) => {
-      const btn = this.sizeBtns.get(key);
-      if (!btn) return;
-      btn.setStyle(key === this.mapSizeKey
-        ? { color: '#ffcc00', backgroundColor: '#0d2030' }
-        : { color: '#778899', backgroundColor: '#0d1a2a' });
-    });
+  private toggle(name: string) {
+    if (this.open?.name === name) { this.close(); return; }
+    this.close();
+    const titles: Record<string, string> = { new: 'New world', help: 'How to play', settings: 'Settings' };
+    const p = panel(titles[name], () => this.close());
+    if (name === 'new') this.newWorldPanel(p.body);
+    if (name === 'help') p.body.innerHTML = HOW_TO_PLAY;
+    if (name === 'settings') p.body.append(settingsBody(s => { this.sound.volume = s.volume; }));
+    this.root?.append(p.root);
+    this.open = { name, el: p.root };
+    this.side.querySelectorAll<HTMLElement>('[data-panel]').forEach(b => b.classList.toggle('on', b.dataset.panel === name));
   }
 
-  // ── Generation & preview ──────────────────────────────────────────────────
-
-  private scheduleRegen() {
-    if (this.regenTimer !== null) clearTimeout(this.regenTimer);
-    this.regenTimer = setTimeout(() => {
-      const raw  = this.seedInput.value.trim();
-      this.seed  = parseInt(raw) || Math.floor(Math.random() * 999999) + 1;
-      this.generateAndPreview();
-    }, 400);
+  private close() {
+    this.open?.el.remove();
+    this.open = null;
+    this.startNew = null;
+    this.side?.querySelectorAll('[data-panel]').forEach(b => b.classList.remove('on'));
   }
 
-  private generateAndPreview() {
-    const dim = SIZE_CONFIG.find(s => s.key === this.mapSizeKey)?.dim ?? 120;
-    this.currentMap = mapGenerator.generateMap({
-      planetType:          this.planetType,
-      width:               dim,
-      height:              dim,
-      seed:                this.seed,
-      resourceRichness:    this.richness,
-      specialFeatureCount: 15,
-      smoothness:          0.55,
-      alienness:           this.planetType === PlanetType.ALIEN ? 0.8 : 0.3,
-    });
-    this.drawPreview();
-    this.updateInfo();
+  private newWorldPanel(body: HTMLElement) {
+    body.innerHTML = `
+      <p>Choose where to land. The same seed and settings always make the same world.</p>
+      <h3>Planet</h3><div class="mm-planets"></div>
+      <div class="mm-row">
+        <div><h3>Size</h3><div class="mm-seg mm-size"></div></div>
+        <div><h3>Resources</h3><div class="mm-slider"><input type="range" min="0.1" max="1" step="0.05"><output></output></div></div>
+      </div>
+      <h3>Seed</h3>
+      <div class="mm-seed"><input inputmode="numeric" spellcheck="false"><button title="Random seed">⟳</button></div>
+      <h3>Preview</h3>
+      <div class="mm-preview"><canvas></canvas><div class="mm-facts"></div></div>
+      <div class="mm-go"><button class="mm-big" data-needs-assets>Land here</button><span class="mm-warn"></span></div>`;
+    const planets = body.querySelector<HTMLElement>('.mm-planets')!;
+    const size = body.querySelector<HTMLElement>('.mm-size')!;
+    const rich = body.querySelector<HTMLInputElement>('.mm-slider input')!;
+    const richOut = body.querySelector<HTMLOutputElement>('.mm-slider output')!;
+    const seed = body.querySelector<HTMLInputElement>('.mm-seed input')!;
+    const dice = body.querySelector<HTMLButtonElement>('.mm-seed button')!;
+    const canvas = body.querySelector<HTMLCanvasElement>('canvas')!;
+    const facts = body.querySelector<HTMLElement>('.mm-facts')!;
+    const go = body.querySelector<HTMLButtonElement>('.mm-big')!;
+    const warn = body.querySelector<HTMLElement>('.mm-warn')!;
+
+    const w = this.world;
+    for (const p of PLANETS) {
+      const b = el('button', undefined, `<b><i style="background:${p.colour}"></i>${p.label}</b><span>${p.blurb}</span>`);
+      b.dataset.planet = p.type;
+      b.onclick = () => { w.planet = p.type; refresh(); };
+      planets.append(b);
+    }
+    for (const s of SIZES) {
+      const b = el('button', undefined, s.label);
+      b.dataset.dim = String(s.dim);
+      b.title = `${s.dim} × ${s.dim} tiles`;
+      b.onclick = () => { w.size = s.dim; refresh(); };
+      size.append(b);
+    }
+    rich.value = String(w.richness);
+    rich.oninput = () => { w.richness = parseFloat(rich.value); refresh(true); };
+    seed.value = String(w.seed);
+    seed.oninput = () => {
+      const n = parseInt(seed.value.replace(/\D/g, ''), 10);
+      if (Number.isFinite(n)) { w.seed = n; refresh(true); }
+    };
+    dice.onclick = () => { w.seed = Math.floor(Math.random() * 999999) + 1; seed.value = String(w.seed); refresh(); };
+
+    const count = this.save?.layout.filter(p => p.proto !== 'pipe').length ?? 0;
+    if (count) warn.textContent = `This replaces your current plant (${count} building${count === 1 ? '' : 's'}).`;
+    go.disabled = !this.loaded;
+    this.startNew = () => { if (this.loaded) this.play({ world: { ...w }, player: null, layout: [], savedAt: 0 }); };
+    go.onclick = this.startNew;
+
+    const refresh = (debounce = false) => {
+      planets.querySelectorAll<HTMLElement>('button').forEach(b => b.classList.toggle('on', b.dataset.planet === w.planet));
+      size.querySelectorAll<HTMLElement>('button').forEach(b => b.classList.toggle('on', Number(b.dataset.dim) === w.size));
+      richOut.textContent = `${Math.round(w.richness * 100)}%`;
+      if (this.regenTimer) clearTimeout(this.regenTimer);
+      const draw = () => this.drawPreview(generateWorld(w), canvas, facts);
+      if (debounce) this.regenTimer = setTimeout(draw, 150); else draw();
+    };
+    refresh();
   }
 
-  private drawPreview() {
-    this.previewGfx.clear();
-    if (!this.currentMap) return;
-    const map = this.currentMap;
-    const ts   = this.pvS / map.width;
-    const tw   = Math.max(1, Math.ceil(ts));
-
-    // Background
-    this.previewGfx.fillStyle(0x050810, 1);
-    this.previewGfx.fillRect(this.pvX, this.pvY, this.pvS, this.pvS);
-
-    // Group tiles by terrain type to minimise fillStyle changes
-    const byTerrain  = new Map<number, { x: number; y: number }[]>();
-    const byResource = new Map<number, { x: number; y: number }[]>();
-
+  private drawPreview(map: PlanetMap, canvas: HTMLCanvasElement, facts: HTMLElement) {
+    canvas.width = map.width;
+    canvas.height = map.height;
+    const ctx = canvas.getContext('2d')!;
+    const img = ctx.createImageData(map.width, map.height);
     for (let y = 0; y < map.height; y++) {
       for (let x = 0; x < map.width; x++) {
-        const tile = map.tiles[y][x];
-        if (!byTerrain.has(tile.terrain))  byTerrain.set(tile.terrain, []);
-        byTerrain.get(tile.terrain)!.push({ x, y });
-        if (tile.resource !== ResourceType.NONE) {
-          if (!byResource.has(tile.resource)) byResource.set(tile.resource, []);
-          byResource.get(tile.resource)!.push({ x, y });
+        const t = map.tiles[y][x];
+        let c = TERRAIN_COLORS[t.terrain] ?? 0x333333;
+        if (t.resource !== ResourceType.NONE) {
+          // Deposits show as a tint of their colour over the ground.
+          const r = RESOURCE_COLORS[t.resource] ?? 0xffffff;
+          const mix = (a: number, b: number, s: number) => (((a >> s) & 255) * 0.65 + ((b >> s) & 255) * 0.35) << s;
+          c = mix(c, r, 16) | mix(c, r, 8) | mix(c, r, 0);
         }
+        const i = (y * map.width + x) * 4;
+        img.data[i] = (c >> 16) & 255;
+        img.data[i + 1] = (c >> 8) & 255;
+        img.data[i + 2] = c & 255;
+        img.data[i + 3] = 255;
       }
     }
-
-    for (const [terrain, tiles] of byTerrain) {
-      this.previewGfx.fillStyle(TERRAIN_COLORS[terrain] ?? 0x333333, 1);
-      for (const { x, y } of tiles) {
-        this.previewGfx.fillRect(this.pvX + x * ts, this.pvY + y * ts, tw, tw);
-      }
-    }
-
-    // Resource dots
-    const dot = Math.max(1, tw * 0.65);
-    const off = (tw - dot) / 2;
-    for (const [resource, tiles] of byResource) {
-      this.previewGfx.fillStyle(RESOURCE_COLORS[resource] ?? 0xffffff, 0.6);
-      for (const { x, y } of tiles) {
-        this.previewGfx.fillRect(this.pvX + x * ts + off, this.pvY + y * ts + off, dot, dot);
-      }
-    }
-
-    // Spawn marker (white cross at center)
-    const mx = this.pvX + (map.width  / 2) * ts;
-    const my = this.pvY + (map.height / 2) * ts;
-    const r  = Math.max(5, ts * 2.5);
-    this.previewGfx.fillStyle(0xffffff, 1);
-    this.previewGfx.fillRect(mx - r / 2, my - 1,   r, 2);
-    this.previewGfx.fillRect(mx - 1,   my - r / 2, 2, r);
-
-    // Border
-    this.previewGfx.lineStyle(1, 0x1e3044, 1);
-    this.previewGfx.strokeRect(this.pvX, this.pvY, this.pvS, this.pvS);
+    ctx.putImageData(img, 0, 0);
+    const temp = Math.round(map.baseTemperature - 273.15);
+    const deposits = new Map<number, number>();
+    for (const row of map.tiles) for (const t of row) if (t.resource !== ResourceType.NONE) deposits.set(t.resource, (deposits.get(t.resource) ?? 0) + 1);
+    const water = deposits.get(ResourceType.WATER) ?? 0;
+    const methane = deposits.get(ResourceType.METHANE) ?? 0;
+    facts.innerHTML = `
+      <div class="name">${map.name}</div>
+      <span>Atmosphere</span><b>${map.atmosphere.replace(/_/g, ' ')}</b>
+      <span>Temperature</span><b>${temp >= 0 ? '+' : ''}${temp} °C</b>
+      <span>Gravity</span><b>${map.gravity.toFixed(2)} g</b>
+      <span>Water deposits</span><b>${water}</b>
+      <span>Methane deposits</span><b>${methane}</b>`;
   }
 
-  private updateInfo() {
-    if (!this.currentMap) return;
-    const m     = this.currentMap;
-    const atmos = m.atmosphere.replace(/_/g, ' ').toUpperCase();
-    const temp  = Math.round(m.baseTemperature - 273);
-    const sign  = temp >= 0 ? '+' : '';
-    const feats = m.specialFeatures.length;
-    this.infoText.setText(
-      `${m.name}   ·   ${atmos}   ·   ${sign}${temp}°C   ·   ${m.gravity.toFixed(2)}g   ·   ${feats} features`,
-    );
+  private play(save: SaveGame) {
+    if (!this.loaded) return;
+    this.scene.start('WorldScene', save);
   }
-
-  // ── Start game ────────────────────────────────────────────────────────────
-
-  private startGame() {
-    if (!this.currentMap) return;
-    this.game.registry.set('map', this.currentMap);
-    this.cleanup();
-    this.scene.start('WorldScene');
-  }
-
-  private cleanup() {
-    if (this.regenTimer !== null) clearTimeout(this.regenTimer);
-    if (this.seedInput.parentNode)     document.body.removeChild(this.seedInput);
-    if (this.richnessInput.parentNode) document.body.removeChild(this.richnessInput);
-  }
-
-  shutdown() { this.cleanup(); }
 }

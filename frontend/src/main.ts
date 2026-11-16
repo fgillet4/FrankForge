@@ -1,7 +1,7 @@
 import './app.css';
 import Phaser from 'phaser';
 import { MenuScene }  from './scenes/MenuScene';
-import { PauseScene } from './scenes/PauseScene';
+import { GroundScene } from './lib/phaser/GroundScene';
 import { WorldScene } from './lib/phaser/WorldScene';
 
 // Make the #app div fill the screen
@@ -11,9 +11,9 @@ Object.assign(app.style, { width: '100%', height: '100vh', overflow: 'hidden' })
 const game = new Phaser.Game({
   type:            Phaser.AUTO,
   parent:          app,
-  backgroundColor: '#0a0a14',
+  backgroundColor: '#0b0e13',
   banner:          false,
-  scene:           [MenuScene, WorldScene, PauseScene],
+  scene:           [MenuScene, GroundScene, WorldScene],
   scale: {
     mode:       Phaser.Scale.RESIZE,
     autoCenter: Phaser.Scale.CENTER_BOTH,

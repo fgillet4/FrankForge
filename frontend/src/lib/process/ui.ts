@@ -89,7 +89,6 @@ export class ProcessUI {
   private gridPanel = el('div', 'pp-gridpanel');
   private tooltip = el('div', 'pp-tooltip');
   private alerts = el('div', 'pp-alerts');
-  private help = el('div', 'pp-help');
   private category = 'Logistics';
   private inspectorFor: number | null = null;
   private lastInspectorHtml = '';
@@ -99,9 +98,8 @@ export class ProcessUI {
 
   constructor() {
     this.bar.append(this.tabs, this.buttons);
-    this.root.append(this.bar, this.inspector, this.gridPanel, this.tooltip, this.alerts, this.help);
+    this.root.append(this.bar, this.inspector, this.gridPanel, this.tooltip, this.alerts);
     document.body.append(this.root);
-    this.help.innerHTML = 'Click a building to place · <b>R</b> rotate · <b>Esc</b> cancel · drag to lay pipe · <b>right-click</b> remove · click to inspect · <b>Space</b> pause · <b>+/−</b> speed';
     this.renderBar();
     this.inspector.addEventListener('input', e => this.onInspectorInput(e));
     this.inspector.addEventListener('click', e => this.onInspectorClick(e));

@@ -39,7 +39,7 @@ export function fluidColour(v: VesselView): number {
 /** A sprite sheet from art/animate.py: cell size, playback, and where the static sprite's anchor sits. */
 interface AnimMeta { frames: number; w: number; h: number; fps: number; loop: boolean; ox: number; oy: number }
 
-let ANIMS: Record<string, AnimMeta> = {};
+export let ANIMS: Record<string, AnimMeta> = {};
 
 export function preloadProcessAssets(scene: Phaser.Scene) {
   for (const id of BUILDING_SPRITES) {

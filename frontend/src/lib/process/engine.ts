@@ -76,6 +76,15 @@ export async function startEngine(ambientK = 293.15): Promise<void> {
   world = new ProcessWorld(ambientK);
 }
 
+/** Clears the plant for a fresh world. */
+export function reset(ambientK = 293.15) {
+  if (!world) return;
+  world.free();
+  world = new ProcessWorld(ambientK);
+  placed.clear();
+  nextId = 1;
+}
+
 export function engineReady(): boolean {
   return world !== null;
 }
