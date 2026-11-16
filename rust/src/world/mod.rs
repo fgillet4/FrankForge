@@ -42,9 +42,14 @@ pub struct Entity {
     pub opening: f64,
     pub enabled: bool,
     pub battery_charge: f64,
+    /// Fraction of its rated power an electric building asks for (machines idle at a trickle).
+    pub demand: f64,
+    /// The power network it is wired into, if any.
+    pub network: Option<usize>,
     // Where this entity's parts live in the current network and grid.
     net_vessels: Vec<usize>,
     net_pipes: Vec<usize>,
+    net_links: Vec<usize>,
     load: Option<usize>,
     generator: Option<usize>,
     battery: Option<usize>,
@@ -87,7 +92,10 @@ pub struct World {
     pub entities: BTreeMap<u32, Entity>,
     occupied: HashMap<Tile, u32>,
     pub net: Network,
-    pub grid: Grid,
+    /// One grid per power network: poles wired together and the buildings they reach.
+    pub grids: Vec<Grid>,
+    /// Wires between poles, as pairs of pole ids.
+    pub wires: Vec<(u32, u32)>,
     pub segments: Vec<Segment>,
     segment_of: HashMap<Tile, usize>,
     pub time: f64,
@@ -139,7 +147,7 @@ fn port_height(at: At, v: &Vessel) -> f64 {
 impl World {
     pub fn new(ambient_t: f64) -> Self {
         World {
-            entities: BTreeMap::new(), occupied: HashMap::new(), net: Network::new(ambient_t), grid: Grid::default(),
+            entities: BTreeMap::new(), occupied: HashMap::new(), net: Network::new(ambient_t), grids: vec![], wires: vec![],
             segments: vec![], segment_of: HashMap::new(), time: DAY * 0.3, accumulator: 0.0, dirty: true, events: vec![],
             emitted: [0.0; NS], pending_shares: None,
         }
@@ -169,8 +177,8 @@ impl World {
             })
             .collect();
         let e = Entity {
-            id, proto, x, y, rot: rot % 4, vessels, opening: 1.0, enabled: true, battery_charge: p.battery_j * 0.5,
-            net_vessels: vec![], net_pipes: vec![], load: None, generator: None, battery: None,
+            id, proto, x, y, rot: rot % 4, vessels, opening: 1.0, enabled: true, battery_charge: p.battery_j * 0.5, demand: 1.0, network: None,
+            net_vessels: vec![], net_pipes: vec![], net_links: vec![], load: None, generator: None, battery: None,
         };
         let tiles: Vec<Tile> = e.tiles().collect();
         if let Some(t) = tiles.iter().find(|t| self.occupied.contains_key(t)) {
@@ -223,6 +231,46 @@ impl World {
         }
     }
 
+    /// Chooses the reaction in a building whose reaction is selectable; an unknown id clears it.
+    pub fn set_reaction(&mut self, id: u32, reaction_id: &str) {
+        let r: Vec<usize> = reaction(reaction_id).into_iter().collect();
+        let Some(e) = self.entities.get_mut(&id) else { return };
+        if !e.proto().selectable {
+            return;
+        }
+        if let Some(v) = e.vessels.first_mut() {
+            v.reactions = r.clone();
+            v.reaction_rate.clear();
+        }
+        if let Some(&vi) = e.net_vessels.first() {
+            self.net.vessels[vi].reactions = r;
+            self.net.vessels[vi].reaction_rate.clear();
+        }
+    }
+
+    pub fn set_demand(&mut self, id: u32, fraction: f64) {
+        if let Some(e) = self.entities.get_mut(&id) {
+            e.demand = fraction.clamp(0.0, 1.0);
+        }
+    }
+
+    /// Takes up to `mol` of a species out of a building's first vessel, with its share of the
+    /// internal energy so the rest stays at the same temperature. Returns what it got.
+    pub fn take(&mut self, id: u32, species: &str, mol: f64) -> f64 {
+        self.rebuild_if_dirty();
+        let Some(i) = index_of(species) else { return 0.0 };
+        let Some(&vi) = self.entities.get(&id).and_then(|e| e.net_vessels.first()) else { return 0.0 };
+        let v = &mut self.net.vessels[vi];
+        let got = mol.min(v.n[i]).max(0.0);
+        let total = v.moles();
+        if got <= 0.0 || total <= 0.0 {
+            return 0.0;
+        }
+        v.u -= v.u * got / total;
+        v.n[i] -= got;
+        got
+    }
+
     /// Copies the live network state back into the buildings and records pipe contents per tile,
     /// before the network is torn down.
     fn sync_back(&mut self) {
@@ -237,8 +285,8 @@ impl World {
                     *dst = src.clone();
                 }
             }
-            if let Some(b) = e.battery {
-                e.battery_charge = self.grid.batteries[b].charge_j;
+            if let (Some(n), Some(b)) = (e.network, e.battery) {
+                e.battery_charge = self.grids[n].batteries[b].charge_j;
             }
         }
         for s in &self.segments {
@@ -260,8 +308,13 @@ impl World {
     fn rebuild(&mut self) {
         let shares = self.pending_shares.take().unwrap_or_default();
         let ambient = self.ambient();
-        let frequency = self.grid.frequency;
-        let (blackout, setpoint) = (self.grid.blackout, self.grid.setpoint);
+        // Each grid's state follows its poles through the rebuild.
+        let old_grids: HashMap<u32, (f64, bool, f64)> = self
+            .entities
+            .values()
+            .filter(|e| e.proto().wire > 0.0)
+            .filter_map(|e| e.network.and_then(|n| self.grids.get(n)).map(|g| (e.id, (g.frequency, g.blackout, g.setpoint))))
+            .collect();
         let old_flows: HashMap<(u32, usize), f64> = self
             .entities
             .values()
@@ -271,7 +324,7 @@ impl World {
         let ruptures = std::mem::take(&mut self.net.ruptures);
         self.net = Network::new(ambient);
         self.net.ruptures = ruptures;
-        self.grid = Grid { frequency, blackout, setpoint, ..Grid::default() };
+        self.build_power_networks(&old_grids);
         self.segments.clear();
         self.segment_of.clear();
 
@@ -343,32 +396,40 @@ impl World {
             let p = &PROTOS[e.proto];
             e.net_vessels.clear();
             e.net_pipes.clear();
+            e.net_links.clear();
             e.load = None;
             e.generator = None;
             e.battery = None;
+            let net = e.network;
             for v in &e.vessels {
                 e.net_vessels.push(self.net.add_vessel(v.clone()));
             }
             if let Some(src) = p.source {
                 e.net_vessels.push(self.net.add_vessel(Vessel::reservoir(source_reservoir(src, ambient))));
             }
-            if p.power_w > 0.0 {
-                self.grid.loads.push(Load { demand_w: 0.0, served: 1.0 });
-                e.load = Some(self.grid.loads.len() - 1);
-            }
-            if p.battery_j > 0.0 {
-                self.grid.batteries.push(Battery { capacity_j: p.battery_j, charge_j: e.battery_charge, rated_w: p.generator_w, p_out: 0.0 });
-                e.battery = Some(self.grid.batteries.len() - 1);
-            } else if p.generator_w > 0.0 {
-                let turbine = matches!(p.link, Some(LinkDef::Turbine { .. }));
-                self.grid.generators.push(Generator {
-                    rated_w: p.generator_w, inertia_h: if turbine { 5.0 } else { 0.5 }, p_mech: 0.0, governed: turbine,
-                    target_w: 0.0, online: !blackout,
-                });
-                e.generator = Some(self.grid.generators.len() - 1);
+            if let Some(grid) = net.map(|n| &mut self.grids[n]) {
+                if p.power_w > 0.0 {
+                    grid.loads.push(Load { demand_w: 0.0, served: 1.0 });
+                    e.load = Some(grid.loads.len() - 1);
+                }
+                if p.battery_j > 0.0 {
+                    grid.batteries.push(Battery { capacity_j: p.battery_j, charge_j: e.battery_charge, rated_w: p.generator_w, p_out: 0.0 });
+                    e.battery = Some(grid.batteries.len() - 1);
+                } else if p.generator_w > 0.0 {
+                    let turbine = matches!(p.link, Some(LinkDef::Turbine { .. }));
+                    let online = !grid.blackout;
+                    // Steam engines, big or small, run under the governors; inverters don't.
+                    let governed = turbine || p.fueled;
+                    grid.generators.push(Generator {
+                        rated_w: p.generator_w, inertia_h: if turbine { 5.0 } else if p.fueled { 2.0 } else { 0.5 }, p_mech: 0.0, governed,
+                        target_w: 0.0, online,
+                    });
+                    e.generator = Some(grid.generators.len() - 1);
+                }
             }
             for &(a, b, ua) in p.thermal {
                 let (va, vb) = (e.net_vessels[a], e.net_vessels[b]);
+                e.net_links.push(self.net.links.len());
                 self.net.links.push(crate::physics::fluid::ThermalLink { a: va, b: vb, ua, q: 0.0 });
             }
         }
@@ -535,9 +596,17 @@ impl World {
         // Power demand and what each consumer got last step.
         for e in self.entities.values() {
             let p = e.proto();
-            if let Some(l) = e.load {
-                self.grid.loads[l].demand_w = if e.enabled { p.power_w } else { 0.0 };
-                let got = if e.enabled { p.power_w * self.grid.loads[l].served } else { 0.0 };
+            if p.power_w > 0.0 {
+                // Unwired buildings get nothing.
+                let demand = if e.enabled { p.power_w * e.demand } else { 0.0 };
+                let got = match (e.network, e.load) {
+                    (Some(n), Some(l)) => {
+                        let load = &mut self.grids[n].loads[l];
+                        load.demand_w = demand;
+                        demand * load.served
+                    }
+                    _ => 0.0,
+                };
                 for &pi in &e.net_pipes {
                     match &mut self.net.pipes[pi].kind {
                         PipeKind::Pump { power_avail, .. } | PipeKind::Compressor { power_avail, .. } => *power_avail = got,
@@ -549,6 +618,11 @@ impl World {
                 }
                 if p.electrolyser {
                     self.net.vessels[e.net_vessels[0]].electrolysis_w = got;
+                }
+                if p.agitated {
+                    for (&li, &(_, _, ua)) in e.net_links.iter().zip(p.thermal) {
+                        self.net.links[li].ua = ua * (1.0 / 3.0 + 2.0 / 3.0 * got / p.power_w);
+                    }
                 }
                 if p.fans {
                     let base = p.vessels[0].ua_ambient;
@@ -588,8 +662,12 @@ impl World {
                         let from = &self.net.vessels[pipe.b];
                         let z = if pipe.vapour { from.state.y } else { from.state.x };
                         let mol = -pipe.mdot * DT / Flash::mw(&z).max(1e-6);
+                        let mut out = z.map(|x| x * mol);
+                        if e.proto().burns {
+                            burn_off(&mut out);
+                        }
                         for i in 0..NS {
-                            self.emitted[i] += mol * z[i];
+                            self.emitted[i] += out[i];
                         }
                     }
                 }
@@ -597,34 +675,48 @@ impl World {
         }
         // Generators: turbines deliver their shaft power, solar follows the sun.
         for e in self.entities.values() {
-            let Some(g) = e.generator else { continue };
+            let (Some(n), Some(g)) = (e.network, e.generator) else { continue };
             let p = e.proto();
-            let gen = &mut self.grid.generators[g];
+            let frequency = self.grids[n].frequency;
+            let gen = &mut self.grids[n].generators[g];
             gen.p_mech = match e.net_pipes.first().map(|&pi| &self.net.pipes[pi].kind) {
                 Some(PipeKind::Turbine { power_out, .. }) => *power_out,
                 // Inverters back off above 50.2 Hz (zero by 51.2 Hz), ramping with a 0.5 s lag.
+                // Burner generators answer the same way, to the fuel they have.
+                // A burner generator's governor asks for its share, up to what its fire can give.
+                _ if p.fueled => {
+                    let target = gen.target_w.min(p.generator_w * e.demand * e.enabled as u8 as f64);
+                    gen.p_mech + (target - gen.p_mech) * (DT / 0.5)
+                }
                 _ => {
-                    let target = p.generator_w * daylight * (1.0 - (self.grid.frequency - F_NOMINAL - 0.2)).clamp(0.0, 1.0);
+                    let target = p.generator_w * daylight * (1.0 - (frequency - F_NOMINAL - 0.2)).clamp(0.0, 1.0);
                     gen.p_mech + (target - gen.p_mech) * (DT / 0.5)
                 }
             };
         }
-        self.grid.step(DT);
-        // A grid of inverters alone (no rotating machines to restart) reconnects by itself once
-        // there is generation again, the way solar inverters do after a dark grid.
-        let synchronous = self.entities.values().any(|e| matches!(e.proto().link, Some(LinkDef::Turbine { .. })));
-        if self.grid.blackout && !synchronous && daylight > 0.05 {
-            self.grid.black_start();
+        for (n, grid) in self.grids.iter_mut().enumerate() {
+            grid.step(DT);
+            // A grid of inverters alone (no rotating machines to restart) reconnects by itself once
+            // there is generation again, the way solar inverters do after a dark grid.
+            let mine = |e: &&Entity| e.network == Some(n);
+            let synchronous = self.entities.values().filter(mine).any(|e| matches!(e.proto().link, Some(LinkDef::Turbine { .. })));
+            if grid.blackout && !synchronous && daylight > 0.05 {
+                grid.black_start();
+            }
         }
         // Governors move turbine admission valves toward their power target; a manual opening
-        // below 1 caps them.
+        // below 1 caps them. A turbine with no grid to feed is shut.
         for e in self.entities.values() {
-            let Some(g) = e.generator else { continue };
-            let gen = &self.grid.generators[g];
+            let gen = match (e.network, e.generator) {
+                (Some(n), Some(g)) => Some(&self.grids[n].generators[g]),
+                _ => None,
+            };
             for &pi in &e.net_pipes {
                 if let PipeKind::Turbine { opening, rated_w, power_out, .. } = &mut self.net.pipes[pi].kind {
-                    let err = (gen.target_w - *power_out) / *rated_w;
-                    *opening = if gen.online { (*opening + 0.5 * err * DT).clamp(0.0, e.opening) } else { 0.0 };
+                    *opening = match gen {
+                        Some(gen) if gen.online => (*opening + 0.5 * (gen.target_w - *power_out) / *rated_w * DT).clamp(0.0, e.opening),
+                        _ => 0.0,
+                    };
                 }
             }
         }
@@ -636,7 +728,115 @@ impl World {
     }
 
     pub fn black_start(&mut self) {
-        self.grid.black_start();
+        for g in &mut self.grids {
+            if g.blackout {
+                g.black_start();
+            }
+        }
+    }
+
+    /// Wires poles to the poles within reach (a spanning forest, nearest first, like Factorio's
+    /// auto-wiring) and puts every electric building on the network of a pole that covers it.
+    fn build_power_networks(&mut self, old: &HashMap<u32, (f64, bool, f64)>) {
+        let poles: Vec<(u32, f64, f64, f64, f64)> = self
+            .entities
+            .values()
+            .filter(|e| e.proto().wire > 0.0)
+            .map(|e| {
+                let p = e.proto();
+                let c = p.size as f64 / 2.0;
+                (e.id, e.x as f64 + c, e.y as f64 + c, p.wire, p.supply)
+            })
+            .collect();
+        let mut edges = vec![];
+        for i in 0..poles.len() {
+            for j in i + 1..poles.len() {
+                let d = ((poles[i].1 - poles[j].1).powi(2) + (poles[i].2 - poles[j].2).powi(2)).sqrt();
+                if d <= poles[i].3.min(poles[j].3) {
+                    edges.push((d, i, j));
+                }
+            }
+        }
+        edges.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let mut parent: Vec<usize> = (0..poles.len()).collect();
+        fn root(parent: &mut [usize], mut i: usize) -> usize {
+            while parent[i] != i {
+                parent[i] = parent[parent[i]];
+                i = parent[i];
+            }
+            i
+        }
+        self.wires.clear();
+        for &(_, i, j) in &edges {
+            let (a, b) = (root(&mut parent, i), root(&mut parent, j));
+            if a != b {
+                parent[a] = b;
+                self.wires.push((poles[i].0, poles[j].0));
+            }
+        }
+        let mut index_of_root: HashMap<usize, usize> = HashMap::new();
+        let mut pole_net = vec![0; poles.len()];
+        let mut carried = std::collections::HashSet::new();
+        self.grids.clear();
+        for i in 0..poles.len() {
+            let r = root(&mut parent, i);
+            let n = *index_of_root.entry(r).or_insert_with(|| {
+                self.grids.push(Grid::default());
+                self.grids.len() - 1
+            });
+            pole_net[i] = n;
+            // Carry the grid's state over from any pole that was already on it.
+            if let Some(&(frequency, blackout, setpoint)) = old.get(&poles[i].0) {
+                if carried.insert(n) {
+                    let g = &mut self.grids[n];
+                    g.frequency = frequency;
+                    g.blackout = blackout;
+                    g.setpoint = setpoint;
+                }
+            }
+        }
+        for e in self.entities.values_mut() {
+            let p = &PROTOS[e.proto];
+            e.network = if p.wire > 0.0 {
+                poles.iter().position(|q| q.0 == e.id).map(|i| pole_net[i])
+            } else if p.power_w > 0.0 || p.generator_w > 0.0 || p.battery_j > 0.0 {
+                let (x0, y0, x1, y1) = (e.x as f64, e.y as f64, (e.x + p.size) as f64, (e.y + p.size) as f64);
+                poles
+                    .iter()
+                    .position(|q| x0 < q.1 + q.4 && x1 > q.1 - q.4 && y0 < q.2 + q.4 && y1 > q.2 - q.4)
+                    .map(|i| pole_net[i])
+            } else {
+                None
+            };
+        }
+    }
+
+    /// The biggest grid by capacity, for the UI's summary.
+    pub fn main_grid(&self) -> Option<usize> {
+        (0..self.grids.len()).max_by(|&a, &b| capacity(&self.grids[a]).total_cmp(&capacity(&self.grids[b])))
+    }
+}
+
+fn capacity(g: &Grid) -> f64 {
+    g.generators.iter().map(|x| x.rated_w).sum::<f64>() + g.batteries.iter().map(|b| b.rated_w).sum::<f64>()
+}
+
+/// What a flame leaves of a gas: fuels become CO₂ and water.
+fn burn_off(n: &mut Comp) {
+    let (ch4, h2, co, co2, h2o) = (index_of("ch4").unwrap(), index_of("h2").unwrap(), index_of("co").unwrap(), index_of("co2").unwrap(), index_of("h2o").unwrap());
+    let take = |i: usize, c: f64, h: f64, n: &mut Comp| {
+        let x = n[i];
+        n[i] = 0.0;
+        n[co2] += c * x;
+        n[h2o] += h * x;
+    };
+    take(ch4, 1.0, 2.0, n);
+    take(h2, 0.0, 1.0, n);
+    take(co, 1.0, 0.0, n);
+    for (id, c, h) in [("c2h6", 2.0, 3.0), ("c2h4", 2.0, 2.0), ("ch3oh", 1.0, 2.0)] {
+        if let Some(i) = index_of(id) {
+            take(i, c, h, n);
+        }
     }
 }
 
@@ -693,6 +893,9 @@ pub struct EntityView {
     pub power_w: f64,
     pub generation_w: f64,
     pub battery: Option<(f64, f64)>,
+    pub network: Option<usize>,
+    /// Fraction of its demand the grid is serving (0 when unwired).
+    pub served: f64,
 }
 
 #[derive(Serialize)]
@@ -720,6 +923,9 @@ pub struct Snapshot {
     pub entities: Vec<EntityView>,
     pub segments: Vec<SegmentView>,
     pub grid: GridView,
+    pub main_grid: Option<usize>,
+    pub grids: Vec<GridView>,
+    pub wires: Vec<(u32, u32)>,
     pub events: Vec<String>,
     pub emitted_kg: BTreeMap<&'static str, f64>,
 }
@@ -763,8 +969,9 @@ impl World {
         let entities = self
             .entities
             .values()
-            .filter(|e| e.proto().id != "pipe")
-            .map(|e| EntityView {
+            .filter(|e| e.proto().id != "pipe" && !e.proto().plain())
+            .map(|e| (e, e.network.map(|n| &self.grids[n])))
+            .map(|(e, grid)| EntityView {
                 id: e.id, proto: e.proto().id, x: e.x, y: e.y, rot: e.rot, opening: e.opening, enabled: e.enabled,
                 vessels: e.net_vessels.iter().filter(|&&vi| self.net.vessels[vi].reservoir.is_none()).map(|&vi| vessel_view(&self.net.vessels[vi])).collect(),
                 pipes: e
@@ -775,25 +982,30 @@ impl World {
                         PipeView { mdot: p.mdot, velocity: p.velocity, vapour: p.vapour, choked: p.choked, kind: p.kind.clone() }
                     })
                     .collect(),
-                power_w: e.load.map(|l| self.grid.loads[l].demand_w * self.grid.loads[l].served).unwrap_or(0.0),
-                generation_w: e.generator.map(|g| self.grid.generators[g].p_mech).unwrap_or(0.0)
-                    + e.battery.map(|b| self.grid.batteries[b].p_out).unwrap_or(0.0),
-                battery: e.battery.map(|b| (self.grid.batteries[b].charge_j, self.grid.batteries[b].capacity_j)),
+                power_w: grid.and_then(|g| e.load.map(|l| g.loads[l].demand_w * g.loads[l].served)).unwrap_or(0.0),
+                generation_w: grid.and_then(|g| e.generator.map(|i| g.generators[i].p_mech)).unwrap_or(0.0)
+                    + grid.and_then(|g| e.battery.map(|b| g.batteries[b].p_out)).unwrap_or(0.0),
+                battery: grid.and_then(|g| e.battery.map(|b| (g.batteries[b].charge_j, g.batteries[b].capacity_j))),
+                network: e.network,
+                served: grid.and_then(|g| e.load.map(|l| g.loads[l].served)).unwrap_or(0.0),
             })
             .collect();
         let segments = self.segments.iter().map(|s| SegmentView { tiles: s.tiles.clone(), vessel: vessel_view(&self.net.vessels[s.vessel]) }).collect();
-        let g = &self.grid;
+        let view = |g: &Grid| GridView {
+            frequency: g.frequency, nominal: F_NOMINAL, generation_w: g.generation_w, load_w: g.load_w,
+            shed_fraction: g.shed_fraction, blackout: g.blackout, capacity_w: capacity(g),
+        };
+        let empty = Grid { frequency: 0.0, ..Grid::default() };
         Snapshot {
             time: self.time,
             daylight: (std::f64::consts::TAU * self.time / DAY).sin().max(0.0),
             ambient: self.ambient(),
             entities,
             segments,
-            grid: GridView {
-                frequency: g.frequency, nominal: F_NOMINAL, generation_w: g.generation_w, load_w: g.load_w,
-                shed_fraction: g.shed_fraction, blackout: g.blackout,
-                capacity_w: g.generators.iter().map(|x| x.rated_w).sum::<f64>() + g.batteries.iter().map(|b| b.rated_w).sum::<f64>(),
-            },
+            grid: view(self.main_grid().map(|n| &self.grids[n]).unwrap_or(&empty)),
+            main_grid: self.main_grid(),
+            grids: self.grids.iter().map(view).collect(),
+            wires: self.wires.clone(),
             events: std::mem::take(&mut self.events),
             emitted_kg: (0..NS).filter(|&i| self.emitted[i] > 0.0).map(|i| (SPECIES[i].id, self.emitted[i] * SPECIES[i].mw * 1e-3)).collect(),
         }

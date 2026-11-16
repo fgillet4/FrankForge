@@ -31,25 +31,35 @@ export const HOW_TO_PLAY = `
   don't match.</p>
   <h3>Controls</h3>
   <div class="mm-keys">
-    <kbd>W A S D</kbd><span>Walk</span>
-    <kbd>Mouse wheel</kbd><span>Zoom toward the cursor</span>
-    <kbd>Drag</kbd><span>Look around; the view recentres once you walk</span>
+    <kbd>W A S D</kbd><span>Walk (belts carry you along)</span>
+    <kbd>Hold right-click</kbd><span>Mine: chop trees, break rocks, dig ore, pick buildings back up</span>
+    <kbd>Hold Space</kbd><span>Shoot the alien nearest the cursor</span>
+    <kbd>E</kbd><span>Inventory, gear and hand crafting</span>
+    <kbd>T</kbd><span>Research</span>
+    <kbd>P</kbd><span>Production graphs</span>
+    <kbd>M</kbd><span>Enlarge the minimap; click it to look somewhere</span>
     <kbd>Click</kbd><span>Pick a building in the bar, then click the map to place it</span>
-    <kbd>Drag</kbd><span>With the pipe selected, lay pipe</span>
-    <kbd>R</kbd><span>Rotate the building you're placing</span>
-    <kbd>Right-click</kbd><span>Remove a building or pipe</span>
-    <kbd>Click</kbd><span>Inspect a building: pressures, temperatures, what's inside</span>
-    <kbd>Space</kbd><span>Pause or resume the simulation</span>
-    <kbd>+ / −</kbd><span>Speed the simulation up or slow it down</span>
-    <kbd>Esc</kbd><span>Cancel placing, close the inspector, or open this menu</span>
+    <kbd>Drag</kbd><span>With pipe or belt selected, lay a line of it</span>
+    <kbd>R</kbd><span>Rotate what you're placing, or the belt or inserter under the cursor</span>
+    <kbd>Q</kbd><span>Pick up the kind of building under the cursor to place more</span>
+    <kbd>Click</kbd><span>Open a machine, or inspect a process building</span>
+    <kbd>Shift-click</kbd><span>Repair a damaged building with a repair pack</span>
+    <kbd>Mouse wheel</kbd><span>Zoom toward the cursor; drag to look around</span>
+    <kbd>Tab / Shift-Tab</kbd><span>Speed the simulation up or down (all the way down pauses)</span>
+    <kbd>Esc</kbd><span>Close a window, cancel placing, or open this menu</span>
   </div>
   <h3>Getting started</h3>
   <ul>
-    <li>Wells must stand on their deposit: a gas well on methane, a water well on water or ice.</li>
+    <li>Chop trees for wood and break rocks for stone. Five stone make a furnace; fuel it with wood and drop in ore.</li>
+    <li>A burner drill on an ore deposit mines by itself. Point its output at a furnace or a belt.</li>
+    <li>Craft red science packs and a lab, choose a research (T), and the lab will unlock new buildings.</li>
+    <li>Electric buildings need a power pole whose blue area covers them; poles wire to each other within reach.</li>
+    <li>Wells, drills and other extraction buildings must stand mostly on their deposit; it lights up green while you place one.</li>
     <li>A first power plant: gas from a well fires a boiler, the boiler's steam spins a turbine, and the
     turbine exhausts into a condenser. Connect them with pipes from port to port.</li>
     <li>Watch the pressure bar in the inspector. A vessel bursts at 1.5× its rated pressure, and whatever
     it held comes out.</li>
+    <li>Pollution — vented gas and smoke — makes the aliens attack. Turrets keep them off.</li>
     <li>Keep the grid near its nominal frequency. Too little generation and it blacks out; use
     <em>Black start</em> in the grid panel to bring it back.</li>
   </ul>`;

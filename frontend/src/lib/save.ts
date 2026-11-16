@@ -8,7 +8,22 @@ import { PlanetType, type PlanetMap } from './types';
 import type { Placed } from './process/engine';
 
 export interface WorldSettings { seed: number; planet: PlanetType; size: number; richness: number }
-export interface SaveGame { world: WorldSettings; player: { x: number; y: number } | null; layout: Placed[]; savedAt: number }
+export interface SaveGame {
+  world: WorldSettings;
+  player: { x: number; y: number } | null;
+  layout: Placed[];
+  savedAt: number;
+  /** Survival (build from what you make) or sandbox (everything free); old saves are sandbox. */
+  mode?: 'survival' | 'sandbox';
+  peaceful?: boolean;
+  engineer?: unknown;
+  factory?: unknown;
+  combat?: unknown;
+  /** Trees and rocks mined, by tile key. */
+  nature?: number[];
+  /** Health of damaged process buildings. */
+  hp?: [number, number][];
+}
 export interface Settings { volume: number; ambient: number }
 
 const SAVE_KEY = 'frankforge.save.v2';

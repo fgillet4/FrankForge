@@ -8,6 +8,7 @@
 
 import Phaser from 'phaser';
 import { TILE_W, TILE_H, isoToScreen } from '../phaser/isoMath';
+import { ITEMS, iconUrl } from '../game/items';
 import { PROTO, portTiles, type EntityView, type Snapshot, type VesselView } from './engine';
 
 const SPRITE_TILE_PX = 128;
@@ -17,6 +18,8 @@ export const BUILDING_SPRITES = [
   'air_intake', 'vent', 'flare_stack', 'fired_boiler', 'steam_turbine', 'condenser', 'solar_array',
   'battery_bank', 'heat_exchanger', 'electric_heater', 'flash_drum', 'smr_reformer', 'shift_reactor',
   'ammonia_converter', 'methanol_reactor', 'cracker_furnace', 'electrolyser', 'power_pole', 'wreck',
+  'burner_drill', 'electric_drill', 'stone_furnace', 'electric_furnace', 'assembler', 'lab', 'chemical_plant',
+  'wooden_chest', 'iron_chest', 'inserter', 'gun_turret', 'laser_turret', 'substation', 'cstr', 'burner_generator',
 ];
 
 /** Colour of a fluid by what dominates it. */
@@ -45,6 +48,9 @@ export function preloadProcessAssets(scene: Phaser.Scene) {
   for (const id of BUILDING_SPRITES) {
     scene.load.image(`pb_${id}`, `assets/process/buildings/${id}.png`);
   }
+  // Item icons, for things carried on belts and in hands.
+  for (const id of Object.keys(ITEMS)) scene.load.image(`ic_${id}`, iconUrl(id));
+  scene.load.atlas('nature', 'assets/process/nature.png', 'assets/process/nature.json');
   scene.load.json('pp_anims', 'assets/process/anim/anims.json');
   scene.load.once('filecomplete-json-pp_anims', (_key: string, _type: string, data: Record<string, AnimMeta>) => {
     ANIMS = data;
@@ -69,6 +75,8 @@ const FLAMMABLE = ['h2', 'ch4', 'co', 'c2h4', 'c2h6', 'ch3oh', 'nh3'];
 /** Whether a building is doing something worth animating. */
 function isRunning(e: EntityView, snap: Snapshot): boolean {
   if (!e.enabled) return false;
+  // Flares keep a pilot flame.
+  if (e.proto === 'flare_stack') return true;
   if (e.proto === 'power_pole') return !snap.grid.blackout && Math.abs(snap.grid.frequency - snap.grid.nominal) > 0.5;
   if (e.battery) return !snap.grid.blackout && snap.grid.generation_w > 0;
   return e.generation_w > 1 || e.power_w > 1
@@ -81,8 +89,20 @@ function isRunning(e: EntityView, snap: Snapshot): boolean {
  * diagonals. Sheets exist for facing the viewer (se) and facing away (ne); the other two are those
  * mirrored. Characters without idle sheets keep their walk.
  */
+/**
+ * Gait of each character's walk sheet, measured from the sheets: frames per full stride (left
+ * and right step) and the ground a stride covers [tiles]. Walk playback scales with speed so the
+ * feet don't slide.
+ */
+const GAIT: Record<string, { frames: number; stride: number }> = {
+  char: { frames: 12, stride: 1.4 },
+  alien: { frames: 5, stride: 0.7 },
+};
+
 export class CharacterSprite {
   private sprite: Phaser.GameObjects.Sprite | null = null;
+  /** How fast it is moving [tiles/s], for the walk cycle. */
+  speed = 0;
   private away = false;
   private flip = false;
   moving = false;
@@ -111,6 +131,10 @@ export class CharacterSprite {
     }
     if (!this.sprite) this.sprite = this.scene.add.sprite(0, 0, `pa_${name}`);
     if (this.sprite.anims.currentAnim?.key !== `pa_${name}`) this.sprite.play(`pa_${name}`).setOrigin(m.ox, m.oy);
+    const gait = GAIT[this.kind];
+    this.sprite.anims.timeScale = name.includes('_walk_') && this.moving && gait && this.speed > 0
+      ? (this.speed / gait.stride) * gait.frames / m.fps
+      : 1;
     const p = isoToScreen(x, y, camX, camY, zoom);
     this.sprite.setPosition(p.x, p.y + (TILE_H * zoom) / 2).setScale((TILE_W * zoom) / SPRITE_TILE_PX);
     this.sprite.setFlipX(this.flip).setDepth(10 + (x + y) * 0.01);
@@ -233,7 +257,10 @@ export class ProcessLayer {
   }
 
   /** Redraws everything for the current camera. */
-  draw(snap: Snapshot | null, camX: number, camY: number, zoom: number, ghost: Ghost | null, time: number) {
+  draw(snap: Snapshot | null, camX: number, camY: number, zoom: number, ghost: Ghost | null, time: number,
+    ports: { all: boolean; hovered: number | null } = { all: false, hovered: null },
+    /** For factory machines: whether they're working, which beats what the grid says. */
+    working: (id: number) => boolean | undefined = () => undefined) {
     this.pipeGfx.clear();
     this.overlayGfx.clear();
     if (!snap) return;
@@ -282,12 +309,14 @@ export class ProcessLayer {
     // Buildings.
     for (const e of snap.entities) {
       const proto = PROTO[e.proto];
-      if (!proto) continue;
+      // Inserters are drawn with their arms by the world renderer.
+      if (!proto || e.proto === 'inserter' || e.proto === 'burner_inserter') continue;
       seen.add(e.id);
       let img = this.images.get(e.id);
       const ruptured = e.vessels.some(v => v.ruptured);
       const name = ruptured ? 'wreck' : e.proto;
-      const anim = ANIMS[name] && (ruptured || isRunning(e, snap)) && this.scene.anims.exists(`pa_${name}`) ? ANIMS[name] : null;
+      const running = working(e.id) ?? isRunning(e, snap);
+      const anim = ANIMS[name] && (ruptured || running) && this.scene.anims.exists(`pa_${name}`) ? ANIMS[name] : null;
       if (!img) {
         img = this.scene.add.sprite(0, 0, `pb_${name}`).setOrigin(0.5, 1);
         this.images.set(e.id, img);
@@ -327,8 +356,11 @@ export class ProcessLayer {
     }
 
     // Ports of the selected building, so its orientation is clear.
-    const sel = snap.entities.find(e => e.id === this.selected);
-    if (sel) this.drawPorts(sel.proto, sel.x, sel.y, sel.rot, camX, camY, zoom);
+    // Ports: of everything while laying pipe, else of what's selected or under the cursor.
+    for (const e of snap.entities) {
+      if (!PROTO[e.proto]?.ports.length) continue;
+      if (ports.all || e.id === this.selected || e.id === ports.hovered) this.drawPorts(e.proto, e.x, e.y, e.rot, camX, camY, zoom);
+    }
     if (ghost) this.drawGhost(ghost, camX, camY, zoom);
     else this.ghostImg?.setVisible(false);
   }
@@ -341,6 +373,10 @@ export class ProcessLayer {
       const colour = pt.port.at === 'Top' ? 0xffe066 : pt.port.at === 'Bottom' ? 0x4fa3ff : 0x9cff8f;
       this.overlayGfx.lineStyle(2, 0x000000, 0.8).fillStyle(colour, 0.9);
       this.overlayGfx.fillCircle(c.x, c.y, 5 * zoom).strokeCircle(c.x, c.y, 5 * zoom);
+      // A ring where a pipe is already there to connect to.
+      if (this.pipeTiles.has(`${pt.outside[0]},${pt.outside[1]}`)) {
+        this.overlayGfx.lineStyle(2.5, 0xffffff, 0.95).strokeCircle(c.x, c.y, 9 * zoom);
+      }
     }
   }
 
@@ -355,7 +391,15 @@ export class ProcessLayer {
     ];
     this.overlayGfx.fillStyle(g.ok ? 0x44ff88 : 0xff4444, 0.22).lineStyle(2, g.ok ? 0x44ff88 : 0xff4444, 0.9);
     this.overlayGfx.fillPoints(pts, true).strokePoints(pts, true);
-    if (g.proto !== 'pipe') {
+    // Which way it faces, for anything that has a direction.
+    const dir = [[0, -1], [1, 0], [0, 1], [-1, 0]][g.rot % 4];
+    if (['transport_belt', 'underground_belt', 'splitter', 'inserter', 'burner_drill', 'electric_drill'].includes(g.proto)) {
+      const c = isoToScreen(g.x + n / 2, g.y + n / 2, camX, camY, zoom);
+      const t = isoToScreen(g.x + n / 2 + dir[0] * (n / 2 + 0.3), g.y + n / 2 + dir[1] * (n / 2 + 0.3), camX, camY, zoom);
+      this.overlayGfx.lineStyle(Math.max(2, 3 * zoom), 0xffe066, 0.95).lineBetween(c.x, c.y, t.x, t.y);
+      this.overlayGfx.fillStyle(0xffe066, 0.95).fillCircle(t.x, t.y, 4 * zoom);
+    }
+    if (g.proto !== 'pipe' && this.scene.textures.exists(`pb_${g.proto}`)) {
       if (!this.ghostImg) this.ghostImg = this.scene.add.image(0, 0, `pb_${g.proto}`).setOrigin(0.5, 1).setDepth(899);
       if (this.ghostImg.texture.key !== `pb_${g.proto}`) this.ghostImg.setTexture(`pb_${g.proto}`);
       const bottom = isoToScreen(g.x + n, g.y + n, camX, camY, zoom);

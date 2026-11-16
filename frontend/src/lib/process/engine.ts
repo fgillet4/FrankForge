@@ -23,6 +23,14 @@ export interface Proto {
   generator_w: number;
   battery_j: number;
   needs: string | null;
+  /** Poles: wire reach and supply half-width [tiles]. */
+  wire: number;
+  supply: number;
+  burns: boolean;
+  agitated: boolean;
+  selectable: boolean;
+  /** Burner generators: driven by fuel the frontend burns. */
+  fueled: boolean;
 }
 
 export interface SpeciesInfo { id: string; name: string; formula: string; mw: number }
@@ -44,21 +52,30 @@ export interface EntityView {
   opening: number; enabled: boolean;
   vessels: VesselView[]; pipes: PipeView[];
   power_w: number; generation_w: number; battery: [number, number] | null;
+  /** The power network it's wired into, and how much of its demand that grid serves. */
+  network: number | null; served: number;
+}
+
+export interface GridView {
+  frequency: number; nominal: number; generation_w: number; load_w: number;
+  shed_fraction: number; blackout: boolean; capacity_w: number;
 }
 
 export interface Snapshot {
   time: number; daylight: number; ambient: number;
   entities: EntityView[];
   segments: { tiles: [number, number][]; vessel: VesselView }[];
-  grid: {
-    frequency: number; nominal: number; generation_w: number; load_w: number;
-    shed_fraction: number; blackout: boolean; capacity_w: number;
-  };
+  /** The biggest network, and all of them. */
+  grid: GridView;
+  main_grid: number | null;
+  grids: GridView[];
+  /** Wires between poles, as pole ids. */
+  wires: [number, number][];
   events: string[];
   emitted_kg: Record<string, number>;
 }
 
-export interface Placed { id: number; proto: string; x: number; y: number; rot: number; opening: number; enabled: boolean }
+export interface Placed { id: number; proto: string; x: number; y: number; rot: number; opening: number; enabled: boolean; reaction?: string }
 
 let world: ProcessWorld | null = null;
 export let PROTOS: Proto[] = [];
@@ -138,6 +155,23 @@ export function setEnabled(id: number, on: boolean) {
   if (p) p.enabled = on;
 }
 
+/** Picks the reaction in a building that lets you choose (the CSTR); 'none' clears it. */
+export function setReaction(id: number, reaction: string) {
+  world?.set_reaction(id, reaction);
+  const p = placed.get(id);
+  if (p) p.reaction = reaction;
+}
+
+/** How much of its rated power an electric building asks for (0–1). */
+export function setDemand(id: number, fraction: number) {
+  world?.set_demand(id, fraction);
+}
+
+/** Takes up to `mol` of a species out of a building's first vessel; returns what it got. */
+export function take(id: number, speciesId: string, mol: number): number {
+  return world?.take(id, speciesId, mol) ?? 0;
+}
+
 export function fill(id: number, speciesId: string, mol: number, tK: number) {
   world?.fill(id, speciesId, mol, tK);
 }
@@ -164,5 +198,6 @@ export function restore(list: Placed[]) {
     if (place(p.proto, p.x, p.y, p.rot, p.id)) continue;
     if (p.opening !== 1) setOpening(p.id, p.opening);
     if (!p.enabled) setEnabled(p.id, false);
+    if (p.reaction) setReaction(p.id, p.reaction);
   }
 }

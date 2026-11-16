@@ -48,6 +48,19 @@ impl ProcessWorld {
         self.world.set_enabled(id, on);
     }
 
+    pub fn set_reaction(&mut self, id: u32, reaction: &str) {
+        self.world.set_reaction(id, reaction);
+    }
+
+    pub fn set_demand(&mut self, id: u32, fraction: f64) {
+        self.world.set_demand(id, fraction);
+    }
+
+    /// Takes up to `mol` of a species out of a building's first vessel; returns what it got.
+    pub fn take(&mut self, id: u32, species: &str, mol: f64) -> f64 {
+        self.world.take(id, species, mol)
+    }
+
     pub fn fill(&mut self, id: u32, species: &str, mol: f64, t: f64) {
         self.world.fill(id, species, mol, t);
     }

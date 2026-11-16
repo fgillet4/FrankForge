@@ -94,6 +94,19 @@ pub struct Proto {
     pub fans: bool,
     /// Resource that must lie under the footprint.
     pub needs: Option<&'static str>,
+    /// Power poles: how far a wire reaches to the next pole, and the half-width of the square
+    /// around the pole's centre whose buildings it powers [tiles].
+    pub wire: f64,
+    pub supply: f64,
+    /// Burns what it vents (flare stacks): emissions count as combustion products.
+    pub burns: bool,
+    /// Stirred: its heat-transfer walls work at full strength only while the agitator has power.
+    pub agitated: bool,
+    /// The player picks which reaction runs in the first vessel.
+    pub selectable: bool,
+    /// A generator driven from outside the process network (burning solid fuel): it delivers
+    /// its rating times its demand fraction, which the frontend sets while it has fuel.
+    pub fueled: bool,
 }
 
 const fn port(dx: i32, dy: i32, vessel: usize, at: At, label: &'static str) -> PortDef {
@@ -103,6 +116,7 @@ const fn port(dx: i32, dy: i32, vessel: usize, at: At, label: &'static str) -> P
 const BASE: Proto = Proto {
     id: "", name: "", category: "", description: "", size: 1, vessels: &[], ports: &[], thermal: &[], link: None,
     source: None, power_w: 0.0, generator_w: 0.0, battery_j: 0.0, heater: false, electrolyser: false, fans: false, needs: None,
+    wire: 0.0, supply: 0.0, burns: false, agitated: false, selectable: false, fueled: false,
 };
 
 use At::*;
@@ -173,8 +187,8 @@ pub const PROTOS: &[Proto] = &[
     },
     Proto {
         id: "flare_stack", name: "Flare stack", category: "Utilities",
-        description: "Burns off waste gas to the atmosphere.",
-        ports: &[port(0, 1, 1, Middle, "in")], link: Some(LinkDef::Open { diameter: 0.4 }), source: Some(Source::Air), ..BASE
+        description: "Burns off waste gas on a pilot flame, so it leaves as CO₂ and water instead of raw gas.",
+        ports: &[port(0, 1, 1, Middle, "in")], link: Some(LinkDef::Open { diameter: 0.4 }), source: Some(Source::Air), burns: true, ..BASE
     },
     Proto {
         id: "fired_boiler", name: "Fired boiler", category: "Power",
@@ -276,8 +290,63 @@ pub const PROTOS: &[Proto] = &[
         ports: &[port(-1, 1, 0, Bottom, "water"), port(1, -1, 0, Top, "H₂"), port(3, 1, 1, Top, "O₂")],
         power_w: 5e6, electrolyser: true, ..BASE
     },
-    Proto { id: "power_pole", name: "Power pole", category: "Power", description: "Carries the grid.", ..BASE },
+    Proto {
+        id: "cstr", name: "Jacketed CSTR", category: "Reactors",
+        description: "A stirred-tank reactor (6 m³, 40 bar, catalysed) inside a 2 m³ jacket (UA 100 kW/K while the 30 kW agitator runs, a third of that without). Pick its reaction; run steam or cooling water through the jacket.",
+        size: 3, vessels: &[reactor(6.0, 3.0, 40.0, &["methanol"], 3.0, 30.0), vessel(2.0, 3.0, 50.0)], thermal: &[(0, 1, 1e5)],
+        ports: &[
+            port(-1, 1, 0, Middle, "feed"), port(1, -1, 0, Top, "vapour"), port(1, 3, 0, Bottom, "product"),
+            port(3, 2, 1, Bottom, "jacket in"), port(3, 0, 1, Top, "jacket out"),
+        ],
+        power_w: 30e3, agitated: true, selectable: true, ..BASE
+    },
+    Proto {
+        id: "power_pole", name: "Power pole", category: "Power",
+        description: "Wires reach 7.5 tiles to the next pole; powers buildings in the 5×5 area around it.",
+        wire: 7.5, supply: 2.5, ..BASE
+    },
+    Proto {
+        id: "burner_generator", name: "Burner generator", category: "Power",
+        description: "A small steam engine and dynamo burning wood or solid fuel at 35 % efficiency. 250 kW.",
+        size: 2, generator_w: 250e3, fueled: true, ..BASE
+    },
+    Proto {
+        id: "substation", name: "Substation", category: "Power",
+        description: "Wires reach 18 tiles; powers buildings in the 18×18 area around it.",
+        size: 2, wire: 18.0, supply: 9.0, ..BASE
+    },
+    // Solid logistics and production. The item side of these lives in the frontend; here they take
+    // up tiles and, if electric, draw from the grid.
+    Proto { id: "transport_belt", name: "Transport belt", category: "Belts", description: "Carries items along. 7.5 items/s.", ..BASE },
+    Proto { id: "underground_belt", name: "Underground belt", category: "Belts", description: "An entrance or exit; items pass under up to 4 tiles between a pair.", ..BASE },
+    Proto { id: "splitter", name: "Splitter", category: "Belts", description: "Splits a belt between the two belts beside it, and merges them back.", ..BASE },
+    Proto { id: "burner_inserter", name: "Burner inserter", category: "Belts", description: "Moves items from behind it to in front, slowly, burning a little of any fuel it handles.", ..BASE },
+    Proto { id: "inserter", name: "Inserter", category: "Belts", description: "Moves items from the tile behind it to the tile in front. 13 kW.", power_w: 13e3, ..BASE },
+    Proto { id: "wooden_chest", name: "Wooden chest", category: "Belts", description: "16 slots of storage.", ..BASE },
+    Proto { id: "iron_chest", name: "Iron chest", category: "Belts", description: "32 slots of storage.", ..BASE },
+    Proto { id: "burner_drill", name: "Burner mining drill", category: "Production", description: "Mines ore under it, burning wood or solid fuel. 0.25 ore/s.", size: 2, ..BASE },
+    Proto { id: "electric_drill", name: "Electric mining drill", category: "Production", description: "Mines ore under it. 0.5 ore/s, 90 kW.", size: 3, power_w: 90e3, ..BASE },
+    Proto { id: "stone_furnace", name: "Stone furnace", category: "Production", description: "Smelts ore into plates, burning wood or solid fuel.", size: 2, ..BASE },
+    Proto { id: "electric_furnace", name: "Electric furnace", category: "Production", description: "Smelts ore into plates twice as fast as stone. 180 kW.", size: 3, power_w: 180e3, ..BASE },
+    Proto { id: "assembler", name: "Assembling machine", category: "Production", description: "Crafts a chosen recipe from the items inserted into it. 150 kW.", size: 3, power_w: 150e3, ..BASE },
+    Proto {
+        id: "chemical_plant", name: "Chemical plant", category: "Production",
+        description: "Turns piped-in chemicals into solid products, such as plastic from ethylene and solid fuel from methane. 210 kW.",
+        size: 3, vessels: &[vessel(2.0, 2.0, 20.0)], ports: &[port(-1, 1, 0, Middle, "feed"), port(3, 1, 0, Middle, "feed")],
+        power_w: 210e3, ..BASE
+    },
+    Proto { id: "lab", name: "Lab", category: "Science", description: "Researches technologies from science packs. 60 kW.", size: 3, power_w: 60e3, ..BASE },
+    Proto { id: "gun_turret", name: "Gun turret", category: "Defense", description: "Shoots aliens in range with the magazines loaded into it.", size: 2, ..BASE },
+    Proto { id: "laser_turret", name: "Laser turret", category: "Defense", description: "Burns aliens in range with grid power: 10 kW idle, 600 kW firing.", size: 2, power_w: 600e3, ..BASE },
 ];
+
+impl Proto {
+    /// Buildings with no part in the process network or the grid: the frontend runs them alone.
+    pub fn plain(&self) -> bool {
+        self.vessels.is_empty() && self.ports.is_empty() && self.link.is_none() && self.source.is_none()
+            && self.power_w == 0.0 && self.generator_w == 0.0 && self.battery_j == 0.0 && self.wire == 0.0
+    }
+}
 
 pub fn proto(id: &str) -> Option<usize> {
     PROTOS.iter().position(|p| p.id == id)

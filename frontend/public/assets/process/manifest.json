@@ -7,13 +7,29 @@
   "w": 384,
   "h": 418
  },
+ "assembler": {
+  "w": 384,
+  "h": 396
+ },
  "battery_bank": {
   "w": 256,
   "h": 268
  },
+ "burner_drill": {
+  "w": 256,
+  "h": 401
+ },
+ "burner_generator": {
+  "w": 256,
+  "h": 278
+ },
  "check_valve": {
   "w": 128,
   "h": 94
+ },
+ "chemical_plant": {
+  "w": 384,
+  "h": 491
  },
  "compressor": {
   "w": 256,
@@ -26,6 +42,18 @@
  "cracker_furnace": {
   "w": 384,
   "h": 475
+ },
+ "cstr": {
+  "w": 384,
+  "h": 719
+ },
+ "electric_drill": {
+  "w": 384,
+  "h": 464
+ },
+ "electric_furnace": {
+  "w": 384,
+  "h": 399
  },
  "electric_heater": {
   "w": 256,
@@ -55,9 +83,29 @@
   "w": 256,
   "h": 406
  },
+ "gun_turret": {
+  "w": 256,
+  "h": 290
+ },
  "heat_exchanger": {
   "w": 256,
   "h": 205
+ },
+ "inserter": {
+  "w": 128,
+  "h": 145
+ },
+ "iron_chest": {
+  "w": 128,
+  "h": 143
+ },
+ "lab": {
+  "w": 384,
+  "h": 320
+ },
+ "laser_turret": {
+  "w": 256,
+  "h": 458
  },
  "methanol_reactor": {
   "w": 256,
@@ -87,9 +135,17 @@
   "w": 384,
   "h": 313
  },
+ "stone_furnace": {
+  "w": 256,
+  "h": 313
+ },
  "storage_tank": {
   "w": 384,
   "h": 811
+ },
+ "substation": {
+  "w": 256,
+  "h": 279
  },
  "valve": {
   "w": 128,
@@ -102,6 +158,10 @@
  "water_well": {
   "w": 256,
   "h": 374
+ },
+ "wooden_chest": {
+  "w": 128,
+  "h": 153
  },
  "wreck": {
   "w": 256,

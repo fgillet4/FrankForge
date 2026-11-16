@@ -78,7 +78,7 @@ export class MenuScene extends Phaser.Scene {
     preloadProcessAssets(this);
     this.load.atlas('terrain', 'assets/process/terrain.png', 'assets/process/terrain.json');
     this.load.atlas('deposits', 'assets/process/deposits.png', 'assets/process/deposits.json');
-    for (const name of ['rupture', 'alarm', 'ambient', 'place', 'remove']) {
+    for (const name of ['rupture', 'alarm', 'ambient', 'place', 'remove', 'gunshot', 'laser', 'alien_hit', 'alien_die', 'chop', 'rock', 'pickup', 'research', 'hurt']) {
       this.load.audio(`pp_${name}`, `assets/process/audio/${name}.mp3`);
     }
     const bar = this.root?.querySelector<HTMLElement>('.mm-load span');
@@ -208,7 +208,8 @@ export class MenuScene extends Phaser.Scene {
       const planet = PLANETS.find(p => p.type === s.world.planet)?.label ?? 'Unknown world';
       const count = s.layout.filter(p => p.proto !== 'pipe').length;
       const when = s.savedAt ? ` · saved ${timeAgo(s.savedAt)}` : '';
-      item('Continue', `${planet} · seed ${s.world.seed} · ${count} building${count === 1 ? '' : 's'}${when}`, () => this.play(s), { primary: true, needsAssets: true });
+      const kind = s.mode === 'survival' ? 'Survival' : 'Sandbox';
+      item('Continue', `${kind} · ${planet} · seed ${s.world.seed} · ${count} building${count === 1 ? '' : 's'}${when}`, () => this.play(s), { primary: true, needsAssets: true });
     }
     item('New world', null, () => this.toggle('new'), { primary: !this.save, name: 'new' });
     item('How to play', null, () => this.toggle('help'), { name: 'help' });
@@ -242,6 +243,12 @@ export class MenuScene extends Phaser.Scene {
   private newWorldPanel(body: HTMLElement) {
     body.innerHTML = `
       <p>Choose where to land. The same seed and settings always make the same world.</p>
+      <h3>Game</h3>
+      <div class="mm-row">
+        <div><div class="mm-seg mm-mode"><button data-v="survival">Survival</button><button data-v="sandbox">Sandbox</button></div>
+          <p class="mm-hint"></p></div>
+        <div><div class="mm-seg mm-aliens"><button data-v="on">Aliens</button><button data-v="off">Peaceful</button></div></div>
+      </div>
       <h3>Planet</h3><div class="mm-planets"></div>
       <div class="mm-row">
         <div><h3>Size</h3><div class="mm-seg mm-size"></div></div>
@@ -264,6 +271,20 @@ export class MenuScene extends Phaser.Scene {
     const warn = body.querySelector<HTMLElement>('.mm-warn')!;
 
     const w = this.world;
+    const opts = { mode: 'survival' as 'survival' | 'sandbox', peaceful: false };
+    const mode = body.querySelector<HTMLElement>('.mm-mode')!;
+    const aliens = body.querySelector<HTMLElement>('.mm-aliens')!;
+    const hint = body.querySelector<HTMLElement>('.mm-hint')!;
+    const refreshOpts = () => {
+      mode.querySelectorAll<HTMLElement>('button').forEach(b => b.classList.toggle('on', b.dataset.v === opts.mode));
+      aliens.querySelectorAll<HTMLElement>('button').forEach(b => b.classList.toggle('on', (b.dataset.v === 'off') === opts.peaceful));
+      hint.textContent = opts.mode === 'survival'
+        ? 'Gather, smelt, craft and research your way up to the chemical plant.'
+        : 'Everything researched, building is free.';
+    };
+    mode.onclick = e => { const v = (e.target as HTMLElement).dataset.v; if (v) { opts.mode = v as typeof opts.mode; refreshOpts(); } };
+    aliens.onclick = e => { const v = (e.target as HTMLElement).dataset.v; if (v) { opts.peaceful = v === 'off'; refreshOpts(); } };
+    refreshOpts();
     for (const p of PLANETS) {
       const b = el('button', undefined, `<b><i style="background:${p.colour}"></i>${p.label}</b><span>${p.blurb}</span>`);
       b.dataset.planet = p.type;
@@ -289,7 +310,7 @@ export class MenuScene extends Phaser.Scene {
     const count = this.save?.layout.filter(p => p.proto !== 'pipe').length ?? 0;
     if (count) warn.textContent = `This replaces your current plant (${count} building${count === 1 ? '' : 's'}).`;
     go.disabled = !this.loaded;
-    this.startNew = () => { if (this.loaded) this.play({ world: { ...w }, player: null, layout: [], savedAt: 0 }); };
+    this.startNew = () => { if (this.loaded) this.play({ world: { ...w }, player: null, layout: [], savedAt: 0, mode: opts.mode, peaceful: opts.peaceful }); };
     go.onclick = this.startNew;
 
     const refresh = (debounce = false) => {

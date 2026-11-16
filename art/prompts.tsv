@@ -68,3 +68,67 @@ deposit_uranium	decal	a uranium ore outcrop on flat ground: dark rocks with fain
 deposit_rare_metals	decal	a rare-metal ore outcrop on flat ground: dark rocks with iridescent purple-blue metallic flecks, flat decal on a 1x1 tile footprint
 deposit_xenocrystals	decal	an alien xenocrystal cluster on flat ground: a few glowing magenta crystal spikes growing from cracked rock, on a 1x1 tile footprint
 deposit_oxygen	decal	an oxygen-rich ice vent on flat ground: a pale blue frosty crack venting faint white vapour, flat decal on a 1x1 tile footprint
+tree_broadleaf	object	a lush broadleaf deciduous tree with a full rounded green canopy and a brown trunk.
+tree_pine	object	a tall dark green conifer pine tree.
+tree_snow_pine	object	a tall conifer pine tree heavily dusted with snow and frost.
+tree_dead	object	a dead leafless tree with a gnarled grey trunk and bare twisted branches.
+tree_charred	object	a burnt charred black tree stump with a few broken branches, glowing embers in its cracks.
+tree_palm	object	a tropical palm tree with a curved trunk and a crown of fronds.
+tree_alien	object	an alien tree with a twisting purple trunk and a canopy of glowing cyan bioluminescent bulbs and tendrils.
+alien_fungus	object	a cluster of giant alien mushrooms with pale violet caps and softly glowing gills.
+cactus	object	a tall saguaro cactus with two raised arms.
+bush	object	a low dense green shrub with small leaves.
+rock_boulder	object	a large grey granite boulder with mossy patches.
+rock_small	object	a small cluster of three grey rocks.
+rock_sandstone	object	a weathered layered sandstone rock outcrop in ochre and tan.
+rock_red	object	a rusty red Martian rock boulder, pitted and dusty.
+rock_basalt	object	a jagged black basalt rock with glowing orange lava cracks.
+ice_boulder	object	a large translucent blue glacial ice boulder with frosted edges.
+crystal_cluster	object	a cluster of tall faceted alien crystals in magenta and violet, glowing faintly from within.
+alien_nest	object	an alien hive spawner: a pulsing organic mound of chitin and purple flesh with dripping orifices and spikes, on a 3x3 tile footprint.
+burner_drill	building	a small coal-fired burner mining drill on a 2x2 tile footprint: a riveted iron box with a firebox door, a short smokestack and a drill head going into the ground, an output chute on one side. Dark iron with brass details.
+electric_drill	building	an electric mining drill on a 3x3 tile footprint: a large yellow-and-grey steel housing with a big drill bit boring into the ground, an electric motor on top and an output chute on one side.
+stone_furnace	building	a stone smelting furnace on a 2x2 tile footprint: a squat dome of mortared grey stones with a glowing fire mouth and a short chimney.
+electric_furnace	building	an electric induction smelting furnace on a 3x3 tile footprint: a boxy steel cabinet with heavy cables, a glowing orange window and cooling fins.
+assembler	building	an automated assembling machine on a 3x3 tile footprint: a square grey steel factory module with a glass top showing robotic arms inside, input and output hatches.
+lab	building	a research laboratory on a 3x3 tile footprint: a round domed building with a glass cupola glowing blue, science equipment and pipes around the base.
+chemical_plant	building	a chemical plant on a 3x3 tile footprint: a mixing vessel with an agitator motor on top, small tanks and pipework, flanged pipe nozzles on the sides. Green and steel.
+wooden_chest	building	a small wooden storage crate with iron corner brackets on a 1x1 tile footprint.
+iron_chest	building	a small riveted iron storage chest on a 1x1 tile footprint.
+inserter	building	a yellow industrial robot inserter arm on a round base on a 1x1 tile footprint, with a gripper claw.
+gun_turret	building	a defensive gun turret on a 2x2 tile footprint: a rotating armoured head with twin machine-gun barrels on a heavy steel base. Olive and grey.
+laser_turret	building	a defensive laser turret on a 2x2 tile footprint: a sleek white armoured head with a glowing red lens on a steel pedestal with power cables.
+substation	building	a large electrical substation on a 2x2 tile footprint: a lattice steel frame with insulators, a transformer box and power lines.
+item_wood	icon	a bundle of chopped wooden logs.
+item_stone	icon	a pile of grey stone chunks.
+item_iron_ore	icon	a pile of rusty brown-red iron ore chunks.
+item_copper_ore	icon	a pile of greenish-orange copper ore chunks.
+item_silicon_ore	icon	a pile of pale grey quartz sand and silica crystals.
+item_sulfur	icon	a pile of bright yellow sulfur crystals.
+item_iron_plate	icon	a stack of grey steel-blue iron plates.
+item_copper_plate	icon	a stack of shiny copper plates.
+item_steel_plate	icon	a stack of dark polished steel plates.
+item_stone_brick	icon	a stack of cut grey stone bricks.
+item_iron_gear	icon	an iron gear wheel.
+item_copper_cable	icon	a coil of copper wire.
+item_circuit	icon	a green electronic circuit board with chips.
+item_plastic	icon	a stack of white plastic bars.
+item_pipe	icon	a short straight steel pipe section with flanges.
+item_ammo	icon	a yellow firearm magazine full of bullets.
+item_ammo_piercing	icon	a red armour-piercing firearm magazine.
+item_pistol	icon	a chunky retro sci-fi blaster sidearm in grey and orange, a toy-like game prop.
+item_smg	icon	a submachine gun.
+item_armor_light	icon	a light padded engineer's armour vest.
+item_armor_heavy	icon	a heavy armoured suit with metal plates.
+item_science_red	icon	a small glass flask of glowing red liquid.
+item_science_green	icon	a small glass flask of glowing green liquid.
+item_science_blue	icon	a small glass flask of glowing blue liquid.
+item_science_purple	icon	a small glass flask of glowing purple liquid.
+item_repair_pack	icon	a red repair kit with a wrench and screwdriver.
+item_solid_fuel	icon	a dark brick of compressed solid fuel.
+cstr	building	a jacketed continuous stirred-tank reactor on a 3x3 tile footprint: a vertical stainless steel vessel with a dished head, a big agitator motor and gearbox on top, an outer heating jacket with its own inlet and outlet nozzles, a sight glass, a ladder and a small platform.
+item_silicon	icon	a few shiny grey-blue polycrystalline silicon ingots.
+item_transport_belt	icon	a short section of yellow-edged industrial conveyor belt with dark rubber rollers.
+item_underground_belt	icon	a yellow industrial conveyor belt tunnel entrance: a hooded steel box with a belt running into it.
+item_splitter	icon	a yellow industrial conveyor belt splitter: two parallel belt lanes joined by a steel sorting housing.
+burner_generator	building	a small wood-fired steam engine generator on a 2x2 tile footprint: a riveted firebox boiler with a glowing fire door and a short chimney, a horizontal single-cylinder steam engine driving a big flywheel and a brass dynamo with copper windings.

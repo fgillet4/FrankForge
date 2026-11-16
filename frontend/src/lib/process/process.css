@@ -39,6 +39,16 @@
 .pp-buttons button.on { border-color: var(--pp-accent); background: #3a2f1c; }
 .pp-buttons img { width: 48px; height: 48px; object-fit: contain; }
 .pp-buttons span { font-size: 11px; text-align: center; line-height: 1.15; }
+.pp-buttons button { position: relative; }
+.pp-buttons button.empty img { opacity: 0.45; }
+.pp-count {
+  position: absolute; right: 4px; top: 3px; font-style: normal; font-size: 11px; font-weight: 700;
+  background: #11161d; border-radius: 4px; padding: 0 4px; color: var(--pp-text);
+}
+.pp-count.none { color: var(--pp-bad); }
+.pp-choices { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 6px; }
+.pp-choices button { background: #222932; border: 1px solid #333c48; border-radius: 5px; padding: 3px 8px; font-size: 12px; }
+.pp-choices button.on { border-color: var(--pp-accent); background: #3a2f1c; }
 .pp-pipe-icon {
   width: 48px; height: 48px; display: block; position: relative;
 }
@@ -49,7 +59,7 @@
 
 /* Inspector */
 .pp-inspector {
-  position: absolute; right: 12px; top: 12px; bottom: 140px; width: 330px; overflow-y: auto;
+  position: absolute; right: 12px; top: 224px; bottom: 140px; width: 330px; overflow-y: auto;
   background: var(--pp-bg); border: 1px solid var(--pp-line); border-radius: 10px; padding: 10px 12px;
   display: none; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
 }
@@ -119,6 +129,7 @@
   transition: opacity 1s; box-shadow: 0 4px 18px rgba(0, 0, 0, 0.5);
 }
 .pp-alert.gone { opacity: 0; }
+.pp-notice { background: #1d3a24; border-color: var(--pp-ok); }
 
 @media (max-width: 900px) {
   .pp-inspector { left: 12px; right: 12px; width: auto; top: auto; bottom: 150px; max-height: 45vh; }

@@ -32,6 +32,7 @@ fn a_solar_powered_well_fills_a_tank_with_water() {
     w.place(2, "water_well", 0, 0, 0).unwrap(); // port at (2, 0)
     pipe_line(&mut w, &mut id, (2, 0), (6, 0));
     w.place(3, "storage_tank", 7, -1, 0).unwrap(); // west port (rot 0, (-1, 1)) lands on (6, 0)
+    w.place(4, "power_pole", -1, 2, 0).unwrap(); // its 5×5 area reaches both the array and the well
     w.advance(0.0);
     assert_eq!(w.segments.len(), 1);
     for _ in 0..600 {
@@ -42,11 +43,12 @@ fn a_solar_powered_well_fills_a_tank_with_water() {
     assert!(water > 50.0, "{water} kg");
     assert!(tank.level() > 0.0);
     // The pump only ran because the sun was up, and the inverters settle rather than hunt.
-    assert!(w.grid.load_w > 0.0 && !w.grid.blackout, "{:?}", w.grid.load_w);
+    assert_eq!(w.grids.len(), 1);
+    assert!(w.grids[0].load_w > 0.0 && !w.grids[0].blackout, "{:?}", w.grids[0].load_w);
     let mut fs = vec![];
     for _ in 0..40 {
         w.advance(0.05);
-        fs.push(w.grid.frequency);
+        fs.push(w.grids[0].frequency);
     }
     let spread = fs.iter().cloned().fold(f64::MIN, f64::max) - fs.iter().cloned().fold(f64::MAX, f64::min);
     assert!(spread < 0.05, "frequency hunting over {spread} Hz: {fs:?}");
@@ -108,6 +110,8 @@ fn a_gas_fired_boiler_raises_steam() {
     w.place(4, "air_intake", 0, 4, 0).unwrap();
     pipe_line(&mut w, &mut id, (2, 4), (9, 2));
     w.place(5, "fired_boiler", 10, 0, 0).unwrap();
+    // A substation wires the battery to the blower.
+    w.place(8, "substation", -5, -3, 0).unwrap();
     // Flue: one pipe tile on the boiler's north port (11, -1), and a stack feeding off it.
     w.place(6, "pipe", 11, -1, 0).unwrap();
     w.place(7, "vent", 11, -2, 0).unwrap();
@@ -153,6 +157,11 @@ fn a_steam_turbine_carries_the_grid_under_governor_control() {
     // 2 MW of electric heating as the load, fed from the condensate side so it does something.
     w.place(4, "electric_heater", 20, 20, 0).unwrap();
     w.place(5, "battery_bank", -10, -10, 0).unwrap();
+    // Substations wire the turbine, condenser, heater and battery into one network.
+    w.place(6, "substation", 5, 0, 0).unwrap();
+    w.place(7, "substation", 21, 17, 0).unwrap();
+    w.place(8, "substation", -7, -7, 0).unwrap();
+    w.place(9, "substation", 14, 10, 0).unwrap();
     w.advance(0.0);
     let sphere = w.entities[&1].net_vessels[0];
     let mut n = [0.0; NS];
@@ -169,9 +178,94 @@ fn a_steam_turbine_carries_the_grid_under_governor_control() {
     };
     // The heater (1 MW) and condenser fans are carried, mostly by the turbine.
     assert!(turbine_power > 0.5e6, "{turbine_power}");
-    assert!((w.grid.frequency - 50.0).abs() < 0.5, "{}", w.grid.frequency);
-    assert!(!w.grid.blackout);
+    assert_eq!(w.grids.len(), 1);
+    assert!((w.grids[0].frequency - 50.0).abs() < 0.5, "{}", w.grids[0].frequency);
+    assert!(!w.grids[0].blackout);
     // The condenser collects condensate.
     let cond = &w.net.vessels[w.entities[&3].net_vessels[0]];
     assert!(cond.liquid_volume() > 0.0, "condenser holds no liquid");
+}
+
+#[test]
+fn buildings_out_of_reach_of_a_pole_get_no_power() {
+    let mut w = world();
+    w.place(1, "solar_array", 0, 0, 0).unwrap();
+    w.place(2, "electric_heater", 3, 0, 0).unwrap();
+    w.place(3, "electric_heater", 30, 0, 0).unwrap();
+    w.place(4, "power_pole", 2, 2, 0).unwrap();
+    w.time = DAY * 0.25; // noon
+    for _ in 0..100 {
+        w.advance(0.1);
+    }
+    let snap = w.snapshot();
+    let heater = |id| snap.entities.iter().find(|e| e.id == id).unwrap();
+    assert!(heater(2).power_w > 0.0, "the wired heater runs");
+    assert_eq!(heater(3).power_w, 0.0, "the distant heater has no grid");
+    assert_eq!(heater(3).network, None);
+}
+
+#[test]
+fn poles_out_of_wire_reach_make_separate_grids() {
+    let mut w = world();
+    w.place(1, "power_pole", 0, 0, 0).unwrap();
+    w.place(2, "power_pole", 7, 0, 0).unwrap(); // 7 tiles: within 7.5
+    w.place(3, "power_pole", 30, 0, 0).unwrap();
+    w.advance(0.0);
+    assert_eq!(w.grids.len(), 2);
+    assert_eq!(w.wires, vec![(1, 2)]);
+}
+
+#[test]
+fn a_flare_burns_methane_to_co2() {
+    let mut out = [0.0; NS];
+    out[index_of("ch4").unwrap()] = 1.0;
+    burn_off(&mut out);
+    assert_eq!(out[index_of("ch4").unwrap()], 0.0);
+    assert_eq!(out[index_of("co2").unwrap()], 1.0);
+    assert_eq!(out[index_of("h2o").unwrap()], 2.0);
+}
+
+#[test]
+fn a_cstr_runs_the_reaction_it_is_given() {
+    let mut w = world();
+    w.place(1, "cstr", 0, 0, 0).unwrap();
+    w.advance(0.0);
+    w.set_reaction(1, "wgs");
+    assert_eq!(w.net.vessels[w.entities[&1].net_vessels[0]].reactions, vec![reaction("wgs").unwrap()]);
+    w.set_reaction(1, "none");
+    assert!(w.net.vessels[w.entities[&1].net_vessels[0]].reactions.is_empty());
+}
+
+#[test]
+fn a_burner_generator_runs_on_its_fuel() {
+    let mut w = world();
+    w.place(1, "burner_generator", 0, 0, 0).unwrap();
+    w.place(2, "electric_heater", 3, 0, 0).unwrap();
+    w.place(3, "power_pole", 2, 2, 0).unwrap();
+    w.set_demand(1, 1.0);
+    for _ in 0..50 {
+        w.advance(0.1);
+    }
+    let snap = w.snapshot();
+    let gen = snap.entities.iter().find(|e| e.id == 1).unwrap().generation_w;
+    assert!(gen > 100e3, "{gen}");
+    w.set_demand(1, 0.0);
+    for _ in 0..50 {
+        w.advance(0.1);
+    }
+    let snap = w.snapshot();
+    assert!(snap.entities.iter().find(|e| e.id == 1).unwrap().generation_w < 1e3);
+}
+
+#[test]
+fn a_governed_burner_generator_holds_fifty_hertz() {
+    let mut w = world();
+    w.place(1, "burner_generator", 0, 0, 0).unwrap();
+    w.place(2, "air_intake", 3, 0, 0).unwrap(); // 100 kW of fans, well within 250 kW
+    w.place(3, "power_pole", 2, 2, 0).unwrap();
+    w.set_demand(1, 1.0);
+    for _ in 0..300 {
+        w.advance(0.1);
+    }
+    assert!((w.grids[0].frequency - 50.0).abs() < 0.1, "{}", w.grids[0].frequency);
 }

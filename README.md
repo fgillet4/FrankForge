@@ -35,13 +35,23 @@ npm run dev                                 # play
 
 ## Playing
 
-The main menu continues your saved world or lands on a new one. Worlds are generated from a seed, planet
-type, size and resource richness, and the same settings always make the same world; the save (in the
-browser's local storage) is those settings plus your plant and where you stand.
+The main menu continues your saved world or lands on a new one: survival or sandbox, with aliens or
+peaceful. Worlds are generated from a seed, planet type, size and resource richness, and the same settings
+always make the same world, so a save (in the browser's local storage) is those settings plus what you've
+built, carried, mined and researched.
 
-WASD walks, the mouse wheel zooms toward the cursor, and dragging looks around. Pick a building from the
-bar and click to place it (R rotates); drag to lay pipe; right-click removes; click a building to inspect
-it. Space pauses, +/− change the simulation speed, and Esc opens the menu with the full controls.
+**Survival** starts you with a burner drill, a stone furnace and a few plates. Chop trees and break rocks by
+hand (hold right-click), dig ore, smelt it, and craft your way up (E): belts, inserters, drills, furnaces,
+assemblers, a burner generator and power poles, labs and science packs. Research (T) unlocks steel, fluid
+handling, power distribution, solar, chemistry, reforming, the jacketed CSTR and the synthesis loops, so
+the process plant arrives as you earn it. Blue science needs plastic and sulfur, which means cracking ethane
+and running a chemical plant. **Sandbox** has everything researched and free.
+
+Power works like Factorio's: poles wire to each other within reach and power the buildings inside their
+supply area, and each connected set of poles is its own grid with its own frequency. Extraction buildings
+must stand mostly on their deposit. Pollution (vented gas, smoke from burners) draws attacks from alien
+nests; shoot back with Space, and build gun or laser turrets. Production graphs are on P, the minimap is in
+the corner (M to enlarge), and Tab / Shift-Tab change the simulation speed. Esc has the full controls.
 
 ## Code
 
@@ -50,6 +60,9 @@ frontend/src/
 ├── main.ts                 Phaser game: MenuScene → GroundScene (terrain) + WorldScene
 ├── scenes/MenuScene.ts     asset loading, main menu and the animated plant behind it
 ├── ui/menu.ts              DOM menus: new world, how to play, settings, pause
+├── ui/hud.ts               survival HUD: inventory, crafting, machines, research, graphs, minimap
+├── lib/game/               items and recipes, research, inventories, the factory (belts, inserters,
+│                           drills, furnaces, assemblers, labs), combat, nature, and their renderer
 ├── lib/save.ts             saves, settings and world generation from a seed
 ├── lib/mapGenerator.ts     seeded planet maps
 ├── lib/phaser/             world scene, ground, iso maths, characters, aliens

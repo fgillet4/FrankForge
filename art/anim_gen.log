@@ -1,0 +1,10 @@
+FAILED burner_drill: list index out of range
+ok electric_drill
+ok stone_furnace
+ok electric_furnace
+ok assembler
+FAILED lab: Error: job 8bb71b72-8e2a-4584-b419-48708fb9e74c ended with status "ip_detected"
+
+ok chemical_plant
+ok burner_generator
+ok cstr

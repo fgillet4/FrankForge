@@ -4,8 +4,9 @@
  */
 
 import './process.css';
+import { iconUrl } from '../game/items';
 import {
-  PROTO, PROTOS, SPECIES, blackStart, setEnabled, setOpening,
+  PROTO, PROTOS, SPECIES, blackStart, setEnabled, setOpening, setReaction, layout,
   type EntityView, type Snapshot, type VesselView,
 } from './engine';
 
@@ -17,7 +18,13 @@ const VESSEL_NAMES: Record<string, string[]> = {
   electrolyser: ['Cathode — H₂', 'Anode — O₂'],
 };
 
-const CATEGORY_ORDER = ['Logistics', 'Extraction', 'Storage', 'Processing', 'Reactors', 'Power', 'Utilities'];
+const CATEGORY_ORDER = ['Logistics', 'Belts', 'Extraction', 'Production', 'Storage', 'Processing', 'Reactors', 'Power', 'Science', 'Defense', 'Utilities'];
+
+/** Reactions a CSTR can run. */
+const CSTR_REACTIONS: [string, string][] = [
+  ['methanol', 'Methanol synthesis'], ['wgs', 'Water–gas shift'], ['haber', 'Ammonia synthesis'],
+  ['smr', 'Steam methane reforming'], ['cracking', 'Ethane cracking'], ['none', 'Nothing (a heated or cooled tank)'],
+];
 
 export const fmt = {
   t: (k: number) => `${(k - 273.15).toFixed(k > 1000 ? 0 : 1)} °C`,
@@ -93,6 +100,9 @@ export class ProcessUI {
   private inspectorFor: number | null = null;
   private lastInspectorHtml = '';
   selectedProto: string | null = null;
+  /** Whether a building shows in the bar (researched), and how many the engineer carries (null: free). */
+  barState: (id: string) => { visible: boolean; count: number | null } = () => ({ visible: true, count: null });
+  private lastBar = '';
   onSelectProto: (id: string | null) => void = () => {};
   onCloseInspector: () => void = () => {};
 
@@ -108,20 +118,36 @@ export class ProcessUI {
     });
   }
 
+  /** Redraws the build bar when what's researched or carried has changed. */
+  refreshBar() {
+    const key = PROTOS.map(p => { const st = this.barState(p.id); return `${st.visible ? 1 : 0}${st.count}`; }).join() + this.category + this.selectedProto;
+    if (key !== this.lastBar) this.renderBar();
+  }
+
   private renderBar() {
-    const cats = CATEGORY_ORDER.filter(c => PROTOS.some(p => p.category === c));
+    const shown = PROTOS.filter(p => this.barState(p.id).visible);
+    const cats = CATEGORY_ORDER.filter(c => shown.some(p => p.category === c));
+    // Open on a tab with something in it to build.
+    if (!this.lastBar) {
+      const owned = cats.find(c => shown.some(p => p.category === c && (this.barState(p.id).count ?? 1) > 0));
+      if (owned) this.category = owned;
+    }
+    if (!cats.includes(this.category) && cats.length) this.category = cats[0];
+    this.lastBar = PROTOS.map(p => { const st = this.barState(p.id); return `${st.visible ? 1 : 0}${st.count}`; }).join() + this.category + this.selectedProto;
     this.tabs.innerHTML = cats.map(c => `<button data-cat="${c}" class="${c === this.category ? 'on' : ''}">${c}</button>`).join('');
     this.tabs.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
       this.category = (b as HTMLElement).dataset.cat!;
       this.renderBar();
     }));
-    const items = PROTOS.filter(p => p.category === this.category);
+    const items = shown.filter(p => p.category === this.category);
     this.buttons.innerHTML = items.map(p => {
+      const count = this.barState(p.id).count;
       const icon = p.id === 'pipe'
         ? '<span class="pp-pipe-icon"></span>'
-        : `<img src="assets/process/icons/b_${p.id}.png" alt="">`;
+        : `<img src="${iconUrl(p.id)}" alt="">`;
       const power = p.power_w ? ` · uses ${fmt.w(p.power_w)}` : p.generator_w ? ` · ${fmt.w(p.generator_w)}` : '';
-      return `<button data-id="${p.id}" class="${p.id === this.selectedProto ? 'on' : ''}" title="${p.name} (${p.size}×${p.size})${power}\n${p.description}">${icon}<span>${p.name}</span></button>`;
+      const badge = count === null ? '' : `<i class="pp-count${count ? '' : ' none'}">${count}</i>`;
+      return `<button data-id="${p.id}" class="${p.id === this.selectedProto ? 'on' : ''}${count === 0 ? ' empty' : ''}" title="${p.name} (${p.size}×${p.size})${power}\n${p.description}">${icon}<span>${p.name}</span>${badge}</button>`;
     }).join('');
     this.buttons.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
       const id = (b as HTMLElement).dataset.id!;
@@ -156,6 +182,9 @@ export class ProcessUI {
     if (t.dataset.action === 'close') {
       this.showInspector(null);
       this.onCloseInspector();
+    } else if (t.dataset.action === 'reaction' && this.inspectorFor !== null) {
+      setReaction(this.inspectorFor, t.dataset.value!);
+      this.lastInspectorHtml = '';
     } else if (t.dataset.action === 'toggle' && this.inspectorFor !== null) {
       setEnabled(this.inspectorFor, t.dataset.on !== 'true');
       this.lastInspectorHtml = '';
@@ -189,6 +218,11 @@ export class ProcessUI {
       p.power_w ? `<div class="pp-control">Power ${fmt.w(e.power_w)} of ${fmt.w(p.power_w)}
         <button data-action="toggle" data-on="${e.enabled}">${e.enabled ? 'Switch off' : 'Switch on'}</button></div>` : '',
       e.generation_w || p.generator_w ? `<div class="pp-control">Generating <b>${fmt.w(e.generation_w)}</b>${p.generator_w ? ` of ${fmt.w(p.generator_w)}` : ''}</div>` : '',
+      p.selectable ? `<div class="pp-section">Reaction</div><div class="pp-choices">${CSTR_REACTIONS.map(([id, name]) => {
+        const current = layout().find(x => x.id === e.id)?.reaction ?? 'methanol';
+        return `<button data-action="reaction" data-value="${id}" class="${current === id ? 'on' : ''}">${name}</button>`;
+      }).join('')}</div>` : '',
+      p.power_w && e.network === null ? '<div class="pp-control pp-bad">Not wired to a power pole</div>' : '',
       e.battery ? `<div class="pp-meter"><span style="width:${(e.battery[0] / e.battery[1]) * 100}%"></span><em>Charge ${fmt.pct(e.battery[0] / e.battery[1])} of ${(e.battery[1] / 3.6e9).toFixed(0)} MWh</em></div>` : '',
     ].join('');
     const flows = e.pipes.map(pp => {
@@ -210,6 +244,7 @@ export class ProcessUI {
   private updateGrid(snap: Snapshot) {
     const g = snap.grid;
     const df = g.frequency - g.nominal;
+    const unwired = snap.entities.filter(e => PROTO[e.proto]?.power_w && e.network === null).length;
     const cls = g.blackout ? 'bad' : Math.abs(df) < 0.2 ? 'ok' : Math.abs(df) < 1 ? 'warn' : 'bad';
     const hours = ((snap.time / 600) * 24 + 0) % 24;
     const clock = `${String(Math.floor(hours)).padStart(2, '0')}:${String(Math.floor((hours % 1) * 60)).padStart(2, '0')}`;
@@ -222,6 +257,8 @@ export class ProcessUI {
         <span>Load</span><b>${fmt.w(g.load_w)}</b>
         <span>Capacity</span><b>${fmt.w(g.capacity_w)}</b>
         ${g.shed_fraction > 0 && g.capacity_w > 0 ? `<span>Load shed</span><b class="pp-bad">${fmt.pct(g.shed_fraction)}</b>` : ''}
+        ${snap.grids.length > 1 ? `<span>Networks</span><b>${snap.grids.length}</b>` : ''}
+        ${unwired ? `<span>Unwired</span><b class="pp-warn">${unwired}</b>` : ''}
         <span>Time</span><b>${clock} ${snap.daylight > 0 ? '☀' : '☾'}</b>
         <span>Ambient</span><b>${fmt.t(snap.ambient)}</b>
         ${co2 > 0.01 ? `<span>CO₂ vented</span><b>${fmt.kg(co2)}</b>` : ''}
@@ -240,6 +277,14 @@ export class ProcessUI {
     this.tooltip.innerHTML = text;
     this.tooltip.style.left = `${x + 16}px`;
     this.tooltip.style.top = `${y + 16}px`;
+  }
+
+  /** News that isn't a problem, such as research finishing. */
+  notice(msg: string) {
+    const a = el('div', 'pp-alert pp-notice', msg);
+    this.alerts.append(a);
+    setTimeout(() => a.classList.add('gone'), 4000);
+    setTimeout(() => a.remove(), 5000);
   }
 
   alert(msg: string) {

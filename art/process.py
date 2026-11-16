@@ -21,6 +21,17 @@ SIZES = {
     "steam_turbine": 3, "condenser": 3, "solar_array": 2, "battery_bank": 2, "heat_exchanger": 2,
     "electric_heater": 2, "flash_drum": 2, "smr_reformer": 4, "shift_reactor": 2, "ammonia_converter": 3,
     "methanol_reactor": 2, "cracker_furnace": 3, "electrolyser": 3, "power_pole": 1, "wreck": 2,
+    "burner_drill": 2, "electric_drill": 3, "stone_furnace": 2, "electric_furnace": 3, "assembler": 3, "lab": 3,
+    "chemical_plant": 3, "wooden_chest": 1, "iron_chest": 1, "inserter": 1, "gun_turret": 2, "laser_turret": 2,
+    "substation": 2, "cstr": 3, "burner_generator": 2,
+}
+
+# Nature objects: width in tiles (they stand on a tile and may overhang it).
+OBJECTS = {
+    "tree_broadleaf": 1.6, "tree_pine": 1.2, "tree_snow_pine": 1.2, "tree_dead": 1.3, "tree_charred": 1.0,
+    "tree_palm": 1.5, "tree_alien": 1.6, "alien_fungus": 1.1, "cactus": 0.8, "bush": 0.8, "rock_boulder": 1.1,
+    "rock_small": 0.8, "rock_sandstone": 1.2, "rock_red": 1.0, "rock_basalt": 1.1, "ice_boulder": 1.1,
+    "crystal_cluster": 1.0, "alien_nest": 3.0,
 }
 
 
@@ -38,7 +49,13 @@ def main():
     manifest = {}
     for path in sorted((HERE / "raw").glob("*.png")):
         name = path.stem
-        if name.startswith("icon_"):
+        if name.startswith("item_"):
+            im = trimmed(path)
+            side = max(im.size)
+            sq = Image.new("RGBA", (side, side))
+            sq.alpha_composite(im, ((side - im.width) // 2, (side - im.height) // 2))
+            sq.resize((64, 64), Image.LANCZOS).save(OUT / "icons" / f"{name}.png", optimize=True)
+        elif name.startswith("icon_"):
             im = trimmed(path)
             side = max(im.size)
             sq = Image.new("RGBA", (side, side))
@@ -63,6 +80,7 @@ def main():
     print(f"{len(manifest)} buildings")
     build_terrain_atlas()
     build_deposit_atlas()
+    build_nature_atlas()
 
 
 def atlas(images, path, cols):
@@ -110,6 +128,21 @@ def build_deposit_atlas():
     if images:
         atlas(images, OUT / "deposits", 5)
         print(f"deposit atlas: {len(images)} frames")
+
+
+def build_nature_atlas():
+    """Trees, rocks and nests at 128 px per tile, anchored at their bottom centre."""
+    images = {}
+    for name, tiles in OBJECTS.items():
+        path = HERE / "raw" / f"{name}.png"
+        if not path.exists():
+            continue
+        im = trimmed(path)
+        w = round(tiles * TILE_PX)
+        images[name] = im.resize((w, round(im.height * w / im.width)), Image.LANCZOS)
+    if images:
+        atlas(images, OUT / "nature", 6)
+        print(f"nature atlas: {len(images)} frames")
 
 
 if __name__ == "__main__":

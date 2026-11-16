@@ -26,6 +26,7 @@ const TEXTURE_SCALE = 2;
 export class GroundScene extends Phaser.Scene {
   private terrain: Phaser.GameObjects.Blitter | null = null;
   private deposits: Phaser.GameObjects.Blitter | null = null;
+  private depositBobs = new Map<number, Phaser.GameObjects.Bob>();
 
   constructor() { super({ key: 'GroundScene' }); }
 
@@ -40,6 +41,8 @@ export class GroundScene extends Phaser.Scene {
   show(map: PlanetMap) {
     this.terrain?.destroy();
     this.deposits?.destroy();
+    this.depositBobs.clear();
+    const height = (x: number, y: number) => map.tiles[Math.min(map.height - 1, Math.max(0, y))][Math.min(map.width - 1, Math.max(0, x))].height ?? 0;
     this.terrain = this.add.blitter(0, 0, 'terrain');
     this.deposits = this.textures.exists('deposits') ? this.add.blitter(0, 0, 'deposits') : null;
     const tFrames = this.textures.get('terrain').getFrameNames();
@@ -52,21 +55,31 @@ export class GroundScene extends Phaser.Scene {
         const ly = (ix + iy) * 32;
         const variant = (ix * 73856093 ^ iy * 19349663) >>> 0;
         const frame = `${TERRAIN_TEXTURES[tile.terrain] ?? 'grass'}_${variant % 4}`;
-        this.terrain.create(lx - 65, ly - 1, tFrames.includes(frame) ? frame : tFrames[0]);
+        const bob = this.terrain.create(lx - 65, ly - 1, tFrames.includes(frame) ? frame : tFrames[0]);
+        // Hill shading: slopes facing the light (top left of the screen, the −x side) are lit,
+        // the far sides shaded, and high ground a little brighter.
+        const slope = height(ix - 1, iy) - height(ix + 1, iy) + 0.5 * (height(ix, iy - 1) - height(ix, iy + 1));
+        const light = Phaser.Math.Clamp(0.86 + slope * 3.5 + (height(ix, iy) - 0.5) * 0.12, 0.62, 1);
+        const c = Math.round(light * 255);
+        bob.tint = (c << 16) | (c << 8) | c;
         const deposit = tile.resource !== ResourceType.NONE ? RESOURCE_NAMES[tile.resource] : undefined;
-        // A scattering of decals, denser where the deposit is rich, nudged off the grid so
-        // patches don't read as rows.
-        const h = Math.imul(variant ^ (variant >>> 15), 0x2c1b3c6d) >>> 0;
-        const shown = h % 100 < 12 + 30 * (tile.resourceDensity ?? 0.5);
-        if (deposit && shown && this.deposits && dFrames.has(deposit)) {
+        // A decal centred on each deposit tile, so you can see exactly which tiles hold it.
+        if (deposit && this.deposits && dFrames.has(deposit)) {
           const f = this.textures.getFrame('deposits', deposit);
-          const jx = ((h >>> 8) % 49) - 24;
-          const jy = ((h >>> 16) % 25) - 12;
-          // Decals stand on the tile's bottom corner, a little smaller than the tile.
-          this.deposits.create(lx - f.width / 2 + jx, ly + 64 - f.height + jy, deposit).setFlipX((h >>> 24) % 2 === 1);
+          const h = Math.imul(variant ^ (variant >>> 15), 0x2c1b3c6d) >>> 0;
+          // Nudged a little within its own tile; richer tiles show stronger.
+          const jx = ((h >>> 8) % 17) - 8, jy = ((h >>> 16) % 9) - 4;
+          const d = this.deposits.create(lx - f.width / 2 + jx, ly + 32 - f.height / 2 + jy, deposit).setFlipX(h % 2 === 1);
+          d.setAlpha(0.6 + 0.4 * (tile.resourceDensity ?? 0.5));
+          this.depositBobs.set(iy * 100000 + ix, d);
         }
       }
     }
+  }
+
+  /** Hides a deposit that has been mined out. */
+  hideDeposit(x: number, y: number) {
+    this.depositBobs.get(y * 100000 + x)?.setVisible(false);
   }
 
   /** Matches WorldScene's view: map origin at screen (camX, camY), at its zoom. */

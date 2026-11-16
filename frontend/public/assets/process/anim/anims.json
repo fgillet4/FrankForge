@@ -53,6 +53,15 @@
   "oy": 1.0,
   "w": 403
  },
+ "assembler": {
+  "fps": 8,
+  "frames": 24,
+  "h": 396,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 1.0,
+  "w": 384
+ },
  "battery_bank": {
   "fps": 8,
   "frames": 24,
@@ -61,6 +70,24 @@
   "ox": 0.5,
   "oy": 1.0,
   "w": 256
+ },
+ "burner_drill": {
+  "fps": 8,
+  "frames": 24,
+  "h": 445,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.995,
+  "w": 258
+ },
+ "burner_generator": {
+  "fps": 8,
+  "frames": 24,
+  "h": 294,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.9976,
+  "w": 262
  },
  "char_build_ne": {
   "fps": 8,
@@ -116,6 +143,15 @@
   "oy": 0.9959,
   "w": 60
  },
+ "chemical_plant": {
+  "fps": 8,
+  "frames": 24,
+  "h": 713,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 1.0,
+  "w": 404
+ },
  "compressor": {
   "fps": 8,
   "frames": 24,
@@ -142,6 +178,33 @@
   "ox": 0.5,
   "oy": 0.9977,
   "w": 462
+ },
+ "cstr": {
+  "fps": 8,
+  "frames": 24,
+  "h": 601,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.9949,
+  "w": 387
+ },
+ "electric_drill": {
+  "fps": 8,
+  "frames": 24,
+  "h": 466,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.9944,
+  "w": 387
+ },
+ "electric_furnace": {
+  "fps": 8,
+  "frames": 24,
+  "h": 399,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.997,
+  "w": 386
  },
  "electric_heater": {
   "fps": 8,
@@ -296,6 +359,15 @@
   "oy": 0.9974,
   "w": 277
  },
+ "lab": {
+  "fps": 8,
+  "frames": 24,
+  "h": 360,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.9969,
+  "w": 393
+ },
  "methanol_reactor": {
   "fps": 8,
   "frames": 24,
@@ -358,6 +430,15 @@
   "ox": 0.5,
   "oy": 0.9987,
   "w": 400
+ },
+ "stone_furnace": {
+  "fps": 8,
+  "frames": 24,
+  "h": 340,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.9954,
+  "w": 257
  },
  "storage_tank": {
   "fps": 8,

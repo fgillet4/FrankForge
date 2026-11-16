@@ -43,3 +43,12 @@ alien_attack_se	0	loop	The alien crawler lunges and strikes forward with its fro
 alien_attack_ne	0	loop	The alien crawler lunges and strikes forward with its front claws again and again, staying on the same spot.
 fx_fire2	1	loop	The flames burn steadily, licking upward and flickering, with wisps of dark smoke.
 fx_sparks2	0	loop	Bright electric sparks spray and crackle in short bursts.
+burner_drill	1	loop	The drill bit at the bottom turns steadily and a thin wisp of grey smoke rises from the short chimney.
+electric_drill	0	loop	The big drill bit spins and bores into the ground and the machine vibrates slightly as it runs.
+stone_furnace	1	loop	The fire in the furnace mouth flickers brightly and a thin wisp of grey smoke rises from the chimney.
+electric_furnace	0	loop	The orange glow in the furnace window pulses brighter and dimmer and small status lights blink.
+assembler	0	loop	The robotic arms inside the glass top move back and forth assembling parts, and small status lights blink.
+lab	0	loop	Small indicator lights blink on the equipment and the glass roof glows softly brighter and dimmer. The building stays still.
+chemical_plant	1	loop	The agitator on top turns steadily and a thin wisp of white vapour drifts up from a vent.
+burner_generator	1	loop	The flywheel spins, the piston slides back and forth, the fire glows behind the firebox door and a thin wisp of smoke rises from the chimney.
+cstr	0	loop	The agitator motor and shaft on top turn steadily and the sight glass shimmers as the liquid inside churns.

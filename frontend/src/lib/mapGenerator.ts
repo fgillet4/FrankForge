@@ -360,68 +360,66 @@ function createAlienRuins(map: PlanetMap, centerX: number, centerY: number): voi
 }
 
 // Place ore patches using seeded RNG
+/**
+ * Factorio-style resource patches: compact, single-resource fields with ragged edges, richest at
+ * the centre. A starter set of iron, copper, gas and water sits near the landing site; the rest,
+ * bigger the further out they are, are spread over the map. Counts scale with map area and the
+ * richness setting.
+ */
 function placeOrePatches(map: PlanetMap, seed: number): void {
-  // First clear all per-tile resources
-  for (let y = 0; y < map.height; y++) {
-    for (let x = 0; x < map.width; x++) {
-      map.tiles[y][x].resource = ResourceType.NONE;
-      map.tiles[y][x].resourceDensity = 0;
-    }
-  }
+  for (const row of map.tiles) for (const t of row) { t.resource = ResourceType.NONE; t.resourceDensity = 0; }
+  const rng = seedrandom(`${seed}:ores`);
+  const edge = createNoise2D(seedrandom(`${seed}:ore-edges`));
+  const cx = map.width / 2, cy = map.height / 2;
+  const span = Math.min(map.width, map.height) / 2;
+  const scale = (map.width * map.height) / 14400 * (0.5 + (map.resourceRichness ?? 0.7));
 
-  const rng = seedrandom((seed + 100).toString());
-
-  const patchConfigs: Array<{
-    resource: ResourceType;
-    count: number;
-    minDist: number;
-    maxDist: number;
-    minRadius: number;
-    maxRadius: number;
-  }> = [
-    { resource: ResourceType.IRON,        count: 7, minDist:  8, maxDist: 40, minRadius: 6, maxRadius: 14 },
-    { resource: ResourceType.COPPER,      count: 6, minDist: 10, maxDist: 45, minRadius: 5, maxRadius: 12 },
-    { resource: ResourceType.WATER,       count: 4, minDist:  5, maxDist: 30, minRadius: 4, maxRadius: 10 },
-    { resource: ResourceType.OXYGEN,      count: 3, minDist:  8, maxDist: 35, minRadius: 4, maxRadius:  9 },
-    { resource: ResourceType.SILICON,     count: 4, minDist: 25, maxDist: 55, minRadius: 5, maxRadius: 11 },
-    { resource: ResourceType.SULFUR,      count: 3, minDist: 35, maxDist: 58, minRadius: 4, maxRadius: 10 },
-    { resource: ResourceType.METHANE,     count: 2, minDist: 30, maxDist: 58, minRadius: 4, maxRadius:  9 },
-    { resource: ResourceType.URANIUM,     count: 2, minDist: 45, maxDist: 58, minRadius: 3, maxRadius:  8 },
-    { resource: ResourceType.RARE_METALS, count: 3, minDist: 40, maxDist: 58, minRadius: 3, maxRadius:  9 },
-    { resource: ResourceType.XENOCRYSTALS,count: 2, minDist: 48, maxDist: 58, minRadius: 3, maxRadius:  7 },
-  ];
-
-  const centerX = map.width  / 2;
-  const centerY = map.height / 2;
-
-  for (const cfg of patchConfigs) {
-    for (let p = 0; p < cfg.count; p++) {
-      const angle  = rng() * Math.PI * 2;
-      const dist   = cfg.minDist + rng() * (cfg.maxDist - cfg.minDist);
-      const radius = cfg.minRadius + rng() * (cfg.maxRadius - cfg.minRadius);
-
-      const patchCX = centerX + Math.cos(angle) * dist;
-      const patchCY = centerY + Math.sin(angle) * dist;
-
-      const r = Math.ceil(radius);
-      for (let dy = -r; dy <= r; dy++) {
-        for (let dx = -r; dx <= r; dx++) {
-          const tileDist = Math.sqrt(dx * dx + dy * dy);
-          if (tileDist > radius) continue;
-
-          const tx = Math.round(patchCX + dx);
-          const ty = Math.round(patchCY + dy);
-          if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) continue;
-
-          const tile = map.tiles[ty][tx];
-          if (!tile.traversable) continue;
-
-          const rawDensity = 1 - (tileDist / radius) * 0.65 + 0.35;
-          const density    = Math.min(1.0, Math.max(0.3, rawDensity));
-          tile.resource        = cfg.resource;
-          tile.resourceDensity = density;
-        }
+  const patch = (resource: ResourceType, px: number, py: number, radius: number) => {
+    const r = Math.ceil(radius * 1.4);
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        const tx = Math.round(px + dx), ty = Math.round(py + dy);
+        const tile = map.tiles[ty]?.[tx];
+        if (!tile || !tile.traversable || tile.resource !== ResourceType.NONE) continue;
+        const d = Math.hypot(dx, dy) / radius + edge(tx * 0.25, ty * 0.25) * 0.3;
+        if (d > 1) continue;
+        tile.resource = resource;
+        tile.resourceDensity = Math.min(1, 0.35 + (1 - d) * 0.75);
       }
+    }
+  };
+  /** A spot at a given distance from the landing site, on land. */
+  const spot = (minD: number, maxD: number): [number, number] | null => {
+    for (let k = 0; k < 40; k++) {
+      const a = rng() * Math.PI * 2;
+      const d = minD + rng() * (maxD - minD);
+      const x = cx + Math.cos(a) * d, y = cy + Math.sin(a) * d;
+      const t = map.tiles[Math.round(y)]?.[Math.round(x)];
+      if (t?.traversable && t.resource === ResourceType.NONE) return [x, y];
+    }
+    return null;
+  };
+
+  // Starter patches near the landing site.
+  const starters: [ResourceType, number, number, number][] = [
+    [ResourceType.IRON, 7, 13, 4.5], [ResourceType.COPPER, 8, 15, 4], [ResourceType.WATER, 6, 13, 3.5],
+    [ResourceType.METHANE, 10, 18, 3.5], [ResourceType.SILICON, 16, 26, 3.5], [ResourceType.SULFUR, 20, 32, 3],
+  ];
+  for (const [res, a, b, r] of starters) {
+    const s = spot(a, Math.min(b, span * 0.8));
+    if (s) patch(res, s[0], s[1], r);
+  }
+  // Further out: more and bigger.
+  const more: [ResourceType, number][] = [
+    [ResourceType.IRON, 6], [ResourceType.COPPER, 5], [ResourceType.WATER, 4], [ResourceType.METHANE, 4],
+    [ResourceType.SILICON, 3], [ResourceType.SULFUR, 3],
+  ];
+  for (const [res, n] of more) {
+    for (let k = 0; k < Math.round(n * scale); k++) {
+      const s = spot(span * 0.3, span * 0.95);
+      if (!s) continue;
+      const far = Math.hypot(s[0] - cx, s[1] - cy) / span;
+      patch(res, s[0], s[1], 3 + far * 4 + rng() * 2);
     }
   }
 }
