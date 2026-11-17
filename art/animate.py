@@ -48,6 +48,8 @@ CHAR_STILL = {
     "char_idle_ne": "seen from behind, facing away towards the upper right of the image, standing relaxed",
     "char_build_se": "facing towards the lower right of the image, crouching slightly and holding a large wrench, working",
     "char_build_ne": "seen from behind, facing away towards the upper right of the image, holding a large wrench, working",
+    "char_mine_se": "facing towards the lower right of the image, feet apart, swinging a pickaxe raised over the shoulder, about to strike the ground in front",
+    "char_mine_ne": "seen from behind, facing away towards the upper right of the image, feet apart, swinging a pickaxe raised over the shoulder",
     "char_shoot_se": "facing towards the lower right of the image, feet apart, holding a compact sci-fi rifle at the shoulder and aiming it forward to the lower right",
     "char_shoot_ne": "seen from behind, facing away towards the upper right of the image, feet apart, holding a compact sci-fi rifle at the shoulder and aiming it forward",
     "alien_attack_se": "facing towards the lower right of the image, rearing up with front claws raised to strike",

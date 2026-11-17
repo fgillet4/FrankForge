@@ -27,7 +27,7 @@ import { drawPlayer } from './characterRenderer';
 import type { GroundScene } from './GroundScene';
 
 import * as engine from '../process/engine';
-import { CharacterSprite, ProcessLayer } from '../process/render';
+import { ANIMS, CharacterSprite, ProcessLayer } from '../process/render';
 import { ProcessUI, entityTooltip, fmt, segmentTooltip } from '../process/ui';
 import { generateWorld, loadSettings, writeSave, type SaveGame, type Settings, type WorldSettings } from '../save';
 import { PauseMenu } from '../../ui/menu';
@@ -725,7 +725,8 @@ export class WorldScene extends Phaser.Scene {
       if (!target.key.startsWith('b')) this.playSound(tree ? 'chop' : 'rock', 0.35);
     }
     this.engineer?.face(target.x - this.player.x, target.y - this.player.y);
-    if (this.engineer) this.engineer.action = 'build';
+    // A pickaxe for trees, rocks and ore; the wrench for taking buildings apart.
+    if (this.engineer) this.engineer.action = target.key.startsWith('b') || !ANIMS.char_mine_se ? 'build' : 'mine';
     this.miningProgress += dt;
     const colours = this.chipColours(target.key);
     this.worldDraw.wobble = target.key.startsWith('n') ? target.key.slice(1) : null;
