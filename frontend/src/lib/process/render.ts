@@ -11,6 +11,7 @@ import { TILE_W, TILE_H, isoToScreen } from '../phaser/isoMath';
 import { ITEMS, iconUrl } from '../game/items';
 import { popScale } from '../game/juice';
 import { PROTO, placedById, portTiles, type EntityView, type Snapshot, type VesselView } from './engine';
+import { LIMITS, OVER, RAMP_CSS, hydraulics, problems, ramp, stats } from './hydraulics';
 
 const SPRITE_TILE_PX = 128;
 
@@ -228,11 +229,16 @@ export class ProcessLayer {
   /** Painted pipe pieces by tile and direction, and those drawn this frame. */
   private pipeImgs = new Map<string, Phaser.GameObjects.Image>();
   private pipeSeen = new Set<string>();
+  /** The flow view: off, pipes coloured by velocity against their limit, or by pressure. */
+  flowView: 'off' | 'velocity' | 'pressure' = 'off';
+  private flowGfx: Phaser.GameObjects.Graphics;
+  private legend: HTMLDivElement | null = null;
   selected: number | null = null;
 
   constructor(private scene: Phaser.Scene) {
     this.pipeGfx = scene.add.graphics().setDepth(5);
     this.overlayGfx = scene.add.graphics().setDepth(900);
+    this.flowGfx = scene.add.graphics().setDepth(902);
     createAnims(scene);
   }
 
@@ -327,7 +333,8 @@ export class ProcessLayer {
     working: (id: number) => boolean | undefined = () => undefined) {
     this.pipeGfx.clear();
     this.overlayGfx.clear();
-    if (!snap) return;
+    this.flowGfx.clear();
+    if (!snap) { this.showLegend(null); return; }
     const seen = new Set<number>();
 
     // Pipes: a segment's tiles share one colour; join each tile to its pipe neighbours and to
@@ -421,6 +428,7 @@ export class ProcessLayer {
     }
     for (const [k, img] of this.pipeImgs) if (!this.pipeSeen.has(k)) { img.destroy(); this.pipeImgs.delete(k); }
     this.pipeSeen.clear();
+    this.drawFlow(snap, centre, zoom, time);
 
     // Buildings.
     for (const e of snap.entities) {
@@ -546,6 +554,84 @@ export class ProcessLayer {
     this.drawPorts(g.proto, g.x, g.y, g.rot, camX, camY, zoom);
   }
 
+  /**
+   * The flow view, over everything like an X-ray: each pipe coloured by its velocity as a share
+   * of its service's limit (red when over it) or by pressure, with chevrons moving along it in
+   * the direction of flow, faster where it's faster.
+   */
+  private drawFlow(snap: Snapshot, centre: (x: number, y: number) => { x: number; y: number }, zoom: number, time: number) {
+    if (this.flowView === 'off') { this.showLegend(null); return; }
+    const h = hydraulics(snap);
+    const ps = snap.segments.map(s => s.vessel.p);
+    const pMin = Math.min(...ps), pMax = Math.max(...ps, pMin + 1e3);
+    const pad = TILE_W * zoom;
+    const off = (p: { x: number; y: number }) => p.x < -pad || p.y < -pad || p.x > this.scene.scale.width + pad || p.y > this.scene.scale.height + pad;
+    const g = this.flowGfx;
+    const line = (a: { x: number; y: number }, b: { x: number; y: number }, mdot: number, si: number) => {
+      const run = h.runs[si];
+      const st = stats(mdot, run.fluid);
+      const colour = this.flowView === 'pressure'
+        ? ramp((snap.segments[si].vessel.p - pMin) / (pMax - pMin))
+        : problems(st, run.service, run.fluid).length && (st.v > LIMITS[run.service].vMax || st.v > st.ve) ? OVER : ramp(st.v / LIMITS[run.service].vMax);
+      g.lineStyle(5 * zoom, 0x0b0f14, 0.55).lineBetween(a.x, a.y, b.x, b.y);
+      g.lineStyle(3.2 * zoom, colour, 0.95).lineBetween(a.x, a.y, b.x, b.y);
+      if (st.v < 0.005) return;
+      // Chevrons walking the way it flows; a whole number per tile so they run on across joints.
+      const [from, to] = mdot > 0 ? [a, b] : [b, a];
+      const len = Math.hypot(to.x - from.x, to.y - from.y);
+      const ux = (to.x - from.x) / len, uy = (to.y - from.y) / len;
+      const gap = len / Math.max(1, Math.round(len / (16 * zoom)));
+      const speed = Math.min(150, 14 + 26 * st.v) * zoom;
+      const s = 2.6 * zoom;
+      g.fillStyle(0xffffff, 0.9);
+      for (let d = (time / 1000 * speed) % gap; d < len; d += gap) {
+        const x = from.x + ux * d, y = from.y + uy * d;
+        g.fillTriangle(x + ux * s, y + uy * s, x - ux * s - uy * s, y - uy * s + ux * s, x - ux * s + uy * s, y - uy * s - ux * s);
+      }
+    };
+    h.runs.forEach((run, si) => {
+      for (const [k, m] of run.edges) {
+        const [xs, ys, axis] = k.split(',');
+        const x = +xs, y = +ys;
+        const a = centre(x, y), b = axis === 'x' ? centre(x + 1, y) : centre(x, y + 1);
+        if (off(a) && off(b)) continue;
+        line(a, b, m, si);
+      }
+      for (const p of run.ports) {
+        const a = centre(p.x, p.y);
+        if (off(a)) continue;
+        const into = centre(p.x + p.dx, p.y + p.dy);
+        // Into the run is toward a, so the building end comes first.
+        line({ x: (a.x + into.x) / 2, y: (a.y + into.y) / 2 }, a, p.mdot, si);
+      }
+    });
+    this.showLegend(this.flowView === 'pressure' ? { min: pMin, max: pMax } : null);
+  }
+
+  private showLegend(range: { min: number; max: number } | null) {
+    if (this.flowView === 'off') { this.legend?.remove(); this.legend = null; return; }
+    if (!this.legend) {
+      this.legend = document.createElement('div');
+      this.legend.className = 'pp-flow-legend';
+      document.body.append(this.legend);
+    }
+    const bar = `<i style="background:linear-gradient(90deg,${RAMP_CSS.join(',')})"></i>`;
+    const html = this.flowView === 'velocity'
+      ? `<b>Flow view · velocity</b>${bar}<span><em>0</em><em>limit for the line</em><em class="over">over</em></span><small>V: pressure</small>`
+      : `<b>Flow view · pressure</b>${bar}<span><em>${(range!.min / 1e5).toFixed(1)} bar</em><em>${(range!.max / 1e5).toFixed(1)} bar</em></span><small>V: off</small>`;
+    if (this.legend.dataset.html !== html) { this.legend.innerHTML = html; this.legend.dataset.html = html; }
+  }
+
+  /** The flow at a pipe tile, for its hover card. */
+  flowAt(snap: Snapshot, x: number, y: number) {
+    const h = hydraulics(snap);
+    const si = h.runAt.get(`${x},${y}`);
+    if (si === undefined) return null;
+    const run = h.runs[si];
+    const st = stats(run.tile.get(`${x},${y}`) ?? 0, run.fluid);
+    return { run, stats: st, problems: problems(st, run.service, run.fluid) };
+  }
+
   private pipePart(key: string, tex: string) {
     let img = this.pipeImgs.get(key);
     if (!img) { img = this.scene.add.image(0, 0, tex); this.pipeImgs.set(key, img); }
@@ -587,6 +673,8 @@ export class ProcessLayer {
     this.fx.forEach(f => f.sprite.destroy());
     this.pipeImgs.forEach(i => i.destroy());
     this.pipeImgs.clear();
+    this.flowGfx.destroy();
+    this.legend?.remove();
     this.pipeGfx.destroy();
     this.overlayGfx.destroy();
     this.ghostImg?.destroy();

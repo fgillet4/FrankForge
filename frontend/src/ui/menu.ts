@@ -38,6 +38,7 @@ export const HOW_TO_PLAY = `
     <kbd>T</kbd><span>Research</span>
     <kbd>P</kbd><span>Production graphs</span>
     <kbd>M</kbd><span>Enlarge the minimap; click it to look somewhere</span>
+    <kbd>V</kbd><span>Flow view: pipes by velocity, then by pressure, then off</span>
     <kbd>Click</kbd><span>Pick a building in the bar, then click the map to place it</span>
     <kbd>Drag</kbd><span>While placing, lay a line of pipe or belt, or a row of buildings (poles space themselves)</span>
     <kbd>R</kbd><span>Rotate what you're placing, or the belt or inserter under the cursor</span>
@@ -48,7 +49,7 @@ export const HOW_TO_PLAY = `
     <kbd>Alt</kbd><span>Alt mode: what each machine makes and which way every inserter works</span>
     <kbd>Shift-click</kbd><span>Repair a damaged building with a repair pack</span>
     <kbd>Mouse wheel</kbd><span>Zoom toward the cursor; drag to look around</span>
-    <kbd>Tab / Shift-Tab</kbd><span>Speed the simulation up or down (all the way down pauses)</span>
+    <kbd>Tab / Shift-Tab</kbd><span>Speed the simulation up or down; past the fastest it pauses</span>
     <kbd>Esc</kbd><span>Close a window, cancel placing, or open this menu</span>
   </div>
   <h3>Getting started</h3>

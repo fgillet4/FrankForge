@@ -195,7 +195,8 @@ export class WorldScene extends Phaser.Scene {
     };
     kb.addCapture([K.TAB, K.SPACE]);
     kb.on('keydown-TAB', (e: KeyboardEvent) => {
-      this.speedIndex = Phaser.Math.Clamp(this.speedIndex + (e.shiftKey ? -1 : 1), 0, SPEEDS.length - 1);
+      // Round and round: past the fastest comes pause.
+      this.speedIndex = (this.speedIndex + (e.shiftKey ? -1 : 1) + SPEEDS.length) % SPEEDS.length;
     });
     kb.on('keydown-R', () => this.rotate());
     kb.on('keydown-Q', () => this.pipette());
@@ -203,6 +204,12 @@ export class WorldScene extends Phaser.Scene {
     kb.on('keydown-T', () => { if (!this.menu.open && !this.sandbox) this.hud?.toggle('tech'); this.processUI?.hover(null, 0, 0); });
     kb.on('keydown-P', () => { if (!this.menu.open) this.hud?.toggle('stats'); this.processUI?.hover(null, 0, 0); });
     kb.on('keydown-M', () => this.hud?.toggleBigMap());
+    kb.on('keydown-V', () => {
+      if (!this.processLayer) return;
+      const views = ['off', 'velocity', 'pressure'] as const;
+      this.processLayer.flowView = views[(views.indexOf(this.processLayer.flowView) + 1) % views.length];
+      try { localStorage.setItem('ff_flowView', this.processLayer.flowView); } catch { /* not remembered */ }
+    });
     kb.on('keydown-ALT', (e: KeyboardEvent) => { e.preventDefault(); this.worldDraw.altMode = !this.worldDraw.altMode; });
     kb.on('keydown-ESC', () => this.onEscape());
     this.input.mouse?.disableContextMenu();
@@ -231,6 +238,10 @@ export class WorldScene extends Phaser.Scene {
         if (FACTORY_KINDS.has(p.proto) && !this.factory.entities.has(p.id)) this.factory.add(p.id, p.proto, p.x, p.y, p.rot, engine.PROTO[p.proto].size);
       }
       this.processLayer = new ProcessLayer(this);
+      try {
+        const view = localStorage.getItem('ff_flowView');
+        if (view === 'velocity' || view === 'pressure') this.processLayer.flowView = view;
+      } catch { /* starts off */ }
       // The engine, for poking at from the console while developing.
       if (import.meta.env.DEV) (window as unknown as { engine: typeof engine }).engine = engine;
       this.processUI = new ProcessUI();
@@ -1268,7 +1279,7 @@ export class WorldScene extends Phaser.Scene {
     else if (snapE) main = entityTooltip(snapE) + (engine.PROTO[snapE.proto]?.power_w && snapE.network === null ? '<br><small class="pp-bad">Not powered: put it inside a power pole\'s area</small>' : '');
     else {
       const si = this.processLayer?.segmentAt(tx, ty);
-      if (si !== undefined && this.snapshot) main = segmentTooltip(this.snapshot.segments[si].vessel);
+      if (si !== undefined && this.snapshot) main = segmentTooltip(this.snapshot.segments[si].vessel, this.processLayer?.flowAt(this.snapshot, tx, ty));
     }
     if (!main) {
       const o = this.objects.get(tileKey(tx, ty));

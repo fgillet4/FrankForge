@@ -565,6 +565,8 @@ impl World {
                             _ => PIPE_DIAMETER,
                         };
                         let mut pipe = Pipe::new(a, b, la + lb, diameter, kind);
+                        let port_of = |s: usize| if p.source.is_some() && s == 0 { None } else { (0..ports_len).find(|&k| p.ports[k].vessel == s) };
+                        pipe.ports = [port_of(0), port_of(1)];
                         pipe.mdot = old_flows.get(&(*id, 0)).copied().unwrap_or(0.0);
                         pipes.push(self.net.add_pipe(pipe));
                     }
@@ -577,6 +579,7 @@ impl World {
                         let vi = e.net_vessels[def.vessel];
                         let mut pipe = Pipe::new(vi, self.segments[si].vessel, lengths[&(*id, k)], PIPE_DIAMETER, PipeKind::Plain);
                         pipe.ha = port_height(def.at, &self.net.vessels[vi]);
+                        pipe.ports = [None, Some(k)];
                         pipe.mdot = old_flows.get(&(*id, k)).copied().unwrap_or(0.0);
                         pipes.push(self.net.add_pipe(pipe));
                     }
@@ -876,6 +879,11 @@ pub struct VesselView {
     pub y: BTreeMap<&'static str, f64>,
     pub rho_liq: f64,
     pub rho_vap: f64,
+    /// Viscosities [Pa·s] and the liquid's vapour pressure [Pa] (Raoult with Wilson's estimate
+    /// of each condensable's saturation pressure), for pipe flow and pump suction read-outs.
+    pub mu_liq: f64,
+    pub mu_vap: f64,
+    pub p_vap: f64,
     pub q_net: f64,
     pub design_p: f64,
     pub ruptured: bool,
@@ -897,6 +905,7 @@ pub struct PipeView {
     pub vapour: bool,
     pub choked: bool,
     pub kind: PipeKind,
+    pub ports: [Option<usize>; 2],
 }
 
 #[derive(Serialize)]
@@ -954,6 +963,18 @@ fn comp_map(c: &Comp) -> BTreeMap<&'static str, f64> {
     (0..NS).filter(|&i| c[i] > 1e-6).map(|i| (SPECIES[i].id, c[i])).collect()
 }
 
+/// A liquid's vapour pressure [Pa]: Raoult's law over the species below their critical point,
+/// each at Wilson's saturation pressure. Dissolved permanent gases don't count.
+fn vapour_pressure(x: &Comp, t: f64) -> f64 {
+    (0..NS)
+        .filter(|&i| x[i] > 0.0 && t < SPECIES[i].tc)
+        .map(|i| {
+            let s = &SPECIES[i];
+            x[i] * s.pc * (5.373 * (1.0 + s.omega) * (1.0 - s.tc / t)).exp()
+        })
+        .sum()
+}
+
 fn vessel_view(v: &Vessel) -> VesselView {
     let s = &v.state;
     let moles = v.moles();
@@ -979,6 +1000,8 @@ fn vessel_view(v: &Vessel) -> VesselView {
         t: s.t, p: s.p, beta: s.beta, level: if v.reservoir.is_some() { 0.0 } else { v.level() / v.height }, moles,
         mass: (0..NS).map(|i| v.n[i] * SPECIES[i].mw * 1e-3).sum(), z: comp_map(&z), x: comp_map(&s.x), y: comp_map(&s.y),
         rho_liq: if s.beta < 1.0 { s.rho_liq() } else { 0.0 }, rho_vap: if s.beta > 0.0 { s.rho_vap() } else { 0.0 },
+        mu_liq: if s.beta < 1.0 { s.mu_liq() } else { 0.0 }, mu_vap: if s.beta > 0.0 { s.mu_vap() } else { 0.0 },
+        p_vap: if s.beta < 1.0 { vapour_pressure(&s.x, s.t) } else { 0.0 },
         q_net: v.q_net, design_p: v.design_p, ruptured: v.ruptured, reactions,
     }
 }
@@ -999,7 +1022,7 @@ impl World {
                     .iter()
                     .map(|&pi| {
                         let p = &self.net.pipes[pi];
-                        PipeView { mdot: p.mdot, velocity: p.velocity, vapour: p.vapour, choked: p.choked, kind: p.kind.clone() }
+                        PipeView { mdot: p.mdot, velocity: p.velocity, vapour: p.vapour, choked: p.choked, kind: p.kind.clone(), ports: p.ports }
                     })
                     .collect(),
                 power_w: grid.and_then(|g| e.load.map(|l| g.loads[l].demand_w * g.loads[l].served)).unwrap_or(0.0),

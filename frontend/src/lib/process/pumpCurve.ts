@@ -3,9 +3,15 @@
  * current impeller trim and speed, the rated curve behind it, and where the pump is actually
  * running. The impeller can be trimmed and, with variable-frequency drives researched, the speed
  * changed; the curve moves by the affinity laws, the same way the engine computes it.
+ *
+ * Over it, as in Hydraulic Studio: the system curve, the head the plant asks for at each flow
+ * (the pressure difference between the suction and discharge runs, plus friction growing with
+ * the square of flow through today's operating point), where the pump curve crosses it is where
+ * it runs; and NPSH available against required, below which it cavitates.
  */
 
-import { setPump, layout, type EntityView, type PipeView } from './engine';
+import { setPump, layout, type EntityView, type PipeView, type VesselView } from './engine';
+import { npshAvailable, npshRequired } from './hydraulics';
 
 const G = 9.80665;
 /** Nameplate of the full-size pump, for the read-outs. */
@@ -90,7 +96,7 @@ export class PumpCurvePanel {
     if (this.last) this.update(this.last);
   }
 
-  update(e: EntityView) {
+  update(e: EntityView, sides: { suction: VesselView | null; discharge: VesselView | null } = { suction: null, discharge: null }) {
     const pipe = e.pipes.find(p => p.kind.kind === 'Pump');
     if (!pipe) { this.close(); return; }
     this.last = e;
@@ -111,6 +117,13 @@ export class PumpCurvePanel {
     const head = (k.dp ?? 0) / (rho * G);
     const op = now.at(q);
     const ratio = now.qBep > 0 ? q / now.qBep : 0;
+    // The system: static head between the two runs, and friction through the operating point.
+    const hStatic = sides.suction && sides.discharge ? (sides.discharge.p - sides.suction.p) / (rho * G) : null;
+    const sys = hStatic === null ? null : { h0: hStatic, k: q > 1e-5 ? Math.max(0, head - hStatic) / (q * q) : 0 };
+    const liquid = !!sides.suction && sides.suction.beta < 0.5;
+    const npsha = sides.suction && liquid ? npshAvailable(sides.suction, q, rho) : null;
+    const npshr = npshRequired(q, now.qBep, n);
+    const npsh = npsha === null ? null : { a: npsha, suction: sides.suction!, r: npshr };
     this.readout.innerHTML = [
       ['Flow', `${(q * 3600).toFixed(1)} m³/h`],
       ['Head', `${head.toFixed(1)} m`],
@@ -118,22 +131,26 @@ export class PumpCurvePanel {
       ['Shaft', `${(op.shaft / 1000).toFixed(1)} kW`],
       ['Speed', `${Math.round(n * RATED_RPM)} rpm`],
       ['Of BEP flow', `${(ratio * 100).toFixed(0)} %`],
+      ['Static head', hStatic === null ? '—' : `${hStatic.toFixed(1)} m`],
+      ['NPSH avail. / req.', npsha === null ? '—' : `${npsha.toFixed(1)} / ${npshr.toFixed(1)} m`],
     ].map(([a, b]) => `<span>${a}<b>${b}</b></span>`).join('');
     const starved = speed > 0 && n < speed * 0.98;
     this.note.className = 'pp-curve-note';
     let msg = '';
     if (speed === 0) msg = 'Stopped.';
     else if (starved) { msg = 'Not getting enough power: the motor has slowed down.'; this.note.classList.add('bad'); }
+    else if (npsha !== null && q > 1e-5 && npsha < npshr) { msg = `Cavitating: ${npsha.toFixed(1)} m of NPSH available, ${npshr.toFixed(1)} m needed. Raise the suction pressure, or slow the pump.`; this.note.classList.add('bad'); }
     else if (q < 1e-5) { msg = 'Dead-headed: no flow. The liquid in the casing just heats up.'; this.note.classList.add('bad'); }
     else if (ratio < 0.7) { msg = 'Running left of the best-efficiency point: recirculation and wasted power. Trim the impeller or slow it down.'; this.note.classList.add('warn'); }
     else if (ratio > 1.2) { msg = 'Running right of the best-efficiency point: high power and a risk of cavitation.'; this.note.classList.add('warn'); }
     else msg = 'In the preferred operating region, near best efficiency.';
     if (!vfd) msg += ' Research Variable-frequency drives to change its speed.';
     this.note.textContent = msg;
-    this.draw(k, trim, speed, n, rho, q, head);
+    this.draw(k, trim, speed, n, rho, q, head, sys, npsh);
   }
 
-  private draw(k: PumpKind, trim: number, speed: number, n: number, rho: number, q: number, head: number) {
+  private draw(k: PumpKind, trim: number, speed: number, n: number, rho: number, q: number, head: number,
+    sys: { h0: number; k: number } | null, npsh: { suction: VesselView; r: number } | null) {
     const W = 440, H = 250, dpr = window.devicePixelRatio || 1;
     if (this.canvas.width !== W * dpr) { this.canvas.width = W * dpr; this.canvas.height = H * dpr; this.canvas.style.width = `${W}px`; }
     const g = this.canvas.getContext('2d')!;
@@ -187,6 +204,25 @@ export class PumpCurvePanel {
     line(now, pt => YE(pt.eff), '#6fd36f', 1.5);
     line(now, pt => Y(pt.dp / (rho * G)), '#f0a63a', 2.5);
 
+    // The system curve, and NPSH: available (falls only with the suction pressure; the velocity
+    // head adds a little) against required (rises with flow).
+    const across = (f: (qq: number) => number, colour: string, width: number, dash: number[]) => {
+      g.strokeStyle = colour; g.lineWidth = width; g.setLineDash(dash);
+      g.beginPath();
+      let started = false;
+      for (let i = 0; i <= 60; i++) {
+        const qq = qMax * i / 60, h = f(qq);
+        if (!Number.isFinite(h) || h < 0 || h > hMax) { started = false; continue; }
+        if (started) g.lineTo(X(qq), Y(h)); else { g.moveTo(X(qq), Y(h)); started = true; }
+      }
+      g.stroke(); g.setLineDash([]);
+    };
+    if (sys) across(qq => sys.h0 + sys.k * qq * qq, '#e8ecf1', 1.8, []);
+    if (npsh) {
+      across(qq => npshAvailable(npsh.suction, qq, rho), '#5fd3e8', 1.5, [6, 3]);
+      across(qq => npshRequired(qq, now.qBep, n), '#c58cff', 1.5, [2, 3]);
+    }
+
     // Best-efficiency point.
     if (now.qBep > 0) {
       const b = now.at(now.qBep);
@@ -204,7 +240,12 @@ export class PumpCurvePanel {
 
     // Legend.
     g.textAlign = 'left'; g.font = '10px system-ui, sans-serif';
-    const items: [string, string][] = [['#f0a63a', 'Now'], ['#5b6676', 'Rated'], ['#6fd36f', 'Efficiency']];
-    items.forEach(([c, t], i) => { g.fillStyle = c; g.fillRect(L + 8 + i * 74, T + 4, 12, 3); g.fillStyle = '#c8d0da'; g.fillText(t, L + 24 + i * 74, T + 8); });
+    const items: [string, string][] = [['#f0a63a', 'Pump'], ['#5b6676', 'Rated'], ['#6fd36f', 'Efficiency']];
+    if (sys) items.push(['#e8ecf1', 'System']);
+    if (npsh) items.push(['#5fd3e8', 'NPSHa'], ['#c58cff', 'NPSHr']);
+    items.forEach(([c, t], i) => {
+      const x = L + 8 + (i % 4) * 82, y = T + 4 + Math.floor(i / 4) * 12;
+      g.fillStyle = c; g.fillRect(x, y, 12, 3); g.fillStyle = '#c8d0da'; g.fillText(t, x + 16, y + 4);
+    });
   }
 }

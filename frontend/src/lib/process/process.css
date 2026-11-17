@@ -158,3 +158,22 @@
   .pp-curve { left: 12px; right: 12px; width: auto; top: 12px; }
   .pp-curve canvas { max-width: 100%; }
 }
+
+/* Flow view legend. */
+.pp-flow-legend {
+  position: fixed; left: 16px; bottom: 96px; z-index: 15; padding: 8px 10px; width: 220px;
+  background: rgba(12, 15, 20, 0.86); border: 1px solid #2c3440; border-radius: 6px;
+  color: #e8ecf1; font: 12px/1.4 'Chakra Petch', system-ui, sans-serif; pointer-events: none;
+}
+.pp-flow-legend b { display: block; margin-bottom: 4px; }
+.pp-flow-legend i { display: block; height: 8px; border-radius: 2px; }
+.pp-flow-legend span { display: flex; justify-content: space-between; color: #8d99a8; margin-top: 2px; }
+.pp-flow-legend em { font-style: normal; }
+.pp-flow-legend em.over { color: #fff; background: #d03b3b; padding: 0 4px; border-radius: 2px; }
+.pp-flow-legend small { display: block; color: #8d99a8; margin-top: 4px; }
+
+/* Pipe hover card: hydraulics. */
+.pp-hyd { display: grid; gap: 1px; margin-top: 4px; padding-top: 4px; border-top: 1px solid rgba(255, 255, 255, 0.12); }
+.pp-hyd span { white-space: nowrap; }
+.pp-hyd small { opacity: 0.75; }
+.pp-hyd small.pp-bad, .pp-hyd b.pp-bad { color: #ff6a5c; opacity: 1; }

@@ -182,13 +182,16 @@ pub struct Pipe {
     pub velocity: f64,
     pub vapour: bool,
     pub choked: bool,
+    /// For display: through which of its building's ports each end attaches to a pipe run, if it
+    /// does (the other end of a building's own pipe is its vessel).
+    pub ports: [Option<usize>; 2],
 }
 
 impl Pipe {
     pub fn new(a: usize, b: usize, length: f64, diameter: f64, kind: PipeKind) -> Self {
         Pipe {
             a, b, ha: 0.0, hb: 0.0, length: length.max(0.5), diameter, roughness: 4.5e-5, k_minor: 1.5, kind,
-            mdot: 0.0, velocity: 0.0, vapour: false, choked: false,
+            mdot: 0.0, velocity: 0.0, vapour: false, choked: false, ports: [None, None],
         }
     }
     fn area(&self) -> f64 {

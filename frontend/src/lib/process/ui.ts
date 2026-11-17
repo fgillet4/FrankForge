@@ -6,6 +6,7 @@
 import './process.css';
 import { iconUrl } from '../game/items';
 import { PumpCurvePanel } from './pumpCurve';
+import { LIMITS, pumpSides, type FlowStats, type RunFlows } from './hydraulics';
 import {
   PROTO, PROTOS, SPECIES, blackStart, setEnabled, setOpening, setReaction, layout,
   type EntityView, type Snapshot, type VesselView,
@@ -208,7 +209,7 @@ export class ProcessUI {
     for (const msg of snap.events) this.alert(msg);
     if (this.curve.id !== null) {
       const pump = snap.entities.find(x => x.id === this.curve.id);
-      if (pump) this.curve.update(pump); else this.curve.close();
+      if (pump) this.curve.update(pump, pumpSides(snap, pump)); else this.curve.close();
     }
     if (this.inspectorFor === null) return;
     const e = snap.entities.find(x => x.id === this.inspectorFor);
@@ -321,11 +322,23 @@ export class ProcessUI {
   }
 }
 
-export function segmentTooltip(v: VesselView): string {
+export function segmentTooltip(v: VesselView, flow?: { run: RunFlows; stats: FlowStats; problems: string[] } | null): string {
   const phase = v.beta >= 0.9999 ? 'gas' : v.beta <= 0.0001 ? 'liquid' : `${fmt.pct(1 - v.beta)} liquid (mol)`;
   const top = Object.entries(v.z).sort((a, b) => b[1] - a[1]).slice(0, 3)
     .map(([id, f]) => `${formula(id)} ${(f * 100).toFixed(f < 0.1 ? 1 : 0)}%`).join(' · ');
-  return `<b>Pipe</b> · ${fmt.p(v.p)} · ${fmt.t(v.t)} · ${phase}<br><small>${top}</small>`;
+  let hyd = '';
+  if (flow) {
+    const s = flow.stats, lim = LIMITS[flow.run.service];
+    const ratio = s.v / lim.vMax;
+    hyd = s.v < 0.005 ? '<div class="pp-hyd"><span>No flow</span></div>' : `<div class="pp-hyd">
+      <span>Flow <b>${(s.q * 3600).toFixed(s.q * 3600 < 10 ? 2 : 1)} m³/h</b></span>
+      <span>Velocity <b class="${ratio > 1 ? 'pp-bad' : ''}">${s.v.toFixed(2)} m/s</b> <small>of ${lim.vMax} for a ${lim.label}</small></span>
+      <span>Re <b>${s.re >= 1e4 ? s.re.toExponential(1) : s.re.toFixed(0)}</b> <small>${s.regime}</small> · f <b>${s.f.toFixed(4)}</b></span>
+      <span>Friction <b class="${s.dp100 > lim.dpMax ? 'pp-bad' : ''}">${s.dp100.toFixed(s.dp100 < 10 ? 2 : 0)} kPa/100 m</b></span>
+      ${flow.problems.map(p => `<small class="pp-bad">${p}</small>`).join('')}
+    </div>`;
+  }
+  return `<b>Pipe</b> · ${fmt.p(v.p)} · ${fmt.t(v.t)} · ${phase}<br><small>${top}</small>${hyd}`;
 }
 
 export function entityTooltip(e: EntityView): string {

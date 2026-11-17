@@ -39,11 +39,15 @@ export interface VesselView {
   t: number; p: number; beta: number; level: number; moles: number; mass: number;
   z: Record<string, number>; x: Record<string, number>; y: Record<string, number>;
   rho_liq: number; rho_vap: number; q_net: number; design_p: number; ruptured: boolean;
+  /** Viscosities [Pa·s] and the liquid's vapour pressure [Pa]. */
+  mu_liq: number; mu_vap: number; p_vap: number;
   reactions: { name: string; rate: number; ln_q_over_k: number }[];
 }
 
 export interface PipeView {
   mdot: number; velocity: number; vapour: boolean; choked: boolean;
+  /** Which of the building's ports each end attaches through, when it meets a pipe run. */
+  ports: [number | null, number | null];
   kind: {
     kind: string; opening?: number; power_used?: number; power_out?: number; rated_w?: number;
     /** Pumps: rated curve, settings and operating point (see the engine's PipeKind::Pump). */
