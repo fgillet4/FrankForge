@@ -57,6 +57,22 @@ const ALERTS: Record<string, [number, (e: FEntity) => string | null]> = {
   'Missing science packs': [0xffc23a, () => 'science_red'],
   'No recipe set': [0xffc23a, () => 'iron_gear'],
 };
+/**
+ * Turrets and drills built from painted parts: where the head sits on the base, where the bit
+ * goes into the frame (fractions of the image), and how big the moving parts are [tiles].
+ */
+const TURRET_PARTS: Record<string, { ring: [number, number]; head: number; pivot: number; barrel: number; thick: number }> = {
+  gun_turret: { ring: [0.5, 0.17], head: 0.85, pivot: 0.85, barrel: 1.7, thick: 15 },
+  laser_turret: { ring: [0.5, 0.19], head: 0.85, pivot: 0.85, barrel: 1.6, thick: 14 },
+};
+/** Drill bits are as long as a fraction of the frame's height. */
+const DRILL_PARTS: Record<string, { hole: [number, number]; chimney?: [number, number]; bit: number; thick: number }> = {
+  burner_drill: { hole: [0.45, 0.51], chimney: [0.11, 0.28], bit: 0.42, thick: 12 },
+  electric_drill: { hole: [0.48, 0.69], bit: 0.55, thick: 16 },
+};
+/** Painted turret or drill parts loaded for this kind. */
+const partBody = (kind: string) => kind.endsWith('_turret') ? `ip_${kind}_base` : `ip_${kind}_frame`;
+
 /** Where the painted inserter bases stand and take their arm (fractions of the image). */
 const INSERTER_PARTS: Record<string, { width: number; foot: [number, number]; socket: [number, number] }> = {
   burner_inserter: { width: 0.6, foot: [0.5, 0.95], socket: [0.44, 0.33] },
@@ -119,7 +135,9 @@ export class WorldRenderer {
         this.drawInserter(v, e, time);
         if (this.flowFor === 'all' || this.flowFor === e.id) drawInserterFlow(this.overlay, e.x, e.y, e.rot, v.x, v.y, v.zoom, this.flowFor === 'all' ? 0.6 : 1);
       }
-      if (SPRITED.has(e.kind)) {
+      if ((e.kind in TURRET_PARTS || e.kind in DRILL_PARTS) && this.scene.textures.exists(partBody(e.kind))) {
+        if (e.kind in TURRET_PARTS) this.drawTurret(v, e, time); else this.drawDrill(v, e, time);
+      } else if (SPRITED.has(e.kind)) {
         const s = this.sprites.get(`b${e.id}`);
         // Working machines play their animation; idle ones show the still sprite.
         const anim = e.active && this.scene.anims.exists(`pa_${e.kind}`) ? `pa_${e.kind}` : null;
@@ -148,7 +166,7 @@ export class WorldRenderer {
       if (making) this.recipeBadge(v, e, making);
       const alert = e.status ? ALERTS[e.status] : undefined;
       if (alert) this.alertBadge(v, e, alert[0], alert[1](e), time);
-      if (e.firing && e.kind === 'gun_turret' && Math.floor(time / 50) % 2) {
+      if (e.firing && e.kind === 'gun_turret' && Math.floor(time / 50) % 2 && !this.scene.textures.exists(partBody(e.kind))) {
         const c = this.at(v, e.x + 1, e.y + 1);
         const dx = Math.cos(e.aim!) - Math.sin(e.aim!), dy = (Math.cos(e.aim!) + Math.sin(e.aim!)) / 2;
         this.overlay.fillStyle(0xffe08a, 0.9).fillCircle(c.x + dx * 26 * v.zoom, c.y - 40 * v.zoom + dy * 26 * v.zoom, 6 * v.zoom);
@@ -221,6 +239,11 @@ export class WorldRenderer {
       if (best && s.depth <= best.depth) continue;
       const e = f.entities.get(Number(key.slice(1)));
       if (e && hitsSprite(s, x, y)) best = { tx: e.x, ty: e.y, depth: s.depth };
+    }
+    for (const [key, img] of this.parts.entries()) {
+      if (key[0] !== 'F' || (best && img.depth <= best.depth)) continue;
+      const e = f.entities.get(Number(key.slice(1)));
+      if (e && hitsSprite(img, x, y)) best = { tx: e.x, ty: e.y, depth: img.depth };
     }
     for (const [key, img] of this.nature.entries()) {
       if (key.startsWith('nest') || (best && img.depth <= best.depth) || !hitsSprite(img, x, y)) continue;
@@ -377,13 +400,90 @@ export class WorldRenderer {
   }
 
   /** One arm segment stretched between two screen points, its pivot rings on the points. */
-  private segment(key: string, tex: string, a: { x: number; y: number }, b: { x: number; y: number }, zoom: number, depth: number, tint: number) {
+  private segment(key: string, tex: string, a: { x: number; y: number }, b: { x: number; y: number }, zoom: number, depth: number,
+    tint: number, thick = 11, from = 0.1, span = 0.79) {
     const img = this.parts.get(key);
     if (img.texture.key !== tex) img.setTexture(tex);
     const len = Math.hypot(b.x - a.x, b.y - a.y);
-    // Pivot to pivot is 79 % of the image's width.
-    img.setOrigin(0.1, 0.5).setPosition(a.x, a.y).setRotation(Math.atan2(b.y - a.y, b.x - a.x))
-      .setScale(len / (img.width * 0.79), (11 * zoom) / img.height).setDepth(depth).setTint(tint);
+    // `from` is where point a sits along the image, `span` the fraction from a to b (pivot to
+    // pivot on an arm).
+    img.setOrigin(from, 0.5).setPosition(a.x, a.y).setRotation(Math.atan2(b.y - a.y, b.x - a.x))
+      .setScale(len / (img.width * span), (thick * zoom) / img.height).setDepth(depth).setTint(tint).setFlipY(false);
+    return img;
+  }
+
+  /** Effects the renderer asks the scene for: ore chips and smoke, in tile space. */
+  fx: { chips(x: number, y: number): void; smoke(x: number, y: number, z: number): void } | null = null;
+
+  /** A painted body anchored on its footprint like any building. */
+  private body(v: View, e: FEntity, flip: boolean, dx = 0) {
+    const depth = 10 + (e.x + e.y + 2 * e.size) * 0.01;
+    const b = this.at(v, e.x + e.size, e.y + e.size);
+    const img = this.parts.get(`F${e.id}`);
+    if (img.texture.key !== partBody(e.kind)) img.setTexture(partBody(e.kind));
+    const s = e.size * TILE_W * v.zoom / img.width * popScale(e.id, this.scene.time.now);
+    img.setOrigin(0.5, 1).setPosition(b.x + dx, b.y + TILE_H * v.zoom * 0.08).setScale(s).setFlipX(flip).setRotation(0).setDepth(depth).clearTint();
+    /** A point given as fractions of the (possibly flipped) image, on screen. */
+    const at = (fx: number, fy: number) => ({ x: img.x + ((flip ? 1 - fx : fx) - 0.5) * img.width * s, y: img.y + (fy - 1) * img.height * s });
+    return { img, depth, at };
+  }
+
+  /**
+   * A turret: its base, a head that turns toward what it's aiming at, and a barrel that points
+   * there, kicks back when it fires, and flashes at its real muzzle. Idle turrets look around.
+   */
+  private drawTurret(v: View, e: FEntity, time: number) {
+    const spec = TURRET_PARTS[e.kind];
+    const { depth, at } = this.body(v, e, false);
+    const ring = at(spec.ring[0], spec.ring[1]);
+    const aim = (e.aim ?? Math.PI / 4) + (e.firing ? 0 : Math.sin(time * 0.0006 + e.id) * 0.6);
+    const [ax, ay] = [Math.cos(aim), Math.sin(aim)];
+    // On screen a tile step (ax, ay) goes (ax − ay, (ax + ay) / 2).
+    const sx = ax - ay, sy = (ax + ay) / 2;
+    const head = this.parts.get(`T${e.id}`);
+    if (head.texture.key !== `ip_${e.kind}_head`) head.setTexture(`ip_${e.kind}_head`);
+    const hs = spec.head * TILE_W * v.zoom / head.width;
+    head.setOrigin(0.5, spec.pivot).setPosition(ring.x, ring.y).setScale(hs).setFlipX(sx < 0).setDepth(depth + 0.0002);
+    const kick = e.firing && time % (e.kind === 'laser_turret' ? 200 : 110) < 40 ? 0.14 : 0;
+    const reach = (spec.barrel - kick) * TILE_W / 2 * v.zoom;
+    // The barrel comes out of the middle of the head.
+    const mount = { x: ring.x, y: ring.y - (spec.pivot - 0.55) * head.displayHeight };
+    const tip = { x: mount.x + sx * reach, y: mount.y + sy * reach };
+    // Pointing away from the camera, the barrel goes behind the head.
+    this.segment(`G${e.id}`, `ip_${e.kind}_barrel`, mount, tip, v.zoom, depth + (sy < 0 ? 0.0001 : 0.0003), 0xffffff, spec.thick, 0.02, 0.96);
+    if (e.firing && Math.floor(time / 50) % 2) {
+      const colour = e.kind === 'laser_turret' ? 0xff4030 : 0xffe08a;
+      this.overlay.fillStyle(colour, 0.9).fillCircle(tip.x, tip.y, 6 * v.zoom);
+      this.overlay.fillStyle(0xffffff, 0.9).fillCircle(tip.x, tip.y, 2.5 * v.zoom);
+    }
+  }
+
+  /**
+   * A drill: its frame, and an auger bit hanging from the derrick into the hole. Working, the
+   * bit bores up and down and spins, ore chips fly, and a burner drill smokes.
+   */
+  private drawDrill(v: View, e: FEntity, time: number) {
+    const spec = DRILL_PARTS[e.kind];
+    const flip = e.rot % 2 === 1;
+    const shake = e.active && e.kind === 'burner_drill' ? Math.sin(time * 0.05) * 0.6 * v.zoom : 0;
+    const { img, depth, at } = this.body(v, e, flip, shake);
+    const hole = at(spec.hole[0], spec.hole[1]);
+    const len = spec.bit * img.displayHeight;
+    const bore = e.active ? 0.5 + 0.5 * Math.sin(time * 0.006 + e.id) : 0;
+    // The tip sits in the hole; working, it bores a little deeper and back.
+    const bottom = { x: hole.x + shake, y: hole.y + len * 0.1 * bore };
+    const top = { x: bottom.x, y: bottom.y - len };
+    const bit = this.segment(`B${e.id}`, 'ip_drill_bit', top, bottom, v.zoom, depth + 0.0001, 0xffffff, spec.thick, 0.03, 0.94);
+    // Flipping the auger across its axis turns the spiral: it spins.
+    bit.setFlipY(!!e.active && Math.floor(time / 55) % 2 === 0);
+    if (!e.active || !this.fx) return;
+    if (Math.random() < 0.12) this.fx.chips(e.x + e.size / 2, e.y + e.size / 2);
+    if (spec.chimney && Math.random() < 0.1) {
+      const c = at(spec.chimney[0], spec.chimney[1]);
+      const ground = this.at(v, e.x + e.size / 2, e.y + e.size / 2);
+      const t = screenToIso(c.x, ground.y, v.x, v.y, v.zoom);
+      this.fx.smoke(t.x, t.y, (ground.y - c.y) / v.zoom);
+    }
   }
 
   /** The old drawn arm, while the painted parts load. */

@@ -172,6 +172,11 @@ export class WorldScene extends Phaser.Scene {
 
     this.worldDraw = new WorldRenderer(this);
     this.juice = new Juice(this);
+    this.worldDraw.fx = {
+      chips: (x, y) => this.juice.burst(x + (Math.random() - 0.5) * 0.3, y + (Math.random() - 0.5) * 0.3, 2,
+        { colour: this.chipColours(`o${Math.floor(x)},${Math.floor(y)}`), size: 2.4, speed: 0.9, up: 110, z: 4, life: 0.6 }),
+      smoke: (x, y, z) => this.juice.burst(x, y, 1, { colour: [0x3a3632, 0x4a4540], size: 5, speed: 0.15, up: 40, z, life: 1.8, heavy: false }),
+    };
     this.playerGfx = this.add.graphics().setDepth(41);
     this.hoverGfx = this.add.graphics().setDepth(42);
     this.night = this.add.rectangle(0, 0, 10, 10, 0x0a1430, 0).setOrigin(0, 0).setDepth(980);

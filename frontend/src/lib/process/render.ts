@@ -53,6 +53,11 @@ export function preloadProcessAssets(scene: Phaser.Scene) {
   for (const kind of ['inserter', 'burner_inserter']) {
     for (const part of ['base', 'arm', 'hand']) scene.load.image(`ip_${kind}_${part}`, `assets/process/parts/${kind}_${part}.png`);
   }
+  for (const kind of ['gun_turret', 'laser_turret']) {
+    for (const part of ['base', 'head', 'barrel']) scene.load.image(`ip_${kind}_${part}`, `assets/process/parts/${kind}_${part}.png`);
+  }
+  for (const kind of ['burner_drill', 'electric_drill']) scene.load.image(`ip_${kind}_frame`, `assets/process/parts/${kind}_frame.png`);
+  scene.load.image('ip_drill_bit', 'assets/process/parts/drill_bit.png');
   // Item icons, for things carried on belts and in hands.
   for (const id of Object.keys(ITEMS)) scene.load.image(`ic_${id}`, iconUrl(id));
   scene.load.atlas('nature', 'assets/process/nature.png', 'assets/process/nature.json');
@@ -359,6 +364,8 @@ export class ProcessLayer {
       const proto = PROTO[e.proto];
       // Inserters are drawn with their arms by the world renderer.
       if (!proto || e.proto === 'inserter' || e.proto === 'burner_inserter') continue;
+      // Turrets and drills built from painted parts are the world renderer's too.
+      if (this.scene.textures.exists(`ip_${e.proto}_base`) || this.scene.textures.exists(`ip_${e.proto}_frame`)) continue;
       seen.add(e.id);
       let img = this.images.get(e.id);
       const ruptured = e.vessels.some(v => v.ruptured);
@@ -462,11 +469,13 @@ export class ProcessLayer {
       this.overlayGfx.lineStyle(Math.max(2, 3 * zoom), 0xffe066, 0.95).lineBetween(c.x, c.y, t.x, t.y);
       this.overlayGfx.fillStyle(0xffe066, 0.95).fillCircle(t.x, t.y, 4 * zoom);
     }
-    if (g.proto !== 'pipe' && this.scene.textures.exists(`pb_${g.proto}`)) {
-      if (!this.ghostImg) this.ghostImg = this.scene.add.image(0, 0, `pb_${g.proto}`).setOrigin(0.5, 1).setDepth(899);
-      if (this.ghostImg.texture.key !== `pb_${g.proto}`) this.ghostImg.setTexture(`pb_${g.proto}`);
+    // Buildings drawn from painted parts preview with their body.
+    const tex = ['base', 'frame'].map(k => `ip_${g.proto}_${k}`).find(k => this.scene.textures.exists(k) && !g.proto.endsWith('inserter')) ?? `pb_${g.proto}`;
+    if (g.proto !== 'pipe' && this.scene.textures.exists(tex)) {
+      if (!this.ghostImg) this.ghostImg = this.scene.add.image(0, 0, tex).setOrigin(0.5, 1).setDepth(899);
+      if (this.ghostImg.texture.key !== tex) this.ghostImg.setTexture(tex);
       const bottom = isoToScreen(g.x + n, g.y + n, camX, camY, zoom);
-      this.ghostImg.setVisible(true).setAlpha(0.6).setPosition(bottom.x, bottom.y).setScale((TILE_W * zoom) / SPRITE_TILE_PX);
+      this.ghostImg.setVisible(true).setAlpha(0.6).setPosition(bottom.x, bottom.y).setScale(n * TILE_W * zoom / this.ghostImg.width);
       this.ghostImg.setFlipX(g.rot % 2 === 1).setTint(g.ok ? 0xffffff : 0xff8080);
     } else {
       this.ghostImg?.setVisible(false);
