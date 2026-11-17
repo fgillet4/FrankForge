@@ -2,7 +2,7 @@
 """Generates FrankForge sprites with Higgsfield (GPT Image 2.5, transparent background).
 
 Usage: generate.py [name ...]  — with no names, generates everything in prompts.tsv that has no
-raw/<name>.png yet. Each row of prompts.tsv is: name <TAB> building|object|decal|icon|tile <TAB> description.
+raw/<name>.png yet. Each row of prompts.tsv is: name <TAB> building|object|decal|icon|tile|part <TAB> description.
 """
 import json, subprocess, sys, urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -22,6 +22,9 @@ DECAL = ("A natural terrain feature only: no machines, no pipes, no buildings, n
 OBJECT = ("A natural object for a factory-building game set on an alien frontier world, drawn in a detailed painted "
           "Factorio-like style. Seen from a true 2:1 isometric angle, soft light from the top left. The whole object is "
           "visible and centred, standing on nothing: no ground patch, no cast shadow, no text.")
+PART = ("A single machine part for a factory-building game, drawn in a detailed painted Factorio-like style, seen "
+        "straight from the side, lying horizontally and filling the width of the frame, soft light from the top left. "
+        "Only that one part: nothing attached, no ground, no shadow, no text.")
 TILE = ("Seamless tileable top-down ground texture for a 2D factory-building game, painted Factorio-like style, "
         "evenly lit with no shadows, no objects, no text, filling the whole square.")
 
@@ -31,6 +34,8 @@ def prompt_for(kind, desc):
         return f"{desc} {ICON}"
     if kind == "tile":
         return f"{desc} {TILE}"
+    if kind == "part":
+        return f"Game sprite part: {desc} {PART}"
     if kind == "object":
         return f"Isometric game sprite of {desc} {OBJECT}"
     if kind == "decal":

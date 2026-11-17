@@ -49,6 +49,10 @@ export function preloadProcessAssets(scene: Phaser.Scene) {
   for (const id of BUILDING_SPRITES) {
     scene.load.image(`pb_${id}`, `assets/process/buildings/${id}.png`);
   }
+  // Inserter parts, assembled and moved by the world renderer.
+  for (const kind of ['inserter', 'burner_inserter']) {
+    for (const part of ['base', 'arm', 'hand']) scene.load.image(`ip_${kind}_${part}`, `assets/process/parts/${kind}_${part}.png`);
+  }
   // Item icons, for things carried on belts and in hands.
   for (const id of Object.keys(ITEMS)) scene.load.image(`ic_${id}`, iconUrl(id));
   scene.load.atlas('nature', 'assets/process/nature.png', 'assets/process/nature.json');

@@ -61,6 +61,12 @@ def main():
             sq = Image.new("RGBA", (side, side))
             sq.alpha_composite(im, ((side - im.width) // 2, (side - im.height) // 2))
             sq.resize((64, 64), Image.LANCZOS).save(OUT / "icons" / f"{name[5:]}.png", optimize=True)
+        elif name.startswith("part_"):
+            # Pieces the game assembles and moves itself (inserter bases, arms and claws).
+            (OUT / "parts").mkdir(exist_ok=True)
+            im = trimmed(path)
+            im.thumbnail((256, 256), Image.LANCZOS)
+            im.save(OUT / "parts" / f"{name[5:]}.png", optimize=True)
         elif name.startswith("tile_"):
             Image.open(path).convert("RGB").resize((256, 256), Image.LANCZOS).save(OUT / "tiles" / f"{name[5:]}.png", optimize=True)
         elif name in SIZES:

@@ -68,8 +68,7 @@ export const ITEMS: Record<string, Item> = Object.fromEntries([
     ['ammonia_converter', 'Ammonia converter'], ['methanol_reactor', 'Methanol reactor'], ['cracker_furnace', 'Cracking furnace'],
     ['electrolyser', 'Electrolyser'], ['cstr', 'Jacketed CSTR'],
   ].map(([id, name]) => building(id, name)),
-].map(i => [i.id, ['transport_belt', 'underground_belt', 'splitter'].includes(i.id) ? { ...i, icon: `item_${i.id}` }
-  : i.id === 'burner_inserter' ? { ...i, icon: 'b_inserter' } : i]));
+].map(i => [i.id, ['transport_belt', 'underground_belt', 'splitter'].includes(i.id) ? { ...i, icon: `item_${i.id}` } : i]));
 
 /** Where a recipe can be made. Hand recipes can also be made in an assembler. */
 export type Station = 'hand' | 'smelt' | 'chem';

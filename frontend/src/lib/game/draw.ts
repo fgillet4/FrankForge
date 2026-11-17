@@ -57,6 +57,11 @@ const ALERTS: Record<string, [number, (e: FEntity) => string | null]> = {
   'Missing science packs': [0xffc23a, () => 'science_red'],
   'No recipe set': [0xffc23a, () => 'iron_gear'],
 };
+/** Where the painted inserter bases stand and take their arm (fractions of the image). */
+const INSERTER_PARTS: Record<string, { width: number; foot: [number, number]; socket: [number, number] }> = {
+  burner_inserter: { width: 0.6, foot: [0.5, 0.95], socket: [0.44, 0.33] },
+  inserter: { width: 0.72, foot: [0.58, 0.95], socket: [0.58, 0.14] },
+};
 const BURNING = new Set(['stone_furnace', 'burner_drill', 'electric_furnace', 'burner_generator']);
 
 export class WorldRenderer {
@@ -68,6 +73,7 @@ export class WorldRenderer {
   private items: Pool<Phaser.GameObjects.Image>;
   private sprites: Pool<Phaser.GameObjects.Sprite>;
   private nature: Pool<Phaser.GameObjects.Image>;
+  private parts: Pool<Phaser.GameObjects.Image>;
 
   constructor(private scene: Phaser.Scene) {
     this.ground = scene.add.graphics().setDepth(3);
@@ -78,12 +84,13 @@ export class WorldRenderer {
     this.items = new Pool(() => scene.add.image(0, 0, '__DEFAULT').setDepth(4.5));
     this.sprites = new Pool(() => scene.add.sprite(0, 0, '__DEFAULT').setOrigin(0.5, 1));
     this.nature = new Pool(() => scene.add.image(0, 0, 'nature').setOrigin(0.5, 0.92));
+    this.parts = new Pool(() => scene.add.image(0, 0, '__DEFAULT'));
   }
 
   destroy() {
     for (const g of [this.ground, this.belts, this.overlay, this.power]) g.destroy();
     this.arms.destroy();
-    this.items.destroy(); this.sprites.destroy(); this.nature.destroy();
+    this.items.destroy(); this.sprites.destroy(); this.nature.destroy(); this.parts.destroy();
   }
 
   private at(v: View, x: number, y: number) {
@@ -109,7 +116,7 @@ export class WorldRenderer {
       if (!inView(e.x, e.y, e.size)) continue;
       if (e.kind === 'transport_belt' || e.kind === 'underground_belt' || e.kind === 'splitter') this.drawBelt(v, e, f, time);
       else if (e.kind === 'inserter' || e.kind === 'burner_inserter') {
-        this.drawInserter(v, e);
+        this.drawInserter(v, e, time);
         if (this.flowFor === 'all' || this.flowFor === e.id) drawInserterFlow(this.overlay, e.x, e.y, e.rot, v.x, v.y, v.zoom, this.flowFor === 'all' ? 0.6 : 1);
       }
       if (SPRITED.has(e.kind)) {
@@ -197,7 +204,7 @@ export class WorldRenderer {
         this.overlay.fillStyle(0xffe08a, 0.9).fillCircle(b.x, b.y - 8 * v.zoom, 2.5 * v.zoom);
       }
     }
-    this.items.sweep(); this.sprites.sweep(); this.nature.sweep(); this.arms.sweep();
+    this.items.sweep(); this.sprites.sweep(); this.nature.sweep(); this.arms.sweep(); this.parts.sweep();
   }
 
   /** Inserters whose pickup and drop tiles to mark: one by id, or all of them while placing one. */
@@ -302,37 +309,95 @@ export class WorldRenderer {
     }
   }
 
-  private drawInserter(v: View, e: FEntity) {
-    // Each arm sorts with the buildings around it.
-    const g = this.arms.get(`a${e.id}`).clear().setDepth(10 + (e.x + e.y + 2) * 0.01);
+  private drawInserter(v: View, e: FEntity, time: number) {
+    const depth = 10 + (e.x + e.y + 2) * 0.01;
+    // Each arm sorts with the buildings around it; the ground chevron sits under the base.
+    const g = this.arms.get(`a${e.id}`).clear().setDepth(depth - 0.0005);
     const [dx, dy] = DIRS[e.rot];
-    const c = this.at(v, e.x + 0.5, e.y + 0.5);
-    const s = e.swing ?? 0;
-    // The hand sweeps from the pickup side (behind) to the drop side (in front).
-    const hx = e.x + 0.5 + dx * (s * 1.0 - 0.5) * 1.1;
-    const hy = e.y + 0.5 + dy * (s * 1.0 - 0.5) * 1.1;
-    const h = this.at(v, hx, hy);
-    const lift = 18 * v.zoom;
-    const elbow = { x: (c.x + h.x) / 2, y: (c.y + h.y) / 2 - lift * 1.6 };
-    g.fillStyle(0x2c3036, 1).fillEllipse(c.x, c.y, 26 * v.zoom, 13 * v.zoom);
-    g.fillStyle(0x4a4f57, 1).fillEllipse(c.x, c.y - 3 * v.zoom, 18 * v.zoom, 9 * v.zoom);
-    // Which way items go, on the ground in front of the base.
     const [px, py] = [-dy, dx];
     const ox = e.x + 0.5, oy = e.y + 0.5;
+    const c = this.at(v, ox, oy);
+    // Which way items go, on the ground in front of the base.
     const tip = this.at(v, ox + dx * 0.46, oy + dy * 0.46);
     const l = this.at(v, ox + dx * 0.28 + px * 0.16, oy + dy * 0.28 + py * 0.16);
     const r = this.at(v, ox + dx * 0.28 - px * 0.16, oy + dy * 0.28 - py * 0.16);
     g.fillStyle(e.kind === 'burner_inserter' ? 0xc8b8a0 : 0xf0c040, 0.9).fillTriangle(tip.x, tip.y, l.x, l.y, r.x, r.y);
-    // Electric inserters are yellow, burner ones sooty iron.
-    const [c1, c2] = e.kind === 'burner_inserter' ? [0x5a5048, 0x7a6a5a] : [0xe0a82a, 0xf0c040];
-    g.lineStyle(5 * v.zoom, c1, 1).lineBetween(c.x, c.y - 6 * v.zoom, elbow.x, elbow.y);
-    g.lineStyle(4 * v.zoom, c2, 1).lineBetween(elbow.x, elbow.y, h.x, h.y - lift * 0.5);
-    g.fillStyle(0x30343a, 1).fillCircle(h.x, h.y - lift * 0.5, 3.5 * v.zoom);
+    if (!this.scene.textures.exists(`ip_${e.kind}_arm`)) { this.drawInserterShapes(v, e, g); return; }
+
+    // The base, painted, its foot on the tile's centre.
+    const spec = INSERTER_PARTS[e.kind];
+    const base = this.parts.get(`b${e.id}`);
+    if (base.texture.key !== `ip_${e.kind}_base`) base.setTexture(`ip_${e.kind}_base`);
+    const bs = spec.width * TILE_W * v.zoom / base.width;
+    base.setOrigin(spec.foot[0], spec.foot[1]).setPosition(c.x, c.y + TILE_H * v.zoom * 0.12).setScale(bs).setDepth(depth);
+    const shoulderScreen = {
+      x: base.x + (spec.socket[0] - spec.foot[0]) * base.width * bs,
+      y: base.y + (spec.socket[1] - spec.foot[1]) * base.height * bs,
+    };
+    // How high the shoulder stands, in tiles, from where it lands on screen above the centre.
+    const unit = TILE_H * v.zoom * 1.2;
+    const shoulderZ = (c.y - shoulderScreen.y) / unit;
+
+    // The claw sweeps round the base in a half circle, from the pickup tile behind to the drop
+    // tile in front, rising over the top as it goes.
+    const s = e.swing ?? 0;
+    const phi = Math.PI * (1 - s);
+    const reach = 0.95;
+    const hand = { x: ox + reach * (Math.cos(phi) * dx + Math.sin(phi) * px), y: oy + reach * (Math.cos(phi) * dy + Math.sin(phi) * py), z: 0.28 + 0.25 * Math.sin(phi) };
+    const shoulder = { x: ox, y: oy, z: shoulderZ };
+    // Two segments of fixed length: the elbow rises above their midpoint by what's left over.
+    const L = 0.62;
+    const D = Math.hypot(hand.x - shoulder.x, hand.y - shoulder.y, hand.z - shoulder.z);
+    const lift = Math.sqrt(Math.max(0, L * L - (D / 2) ** 2));
+    const elbow = { x: (hand.x + shoulder.x) / 2, y: (hand.y + shoulder.y) / 2, z: (hand.z + shoulder.z) / 2 + lift };
+    const proj = (p: { x: number; y: number; z: number }) => { const q = this.at(v, p.x, p.y); return { x: q.x, y: q.y - p.z * unit }; };
+    const S = proj(shoulder), E = proj(elbow), H = proj(hand);
+    // The segment nearer the camera draws over the other.
+    const front = hand.x + hand.y > ox + oy;
+    this.segment(`l${e.id}`, `ip_${e.kind}_arm`, S, E, v.zoom, depth + (front ? 0.0001 : 0.0002), 0xffffff);
+    this.segment(`u${e.id}`, `ip_${e.kind}_arm`, E, H, v.zoom, depth + (front ? 0.0002 : 0.0001), 0xe8e8e8);
+    // The claw hangs from the end of the arm, pointing down past it.
+    const claw = this.parts.get(`h${e.id}`);
+    if (claw.texture.key !== `ip_${e.kind}_hand`) claw.setTexture(`ip_${e.kind}_hand`);
+    const cl = 0.4 * TILE_W * v.zoom / claw.width;
+    const ang = Math.atan2(H.y - E.y, H.x - E.x);
+    claw.setOrigin(0.1, 0.5).setPosition(H.x, H.y).setScale(cl).setRotation(ang * 0.5 + Math.PI / 4).setDepth(depth + 0.0003);
+    const grip = { x: H.x + Math.cos(claw.rotation) * claw.width * cl * 0.75, y: H.y + Math.sin(claw.rotation) * claw.width * cl * 0.75 };
     if (e.hand) {
       const img = this.items.get(`h${e.id}`);
       if (img.texture.key !== `ic_${e.hand}`) img.setTexture(`ic_${e.hand}`);
-      img.setPosition(h.x, h.y - lift * 0.5).setScale((TILE_W * v.zoom * 0.2) / 64).setDepth(g.depth + 0.001);
+      img.setPosition(grip.x, grip.y).setScale((TILE_W * v.zoom * 0.2) / 64).setDepth(depth + 0.0004);
     }
+    // A burner's firebox glows while it has fuel.
+    if (e.kind === 'burner_inserter' && (e.burn ?? 0) > 0) {
+      const fx = base.x + (0.24 - spec.foot[0]) * base.width * bs, fy = base.y + (0.77 - spec.foot[1]) * base.height * bs;
+      const fl = 0.6 + 0.4 * Math.sin(time * 0.025 + e.id * 1.7);
+      this.overlay.fillStyle(0xff8a1c, 0.35 * fl).fillCircle(fx, fy, 3.5 * v.zoom * (0.8 + fl * 0.4));
+    }
+  }
+
+  /** One arm segment stretched between two screen points, its pivot rings on the points. */
+  private segment(key: string, tex: string, a: { x: number; y: number }, b: { x: number; y: number }, zoom: number, depth: number, tint: number) {
+    const img = this.parts.get(key);
+    if (img.texture.key !== tex) img.setTexture(tex);
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    // Pivot to pivot is 79 % of the image's width.
+    img.setOrigin(0.1, 0.5).setPosition(a.x, a.y).setRotation(Math.atan2(b.y - a.y, b.x - a.x))
+      .setScale(len / (img.width * 0.79), (11 * zoom) / img.height).setDepth(depth).setTint(tint);
+  }
+
+  /** The old drawn arm, while the painted parts load. */
+  private drawInserterShapes(v: View, e: FEntity, g: Phaser.GameObjects.Graphics) {
+    const [dx, dy] = DIRS[e.rot];
+    const c = this.at(v, e.x + 0.5, e.y + 0.5);
+    const s = e.swing ?? 0;
+    const h = this.at(v, e.x + 0.5 + dx * (s - 0.5) * 1.1, e.y + 0.5 + dy * (s - 0.5) * 1.1);
+    const lift = 18 * v.zoom;
+    const elbow = { x: (c.x + h.x) / 2, y: (c.y + h.y) / 2 - lift * 1.6 };
+    g.fillStyle(0x2c3036, 1).fillEllipse(c.x, c.y, 26 * v.zoom, 13 * v.zoom);
+    const [c1, c2] = e.kind === 'burner_inserter' ? [0x5a5048, 0x7a6a5a] : [0xe0a82a, 0xf0c040];
+    g.lineStyle(5 * v.zoom, c1, 1).lineBetween(c.x, c.y - 6 * v.zoom, elbow.x, elbow.y);
+    g.lineStyle(4 * v.zoom, c2, 1).lineBetween(elbow.x, elbow.y, h.x, h.y - lift * 0.5);
   }
 
   /** A flashing lightning bolt: the building has no power. */
