@@ -82,6 +82,9 @@ export class WorldScene extends Phaser.Scene {
   private drag: { x: number; y: number; panX: number; panY: number } | null = null;
   private hoverTX = -1;
   private hoverTY = -1;
+  /** The tile of what's drawn under the pointer: a tall sprite wins over the ground behind it. */
+  private aimTX = -1;
+  private aimTY = -1;
   private pointer = { x: 0, y: 0 };
 
   private engineer: CharacterSprite | null = null;
@@ -289,6 +292,7 @@ export class WorldScene extends Phaser.Scene {
     }
 
     const view = this.viewInfo();
+    this.updateAim();
     this.ground.setView(view.x, view.y, this.zoom);
     this.drawProcess(time);
     this.worldDraw.processDamage = [...this.processHp].flatMap(([id, h]) => {
@@ -296,6 +300,10 @@ export class WorldScene extends Phaser.Scene {
       const n = p ? engine.PROTO[p.proto]?.size ?? 1 : 1;
       return p ? [[p.x, p.y, n, h / this.maxHp(n)] as [number, number, number, number]] : [];
     });
+    // Inserters show where they take from and put to: the one pointed at, or all while placing one.
+    const aimedKind = this.factory.entities.get(engine.entityAt(this.aimTX, this.aimTY))?.kind;
+    this.worldDraw.flowFor = this.placementType === 'inserter' || this.placementType === 'burner_inserter' ? 'all'
+      : aimedKind === 'inserter' || aimedKind === 'burner_inserter' ? engine.entityAt(this.aimTX, this.aimTY) : null;
     this.worldDraw.draw(view, time, this.factory, this.objects, this.combat);
     const powerTool = this.placementType ? !!(engine.PROTO[this.placementType]?.power_w || engine.PROTO[this.placementType]?.wire) : false;
     this.worldDraw.drawPower(view, this.snapshot, time, powerTool || this.hoveredPole());
@@ -621,7 +629,7 @@ export class WorldScene extends Phaser.Scene {
   private tickMining(dt: number) {
     const p = this.input.activePointer;
     if (!p.rightButtonDown() || this.hud?.open) { this.mining = null; this.miningProgress = 0; return; }
-    const target = this.mineTarget(this.hoverTX, this.hoverTY);
+    const target = this.mineTarget(this.aimTX, this.aimTY);
     if (!target || this.distanceTo(target.x, target.y) > this.eng.reach) { this.mining = null; this.miningProgress = 0; return; }
     if (this.mining?.key !== target.key) {
       this.mining = target;
@@ -743,8 +751,9 @@ export class WorldScene extends Phaser.Scene {
     this.pointer = { x: p.x, y: p.y };
     const tile = this.tileAt(p.x, p.y);
     this.hoverTX = tile.x; this.hoverTY = tile.y;
+    this.updateAim();
     if (this.laying && p.isDown) this.layTo(tile.x, tile.y);
-    this.updateHover(p, tile.x, tile.y);
+    this.updateHover(p, this.aimTX, this.aimTY);
     if (this.drag && p.isDown && !p.rightButtonDown()) {
       this.pan.x = this.drag.panX + (p.x - this.drag.x);
       this.pan.y = this.drag.panY + (p.y - this.drag.y);
@@ -759,7 +768,8 @@ export class WorldScene extends Phaser.Scene {
     if (wasDrag || this.menu.open || p.button !== 0) return;
     const tile = this.tileAt(p.x, p.y);
     if (this.placementType) { this.placeAt(this.placementType, tile.x, tile.y); return; }
-    const id = engine.entityAt(tile.x, tile.y);
+    this.updateAim();
+    const id = engine.entityAt(this.aimTX, this.aimTY);
     if (id < 0) { this.select(null); return; }
     if ((p.event as MouseEvent).shiftKey && this.repair(id)) return;
     const f = this.factory.entities.get(id);
@@ -785,10 +795,37 @@ export class WorldScene extends Phaser.Scene {
     return false;
   }
 
+  /** Finds what's drawn under the pointer, front to back, falling back to the tile under it. */
+  private updateAim() {
+    this.aimTX = this.hoverTX; this.aimTY = this.hoverTY;
+    if (this.placementType || !this.processLayer) return;
+    const { hoverTX: tx, hoverTY: ty } = this;
+    let depth = -Infinity;
+    const p = engine.placedById(engine.entityAt(tx, ty));
+    if (p) depth = 10 + (p.x + p.y + 2 * (engine.PROTO[p.proto]?.size ?? 1)) * 0.01;
+    else if (this.objects.has(tileKey(tx, ty))) depth = 10 + (tx + ty + 1.2) * 0.01;
+    for (const hit of [this.processLayer.pick(this.pointer.x, this.pointer.y), this.worldDraw.pick(this.pointer.x, this.pointer.y, this.factory)]) {
+      if (hit && hit.depth > depth) { depth = hit.depth; this.aimTX = hit.tx; this.aimTY = hit.ty; }
+    }
+  }
+
   private drawHoverTile(view: View) {
     this.hoverGfx.clear();
     const { hoverTX: tx, hoverTY: ty } = this;
     if (this.menu.open || tx < 0 || ty < 0 || tx >= this.map.width || ty >= this.map.height) return;
+    // Outside placement, outline the whole building being pointed at.
+    const aimed = this.placementType ? undefined : engine.placedById(engine.entityAt(this.aimTX, this.aimTY));
+    if (aimed) {
+      const n = engine.PROTO[aimed.proto]?.size ?? 1;
+      const pts = [isoToScreen(aimed.x, aimed.y, view.x, view.y, this.zoom), isoToScreen(aimed.x + n, aimed.y, view.x, view.y, this.zoom),
+        isoToScreen(aimed.x + n, aimed.y + n, view.x, view.y, this.zoom), isoToScreen(aimed.x, aimed.y + n, view.x, view.y, this.zoom)];
+      this.hoverGfx.lineStyle(2, 0xffffff, 0.8).strokePoints(pts, true);
+      return;
+    }
+    if (!this.placementType && (this.aimTX !== tx || this.aimTY !== ty)) {
+      drawHover(this.hoverGfx, this.aimTX, this.aimTY, view.x, view.y, this.zoom);
+      return;
+    }
     // Where an extraction building can go: its resource's tiles light up.
     const need = this.placementType ? this.needOf(this.placementType) : null;
     if (need) {
@@ -832,14 +869,14 @@ export class WorldScene extends Phaser.Scene {
   private rotate() {
     if (this.placementType) { this.placementRot = (this.placementRot + 1) % 4; return; }
     // Turn the belt, inserter or drill under the cursor.
-    const f = this.factory.entities.get(engine.entityAt(this.hoverTX, this.hoverTY));
+    const f = this.factory.entities.get(engine.entityAt(this.aimTX, this.aimTY));
     if (f && f.kind !== 'splitter' && f.kind !== 'underground_belt') f.rot = (f.rot + 1) % 4;
   }
 
   /** Q: pick the kind of building under the cursor to place more. */
   private pipette() {
-    const id = engine.entityAt(this.hoverTX, this.hoverTY);
-    const p = engine.layout().find(x => x.id === id);
+    const id = engine.entityAt(this.aimTX, this.aimTY);
+    const p = engine.placedById(id);
     if (!p) { this.choose(null); return; }
     this.placementRot = this.factory.entities.get(id)?.rot ?? p.rot;
     this.choose(p.proto);
@@ -984,8 +1021,7 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private hoveredPole(): boolean {
-    const id = engine.entityAt(this.hoverTX, this.hoverTY);
-    const p = engine.layout().find(x => x.id === id);
+    const p = engine.placedById(engine.entityAt(this.aimTX, this.aimTY));
     return !!p && (engine.PROTO[p.proto]?.wire ?? 0) > 0;
   }
 
@@ -1082,7 +1118,7 @@ export class WorldScene extends Phaser.Scene {
       ghost = { proto: this.placementType, x: o.x, y: o.y, rot: this.placementRot, ok: !this.placementError(this.placementType, o.x, o.y, this.placementRot) };
     }
     const v = this.viewInfo();
-    const hoveredId = engine.entityAt(this.hoverTX, this.hoverTY);
+    const hoveredId = engine.entityAt(this.aimTX, this.aimTY);
     this.processLayer.draw(this.snapshot, v.x, v.y, this.zoom, ghost, time, {
       all: this.placementType === 'pipe' || !!(this.placementType && engine.PROTO[this.placementType]?.ports.length),
       hovered: hoveredId >= 0 ? hoveredId : null,

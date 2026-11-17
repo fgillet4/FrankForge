@@ -189,6 +189,10 @@ export function snapshot(): Snapshot | null {
 }
 
 /** The layout (not the contents) for saving. */
+export function placedById(id: number): Placed | undefined {
+  return placed.get(id);
+}
+
 export function layout(): Placed[] {
   return [...placed.values()];
 }

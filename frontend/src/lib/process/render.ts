@@ -9,7 +9,7 @@
 import Phaser from 'phaser';
 import { TILE_W, TILE_H, isoToScreen } from '../phaser/isoMath';
 import { ITEMS, iconUrl } from '../game/items';
-import { PROTO, portTiles, type EntityView, type Snapshot, type VesselView } from './engine';
+import { PROTO, placedById, portTiles, type EntityView, type Snapshot, type VesselView } from './engine';
 
 const SPRITE_TILE_PX = 128;
 
@@ -151,6 +151,45 @@ export class CharacterSprite {
 interface Fx { sprite: Phaser.GameObjects.Sprite; x: number; y: number; size: number; until: number }
 
 interface Ghost { proto: string; x: number; y: number; rot: number; ok: boolean }
+
+/** A point on screen that hits a sprite where it's drawn opaque, not just its bounding box. */
+export function hitsSprite(s: Phaser.GameObjects.Sprite | Phaser.GameObjects.Image, x: number, y: number): boolean {
+  if (!s.visible || !s.getBounds().contains(x, y)) return false;
+  // Flipped sprites mirror about their origin.
+  let lx = (x - s.x) / s.scaleX + s.displayOriginX;
+  const ly = (y - s.y) / s.scaleY + s.displayOriginY;
+  if (s.flipX) lx = 2 * s.displayOriginX - lx;
+  return (s.scene.textures.getPixelAlpha(Math.floor(lx), Math.floor(ly), s.texture.key, s.frame.name) ?? 0) > 60;
+}
+
+/**
+ * Where an inserter takes from (green) and puts to (yellow), with an arrow across. Rot is the
+ * drop direction, as for belts.
+ */
+export function drawInserterFlow(g: Phaser.GameObjects.Graphics, x: number, y: number, rot: number,
+  camX: number, camY: number, zoom: number, alpha = 1) {
+  const [dx, dy] = [[0, -1], [1, 0], [0, 1], [-1, 0]][rot % 4];
+  const at = (ix: number, iy: number) => isoToScreen(ix, iy, camX, camY, zoom);
+  const diamond = (cx: number, cy: number, colour: number) => {
+    const r = 0.36;
+    const pts = [at(cx - r, cy - r), at(cx + r, cy - r), at(cx + r, cy + r), at(cx - r, cy + r)];
+    g.fillStyle(colour, 0.18 * alpha).fillPoints(pts, true);
+    g.lineStyle(Math.max(1.5, 2 * zoom), colour, 0.9 * alpha).strokePoints(pts, true);
+  };
+  const cx = x + 0.5, cy = y + 0.5;
+  diamond(cx - dx, cy - dy, 0x6fe08a);
+  diamond(cx + dx, cy + dy, 0xffd23a);
+  // Arrow from the pickup tile to the drop tile.
+  const [px, py] = [-dy, dx];
+  const from = at(cx - dx * 0.75, cy - dy * 0.75), tip = at(cx + dx * 0.95, cy + dy * 0.95);
+  const l = at(cx + dx * 0.6 + px * 0.22, cy + dy * 0.6 + py * 0.22), r = at(cx + dx * 0.6 - px * 0.22, cy + dy * 0.6 - py * 0.22);
+  g.lineStyle(Math.max(3, 5 * zoom), 0x000000, 0.45 * alpha).lineBetween(from.x, from.y, tip.x, tip.y);
+  g.lineStyle(Math.max(1.5, 2.5 * zoom), 0xffffff, 0.95 * alpha).lineBetween(from.x, from.y, tip.x, tip.y);
+  g.fillStyle(0xffffff, 0.95 * alpha).fillTriangle(tip.x, tip.y, l.x, l.y, r.x, r.y);
+}
+
+/** Something picked on screen: the tile it stands on and how far forward it's drawn. */
+export interface Pick { tx: number; ty: number; depth: number }
 
 export class ProcessLayer {
   private images = new Map<number, Phaser.GameObjects.Sprite>();
@@ -338,6 +377,19 @@ export class ProcessLayer {
       img.setFlipX(e.rot % 2 === 1);
       img.setDepth(10 + (e.x + e.y + 2 * n) * 0.01);
       img.setTint(e.id === this.selected ? 0xfff2b0 : 0xffffff);
+      // Now and then a puff of vapour lifts the relief valve on a gas sphere in use.
+      if (e.proto === 'gas_sphere' && running && !ruptured) {
+        const t = ((time + e.id * 1700) % 5000) / 1600;
+        if (t < 1) {
+          const s = img.scaleX;
+          const vx = img.x + (img.flipX ? 64 : -64) * s, vy = img.y - 500 * s;
+          for (let k = 0; k < 3; k++) {
+            const u = Math.max(0, t - k * 0.12);
+            this.overlayGfx.fillStyle(0xf2f4f6, 0.55 * (1 - u) * (u > 0 ? 1 : 0))
+              .fillCircle(vx + Math.sin(u * 4 + k) * 6 * s, vy - u * 160 * s, (14 + u * 40) * s);
+          }
+        }
+      }
       // A glow on lit fireboxes and flare stacks that have no animation of their own.
       const fire = e.vessels.find(v => v.reactions.some(r => r.name.includes('combustion') && r.rate > 1e-3));
       if (fire && !ruptured && !anim) {
@@ -393,7 +445,9 @@ export class ProcessLayer {
     this.overlayGfx.fillPoints(pts, true).strokePoints(pts, true);
     // Which way it faces, for anything that has a direction.
     const dir = [[0, -1], [1, 0], [0, 1], [-1, 0]][g.rot % 4];
-    if (['transport_belt', 'underground_belt', 'splitter', 'inserter', 'burner_drill', 'electric_drill'].includes(g.proto)) {
+    if (g.proto === 'inserter' || g.proto === 'burner_inserter') {
+      drawInserterFlow(this.overlayGfx, g.x, g.y, g.rot, camX, camY, zoom);
+    } else if (['transport_belt', 'underground_belt', 'splitter', 'burner_drill', 'electric_drill'].includes(g.proto)) {
       const c = isoToScreen(g.x + n / 2, g.y + n / 2, camX, camY, zoom);
       const t = isoToScreen(g.x + n / 2 + dir[0] * (n / 2 + 0.3), g.y + n / 2 + dir[1] * (n / 2 + 0.3), camX, camY, zoom);
       this.overlayGfx.lineStyle(Math.max(2, 3 * zoom), 0xffe066, 0.95).lineBetween(c.x, c.y, t.x, t.y);
@@ -409,6 +463,17 @@ export class ProcessLayer {
       this.ghostImg?.setVisible(false);
     }
     this.drawPorts(g.proto, g.x, g.y, g.rot, camX, camY, zoom);
+  }
+
+  /** The frontmost building drawn under a screen point. */
+  pick(x: number, y: number): Pick | null {
+    let best: Pick | null = null;
+    for (const [id, img] of this.images) {
+      if (best && img.depth <= best.depth) continue;
+      const p = placedById(id);
+      if (p && hitsSprite(img, x, y)) best = { tx: p.x, ty: p.y, depth: img.depth };
+    }
+    return best;
   }
 
   /** Segment index under a tile, if it is a pipe. */

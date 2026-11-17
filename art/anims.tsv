@@ -26,7 +26,6 @@ fx_fire	1	loop	The fire burns steadily, flames licking upward and flickering.
 fx_leak	0	loop	A pressurised jet of white gas sprays continuously sideways out of the crack, billowing and dispersing.
 fx_sparks	0	loop	Bright blue-white electric arcs crackle and sparks spray out in short bursts.
 storage_tank	1	loop	A thin wisp of vapour breathes out of the small vent on the roof and drifts upward.
-gas_sphere	1	loop	A small puff of white vapour escapes from the relief valve on top now and then and drifts upward.
 flash_drum	1	loop	A thin wisp of white steam rises straight up from the top of the drum and the level gauge on the side flickers.
 fx_build	0	once	The dust puff billows outward and the welding sparks fly, then everything settles and fades away completely, leaving only the empty background.
 fx_spill	0	loop	The liquid ripples and splashes gently as more liquid drips into the puddle.

@@ -7,7 +7,7 @@
 import Phaser from 'phaser';
 import { TILE_H, TILE_W, isoToScreen, screenToIso } from '../phaser/isoMath';
 import { PROTO, type Snapshot } from '../process/engine';
-import { ANIMS } from '../process/render';
+import { ANIMS, drawInserterFlow, hitsSprite, type Pick } from '../process/render';
 import { BELT_SPEED, DIRS, type FEntity, type Factory } from './factory';
 import type { Combat } from './combat';
 import type { NatureObject } from './nature';
@@ -41,6 +41,7 @@ class Pool<T extends Phaser.GameObjects.GameObject> {
     this.seen.clear();
   }
   destroy() { this.live.forEach(o => o.destroy()); this.live.clear(); }
+  entries() { return this.live.entries(); }
 }
 
 /** Buildings the process layer doesn't draw (they're not in the engine's snapshot). */
@@ -96,7 +97,10 @@ export class WorldRenderer {
     for (const e of f.entities.values()) {
       if (!inView(e.x, e.y, e.size)) continue;
       if (e.kind === 'transport_belt' || e.kind === 'underground_belt' || e.kind === 'splitter') this.drawBelt(v, e, f, time);
-      else if (e.kind === 'inserter' || e.kind === 'burner_inserter') this.drawInserter(v, e);
+      else if (e.kind === 'inserter' || e.kind === 'burner_inserter') {
+        this.drawInserter(v, e);
+        if (this.flowFor === 'all' || this.flowFor === e.id) drawInserterFlow(this.overlay, e.x, e.y, e.rot, v.x, v.y, v.zoom, this.flowFor === 'all' ? 0.6 : 1);
+      }
       if (SPRITED.has(e.kind)) {
         const s = this.sprites.get(`b${e.id}`);
         // Working machines play their animation; idle ones show the still sprite.
@@ -180,6 +184,25 @@ export class WorldRenderer {
     this.items.sweep(); this.sprites.sweep(); this.nature.sweep(); this.arms.sweep();
   }
 
+  /** Inserters whose pickup and drop tiles to mark: one by id, or all of them while placing one. */
+  flowFor: number | 'all' | null = null;
+
+  /** The frontmost building, tree or rock drawn under a screen point. */
+  pick(x: number, y: number, f: Factory): Pick | null {
+    let best: Pick | null = null;
+    for (const [key, s] of this.sprites.entries()) {
+      if (best && s.depth <= best.depth) continue;
+      const e = f.entities.get(Number(key.slice(1)));
+      if (e && hitsSprite(s, x, y)) best = { tx: e.x, ty: e.y, depth: s.depth };
+    }
+    for (const [key, img] of this.nature.entries()) {
+      if (key.startsWith('nest') || (best && img.depth <= best.depth) || !hitsSprite(img, x, y)) continue;
+      const [tx, ty] = key.split(',').map(Number);
+      best = { tx, ty, depth: img.depth };
+    }
+    return best;
+  }
+
   /** Damaged process buildings as [x, y, size, health fraction], filled in by the scene. */
   processDamage: [number, number, number, number][] = [];
 
@@ -246,6 +269,13 @@ export class WorldRenderer {
     const elbow = { x: (c.x + h.x) / 2, y: (c.y + h.y) / 2 - lift * 1.6 };
     g.fillStyle(0x2c3036, 1).fillEllipse(c.x, c.y, 26 * v.zoom, 13 * v.zoom);
     g.fillStyle(0x4a4f57, 1).fillEllipse(c.x, c.y - 3 * v.zoom, 18 * v.zoom, 9 * v.zoom);
+    // Which way items go, on the ground in front of the base.
+    const [px, py] = [-dy, dx];
+    const ox = e.x + 0.5, oy = e.y + 0.5;
+    const tip = this.at(v, ox + dx * 0.46, oy + dy * 0.46);
+    const l = this.at(v, ox + dx * 0.28 + px * 0.16, oy + dy * 0.28 + py * 0.16);
+    const r = this.at(v, ox + dx * 0.28 - px * 0.16, oy + dy * 0.28 - py * 0.16);
+    g.fillStyle(e.kind === 'burner_inserter' ? 0xc8b8a0 : 0xf0c040, 0.9).fillTriangle(tip.x, tip.y, l.x, l.y, r.x, r.y);
     // Electric inserters are yellow, burner ones sooty iron.
     const [c1, c2] = e.kind === 'burner_inserter' ? [0x5a5048, 0x7a6a5a] : [0xe0a82a, 0xf0c040];
     g.lineStyle(5 * v.zoom, c1, 1).lineBetween(c.x, c.y - 6 * v.zoom, elbow.x, elbow.y);

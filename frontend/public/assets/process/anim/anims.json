@@ -332,15 +332,6 @@
   "oy": 0.9463,
   "w": 320
  },
- "gas_sphere": {
-  "fps": 8,
-  "frames": 24,
-  "h": 490,
-  "loop": true,
-  "ox": 0.5,
-  "oy": 0.9954,
-  "w": 434
- },
  "gas_well": {
   "fps": 8,
   "frames": 24,
