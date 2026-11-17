@@ -10,6 +10,7 @@ import { PROTO, type Snapshot } from '../process/engine';
 import { ANIMS, drawInserterFlow, hitsSprite, type Pick } from '../process/render';
 import { BELT_SPEED, DIRS, type FEntity, type Factory } from './factory';
 import type { Combat } from './combat';
+import { RECIPES } from './items';
 import type { NatureObject } from './nature';
 
 const SPRITE_TILE_PX = 128;
@@ -46,6 +47,15 @@ class Pool<T extends Phaser.GameObjects.GameObject> {
 
 /** Buildings the process layer doesn't draw (they're not in the engine's snapshot). */
 const SPRITED = new Set(['wooden_chest', 'iron_chest', 'burner_drill', 'stone_furnace', 'gun_turret']);
+/** Problems worth a badge over the building, Factorio-style: colour and the item to show. */
+const ALERTS: Record<string, [number, (e: FEntity) => string | null]> = {
+  'Out of fuel': [0xff5a4f, () => 'wood'],
+  'No ore left': [0xff5a4f, () => 'iron_ore'],
+  'Output full': [0xffc23a, e => e.output?.first() ?? null],
+  'Output blocked': [0xffc23a, e => e.held ?? null],
+  'Missing science packs': [0xffc23a, () => 'science_red'],
+  'No recipe set': [0xffc23a, () => 'iron_gear'],
+};
 const BURNING = new Set(['stone_furnace', 'burner_drill', 'electric_furnace', 'burner_generator']);
 
 export class WorldRenderer {
@@ -126,6 +136,10 @@ export class WorldRenderer {
         const fl = 0.7 + 0.3 * Math.sin(time * 0.02 + e.id);
         this.overlay.fillStyle(0xff8a1c, 0.22 * fl).fillCircle(c.x, c.y - TILE_H * v.zoom * 0.6, 16 * v.zoom * fl);
       }
+      const making = this.altMode && e.recipe ? RECIPES[e.recipe]?.out : undefined;
+      if (making) this.recipeBadge(v, e, making);
+      const alert = e.status ? ALERTS[e.status] : undefined;
+      if (alert) this.alertBadge(v, e, alert[0], alert[1](e), time);
       if (e.firing && e.kind === 'gun_turret' && Math.floor(time / 50) % 2) {
         const c = this.at(v, e.x + 1, e.y + 1);
         const dx = Math.cos(e.aim!) - Math.sin(e.aim!), dy = (Math.cos(e.aim!) + Math.sin(e.aim!)) / 2;
@@ -186,6 +200,8 @@ export class WorldRenderer {
 
   /** Inserters whose pickup and drop tiles to mark: one by id, or all of them while placing one. */
   flowFor: number | 'all' | null = null;
+  /** Alt mode: what each machine is making, shown over it. */
+  altMode = false;
 
   /** The frontmost building, tree or rock drawn under a screen point. */
   pick(x: number, y: number, f: Factory): Pick | null {
@@ -205,6 +221,33 @@ export class WorldRenderer {
 
   /** Damaged process buildings as [x, y, size, health fraction], filled in by the scene. */
   processDamage: [number, number, number, number][] = [];
+
+  /** Alt mode's dark plate with the machine's product on it. */
+  private recipeBadge(v: View, e: FEntity, item: string) {
+    const c = this.at(v, e.x + e.size / 2, e.y + e.size / 2);
+    const y = c.y - TILE_H * v.zoom * e.size * 0.5;
+    const r = 13 * v.zoom;
+    this.overlay.fillStyle(0x10141a, 0.78).fillRoundedRect(c.x - r, y - r, r * 2, r * 2, 4 * v.zoom);
+    if (!this.scene.textures.exists(`ic_${item}`)) return;
+    const img = this.items.get(`rc${e.id}`);
+    if (img.texture.key !== `ic_${item}`) img.setTexture(`ic_${item}`);
+    img.setPosition(c.x, y).setScale((r * 1.7) / 64).setAlpha(1).setDepth(991);
+  }
+
+  /** A pulsing badge with an item in it, floating over a building that needs attention. */
+  private alertBadge(v: View, e: FEntity, colour: number, item: string | null, time: number) {
+    const c = this.at(v, e.x + e.size / 2, e.y + e.size / 2);
+    const y = c.y - TILE_H * v.zoom * (e.size * 1.1 + 0.8);
+    const a = 0.65 + 0.35 * Math.sin(time * 0.006);
+    const r = 11 * v.zoom;
+    this.overlay.fillStyle(0x000000, 0.55 * a).fillCircle(c.x, y, r + 2);
+    this.overlay.fillStyle(colour, 0.85 * a).fillCircle(c.x, y, r);
+    if (item && this.scene.textures.exists(`ic_${item}`)) {
+      const img = this.items.get(`al${e.id}`);
+      if (img.texture.key !== `ic_${item}`) img.setTexture(`ic_${item}`);
+      img.setPosition(c.x, y).setScale((r * 1.5) / 64).setAlpha(a).setDepth(991);
+    }
+  }
 
   private healthBar(x: number, y: number, frac: number, zoom: number, colour = 0x6fd36f) {
     const w = 36 * zoom;

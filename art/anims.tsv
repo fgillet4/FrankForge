@@ -51,3 +51,5 @@ lab	0	loop	Small indicator lights blink on the equipment and the glass roof glow
 chemical_plant	1	loop	The agitator on top turns steadily and a thin wisp of white vapour drifts up from a vent.
 burner_generator	1	loop	The flywheel spins, the piston slides back and forth, the fire glows behind the firebox door and a thin wisp of smoke rises from the chimney.
 cstr	0	loop	The agitator motor and shaft on top turn steadily and the sight glass shimmers as the liquid inside churns.
+char_shoot_se	0	loop	The engineer stands braced and fires the rifle forward in short bursts, the shoulder kicking back with each shot and a bright yellow muzzle flash at the barrel, staying on the same spot.
+char_shoot_ne	0	loop	The engineer stands braced and fires the rifle forward in short bursts, the shoulder kicking back with each shot and a bright yellow muzzle flash at the barrel, staying on the same spot.

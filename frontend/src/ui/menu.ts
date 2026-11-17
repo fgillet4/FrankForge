@@ -39,10 +39,12 @@ export const HOW_TO_PLAY = `
     <kbd>P</kbd><span>Production graphs</span>
     <kbd>M</kbd><span>Enlarge the minimap; click it to look somewhere</span>
     <kbd>Click</kbd><span>Pick a building in the bar, then click the map to place it</span>
-    <kbd>Drag</kbd><span>With pipe or belt selected, lay a line of it</span>
+    <kbd>Drag</kbd><span>While placing, lay a line of pipe or belt, or a row of buildings (poles space themselves)</span>
     <kbd>R</kbd><span>Rotate what you're placing, or the belt or inserter under the cursor</span>
     <kbd>Q</kbd><span>Pick up the kind of building under the cursor to place more</span>
     <kbd>Click</kbd><span>Open a machine, or inspect a process building</span>
+    <kbd>Ctrl/⌘-click</kbd><span>Quick transfer: take a machine's output (or a chest's contents), fill it with fuel and ore</span>
+    <kbd>Alt</kbd><span>Alt mode: what each machine makes and which way every inserter works</span>
     <kbd>Shift-click</kbd><span>Repair a damaged building with a repair pack</span>
     <kbd>Mouse wheel</kbd><span>Zoom toward the cursor; drag to look around</span>
     <kbd>Tab / Shift-Tab</kbd><span>Speed the simulation up or down (all the way down pauses)</span>
@@ -50,6 +52,7 @@ export const HOW_TO_PLAY = `
   </div>
   <h3>Getting started</h3>
   <ul>
+    <li>The goal under the minimap always shows a next step.</li>
     <li>Chop trees for wood and break rocks for stone. Five stone make a furnace; fuel it with wood and drop in ore.</li>
     <li>A burner drill on an ore deposit mines by itself. Point its output at a furnace or a belt.</li>
     <li>Craft red science packs and a lab, choose a research (T), and the lab will unlock new buildings.</li>

@@ -107,9 +107,24 @@ button.slot:hover { border-color: #5a6a80; }
 .hud-minimap canvas { width: 100%; height: 100%; image-rendering: pixelated; }
 .hud-minimap small { position: absolute; left: 6px; bottom: 4px; color: var(--h-dim); font-size: 10px; text-shadow: 0 1px 2px #000; pointer-events: none; }
 
+.hud-goal {
+  position: absolute; right: 12px; top: 222px; width: 200px; box-sizing: border-box; padding: 8px 10px 9px; border-radius: 10px;
+  border: 1px solid var(--h-line); background: rgba(10, 14, 20, 0.82); color: #e8edf2; font-size: 12px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45); pointer-events: none;
+}
+.hud-goal small { display: block; color: var(--h-dim); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
+.hud-goal b { display: block; margin: 2px 0 3px; font-size: 13px; }
+.hud-goal p { margin: 0 0 7px; color: var(--h-dim); line-height: 1.35; }
+.hud-goal-bar { height: 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.1); overflow: hidden; }
+.hud-goal-bar div { height: 100%; background: #6fd36f; transition: width 0.4s ease; }
+.hud-goal.new { animation: hud-goal-in 0.9s ease; }
+@keyframes hud-goal-in { 0% { box-shadow: 0 0 0 2px #6fd36f, 0 6px 24px rgba(0,0,0,.45); transform: translateX(8px); opacity: 0.4; } 100% { transform: none; opacity: 1; } }
+.hud-minimap.big ~ .hud-goal { display: none; }
+
 @media (max-width: 900px) {
   .hud-grid { grid-template-columns: repeat(6, 44px); }
   .hud-chart { flex-direction: column; }
   .hud-chart canvas { width: 100%; }
   .hud-minimap { width: 130px; height: 130px; }
+  .hud-goal { top: 152px; width: 130px; }
 }

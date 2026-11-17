@@ -39,6 +39,7 @@ import { DIRS, FACTORY_KINDS, Factory, MINED_ITEM, isElectricMachine, type Facto
 import { AMMO_DAMAGE, Combat, WEAPONS, type Arena } from '../game/combat';
 import { NATURE, scatterNature, tileKey, type NatureObject } from '../game/nature';
 import { WorldRenderer, type View } from '../game/draw';
+import { GOALS, type GoalWorld } from '../game/goals';
 
 const MIN_ZOOM = 0.3;
 const MAX_ZOOM = 4;
@@ -84,6 +85,9 @@ export class WorldScene extends Phaser.Scene {
   private hoverTY = -1;
   /** The tile of what's drawn under the pointer: a tall sprite wins over the ground behind it. */
   private aimTX = -1;
+  /** The gun stays raised until then [ms]. */
+  private shootUntil = 0;
+  private goalTimer = 0;
   private aimTY = -1;
   private pointer = { x: 0, y: 0 };
 
@@ -94,6 +98,8 @@ export class WorldScene extends Phaser.Scene {
   private placementType: string | null = null;
   private placementRot = 0;
   private laying: { last: { x: number; y: number } | null } | null = null;
+  /** Dragging out a row of buildings: where the last one went. */
+  private stamping: { last: { x: number; y: number } } | null = null;
   private mining: MiningTarget | null = null;
   private miningProgress = 0;
 
@@ -177,10 +183,11 @@ export class WorldScene extends Phaser.Scene {
     });
     kb.on('keydown-R', () => this.rotate());
     kb.on('keydown-Q', () => this.pipette());
-    kb.on('keydown-E', () => { if (!this.menu.open) this.hud?.toggle('inventory'); });
-    kb.on('keydown-T', () => { if (!this.menu.open && !this.sandbox) this.hud?.toggle('tech'); });
-    kb.on('keydown-P', () => { if (!this.menu.open) this.hud?.toggle('stats'); });
+    kb.on('keydown-E', () => { if (!this.menu.open) this.hud?.toggle('inventory'); this.processUI?.hover(null, 0, 0); });
+    kb.on('keydown-T', () => { if (!this.menu.open && !this.sandbox) this.hud?.toggle('tech'); this.processUI?.hover(null, 0, 0); });
+    kb.on('keydown-P', () => { if (!this.menu.open) this.hud?.toggle('stats'); this.processUI?.hover(null, 0, 0); });
     kb.on('keydown-M', () => this.hud?.toggleBigMap());
+    kb.on('keydown-ALT', (e: KeyboardEvent) => { e.preventDefault(); this.worldDraw.altMode = !this.worldDraw.altMode; });
     kb.on('keydown-ESC', () => this.onEscape());
     this.input.mouse?.disableContextMenu();
     this.input.on('pointerdown', this.onDown, this);
@@ -285,6 +292,8 @@ export class WorldScene extends Phaser.Scene {
       this.hud.update();
       this.processUI?.refreshBar();
     }
+    this.goalTimer -= delta;
+    if (this.goalTimer <= 0) { this.goalTimer = 500; this.tickGoals(); }
     this.saveTimer -= delta;
     if (this.saveTimer <= 0) {
       this.saveTimer = 5000;
@@ -303,7 +312,8 @@ export class WorldScene extends Phaser.Scene {
     // Inserters show where they take from and put to: the one pointed at, or all while placing one.
     const aimedKind = this.factory.entities.get(engine.entityAt(this.aimTX, this.aimTY))?.kind;
     this.worldDraw.flowFor = this.placementType === 'inserter' || this.placementType === 'burner_inserter' ? 'all'
-      : aimedKind === 'inserter' || aimedKind === 'burner_inserter' ? engine.entityAt(this.aimTX, this.aimTY) : null;
+      : aimedKind === 'inserter' || aimedKind === 'burner_inserter' ? engine.entityAt(this.aimTX, this.aimTY)
+      : this.worldDraw.altMode ? 'all' : null;
     this.worldDraw.draw(view, time, this.factory, this.objects, this.combat);
     const powerTool = this.placementType ? !!(engine.PROTO[this.placementType]?.power_w || engine.PROTO[this.placementType]?.wire) : false;
     this.worldDraw.drawPower(view, this.snapshot, time, powerTool || this.hoveredPole());
@@ -495,7 +505,7 @@ export class WorldScene extends Phaser.Scene {
       const len = Math.hypot(dx, dy);
       mx = dx / len * WALK_SPEED;
       my = dy / len * WALK_SPEED;
-      this.engineer?.face(mx, my);
+      if (this.time.now >= this.shootUntil) this.engineer?.face(mx, my);
     }
     const belt = this.factory.entities.get(engine.entityAt(Math.floor(this.player.x), Math.floor(this.player.y)));
     if (belt && (belt.kind === 'transport_belt' || belt.kind === 'splitter') && this.simSpeed > 0) {
@@ -534,7 +544,9 @@ export class WorldScene extends Phaser.Scene {
   private redrawPlayer(view: View) {
     this.playerGfx.clear();
     this.engineer ??= new CharacterSprite(this);
-    if (this.engineer.moving || (this.time.now > this.buildUntil && !this.mining)) this.engineer.action = null;
+    // Shooting raises the gun, even on the move; it stays up briefly between shots.
+    if (this.time.now < this.shootUntil) this.engineer.action = 'shoot';
+    else if (this.engineer.moving || (this.time.now > this.buildUntil && !this.mining)) this.engineer.action = null;
     if (!this.engineer.draw(this.player.x, this.player.y, view.x, view.y, this.zoom)) {
       drawPlayer(this.playerGfx, this.player.x, this.player.y, this.eng.health, MAX_HEALTH, view.x, view.y, this.zoom);
       return;
@@ -662,6 +674,21 @@ export class WorldScene extends Phaser.Scene {
     if (!this.sandbox) this.gain(p.proto, 1);
   }
 
+  /** Moves on past met goals and shows the current one. */
+  private tickGoals() {
+    if (!this.hud) return;
+    if (this.sandbox) { this.hud.setGoal(null, 0, 0, 0); return; }
+    const built = new Map<string, number>();
+    for (const p of engine.layout()) built.set(p.proto, (built.get(p.proto) ?? 0) + 1);
+    const w: GoalWorld = {
+      has: item => this.eng.inv.count(item), built: kind => built.get(kind) ?? 0,
+      researched: tech => this.eng.research.done.has(tech), kills: this.combat.kills,
+    };
+    while (this.eng.goal < GOALS.length && GOALS[this.eng.goal].progress(w) >= 1) this.eng.goal++;
+    const g = GOALS[this.eng.goal];
+    this.hud.setGoal(g ?? null, this.eng.goal, GOALS.length, g ? g.progress(w) : 1);
+  }
+
   private tickShooting(dt: number, time: number) {
     this.eng.cooldown = Math.max(0, this.eng.cooldown - dt);
     if (!this.keys.space.isDown || !this.eng.weapon || this.hud?.open || document.activeElement instanceof HTMLInputElement) return;
@@ -677,6 +704,7 @@ export class WorldScene extends Phaser.Scene {
     const tx = 'spawnTimer' in target ? target.x + 1.5 : target.x;
     const ty = 'spawnTimer' in target ? target.y + 1.5 : target.y;
     this.engineer?.face(tx - this.player.x, ty - this.player.y);
+    this.shootUntil = this.time.now + Math.max(400, 1000 / w.rate + 150);
     this.combat.hit(target, (AMMO_DAMAGE[round] ?? 5) * (1 + this.eng.damageBonus), this.player.x, this.player.y, time);
   }
 
@@ -688,8 +716,10 @@ export class WorldScene extends Phaser.Scene {
 
   private followPlayer() {
     const t = this.followTarget();
-    this.cam.x += (t.x - this.cam.x) * 0.15;
-    this.cam.y += (t.y - this.cam.y) * 0.15;
+    // Eases the same at any frame rate: 15 % a frame at 60 fps.
+    const k = 1 - Math.pow(0.85, Math.min(100, this.game.loop.delta) / (1000 / 60));
+    this.cam.x += (t.x - this.cam.x) * k;
+    this.cam.y += (t.y - this.cam.y) * k;
   }
 
   private viewInfo(): View {
@@ -744,6 +774,7 @@ export class WorldScene extends Phaser.Scene {
       this.layTo(tile.x, tile.y);
       return;
     }
+    if (this.placementType) { this.stampAt(tile.x, tile.y); return; }
     this.drag = { x: p.x, y: p.y, panX: this.pan.x, panY: this.pan.y };
   }
 
@@ -753,6 +784,7 @@ export class WorldScene extends Phaser.Scene {
     this.hoverTX = tile.x; this.hoverTY = tile.y;
     this.updateAim();
     if (this.laying && p.isDown) this.layTo(tile.x, tile.y);
+    if (this.stamping && p.isDown && this.placementType) this.stampAt(tile.x, tile.y);
     this.updateHover(p, this.aimTX, this.aimTY);
     if (this.drag && p.isDown && !p.rightButtonDown()) {
       this.pan.x = this.drag.panX + (p.x - this.drag.x);
@@ -762,6 +794,7 @@ export class WorldScene extends Phaser.Scene {
 
   private onUp(p: Phaser.Input.Pointer) {
     if (this.laying) { this.laying = null; return; }
+    if (this.stamping) { this.stamping = null; return; }
     if (!this.drag) return;
     const wasDrag = Math.abs(p.x - this.drag.x) > 5 || Math.abs(p.y - this.drag.y) > 5;
     this.drag = null;
@@ -771,7 +804,9 @@ export class WorldScene extends Phaser.Scene {
     this.updateAim();
     const id = engine.entityAt(this.aimTX, this.aimTY);
     if (id < 0) { this.select(null); return; }
-    if ((p.event as MouseEvent).shiftKey && this.repair(id)) return;
+    const me = p.event as MouseEvent;
+    if ((me.ctrlKey || me.metaKey) && this.quickTransfer(id)) return;
+    if (me.shiftKey && this.repair(id)) return;
     const f = this.factory.entities.get(id);
     if (f && !['transport_belt', 'underground_belt', 'splitter', 'inserter'].includes(f.kind)) {
       this.select(null);
@@ -779,6 +814,36 @@ export class WorldScene extends Phaser.Scene {
       return;
     }
     this.select(this.snapshot?.entities.some(e => e.id === id) ? id : null);
+  }
+
+  /**
+   * Ctrl/Cmd-click, as in Factorio: empty a machine's output (or a whole chest) into the pockets,
+   * then top it up with fuel and whatever it works on.
+   */
+  private quickTransfer(id: number): boolean {
+    const m = this.factory.entities.get(id);
+    if (!m || !(m.inv || m.fuel || m.input || m.output) || this.sandbox && !m.kind.endsWith('_chest')) return false;
+    const take = (inv?: typeof m.inv) => {
+      for (const s of [...(inv?.slots ?? [])]) {
+        if (!s) continue;
+        const left = this.eng.inv.add(s.item, s.count);
+        inv!.remove(s.item, s.count - left);
+      }
+    };
+    if (m.kind.endsWith('_chest')) { take(m.inv); this.playSound('pickup', 0.4); return true; }
+    take(m.output);
+    const unlocked = this.eng.unlocked;
+    const smeltable = (item: string) => Object.values(RECIPES).some(r => r.station === 'smelt' && item in r.in && unlocked.has(r.id));
+    for (const [item, n] of [...this.eng.inv.totals()].sort((a, b) => b[1] - a[1])) {
+      const target = this.factory.slotFor(m, item, smeltable);
+      if (!target) continue;
+      // A furnace gets more of what it's smelting, or ore when it's empty; plates only on purpose.
+      if (target === m.input && m.kind.endsWith('_furnace') && (m.input.isEmpty() ? !item.endsWith('_ore') : !m.input.count(item))) continue;
+      const k = Math.min(n, target.room(item));
+      if (k > 0) this.eng.inv.remove(item, k - target.add(item, k));
+    }
+    this.playSound('pickup', 0.4);
+    return true;
   }
 
   private repair(id: number): boolean {
@@ -951,6 +1016,32 @@ export class WorldScene extends Phaser.Scene {
     this.build(proto, o.x, o.y, this.placementRot);
   }
 
+  /**
+   * Click to place; keep the button down and sweep to place a row. Buildings in a row sit side
+   * by side, power poles as far apart as their wires reach. Only the first one complains.
+   */
+  private stampAt(tx: number, ty: number) {
+    const proto = this.placementType!;
+    let o = proto === 'splitter' ? { x: tx, y: ty } : this.originFor(proto, tx, ty);
+    const last = this.stamping?.last;
+    if (last) {
+      const n = engine.PROTO[proto]?.size ?? 1;
+      const wire = engine.PROTO[proto]?.wire ?? 0;
+      // A quick sweep can jump past a pole's reach: put it back where the wire still reaches.
+      const d = Math.hypot(o.x - last.x, o.y - last.y);
+      if (wire > 0 && d > wire) {
+        const k = Math.floor(wire) / d;
+        o = { x: last.x + Math.round((o.x - last.x) * k), y: last.y + Math.round((o.y - last.y) * k) };
+      }
+      const apart = wire > 0 ? Math.hypot(o.x - last.x, o.y - last.y) >= Math.floor(wire) : Math.abs(o.x - last.x) >= n || Math.abs(o.y - last.y) >= n;
+      if (!apart || this.placementError(proto, o.x, o.y, this.placementRot)) return;
+      if (this.build(proto, o.x, o.y, this.placementRot)) this.stamping = { last: o };
+      return;
+    }
+    this.stamping = { last: o };
+    this.placeAt(proto, tx, ty);
+  }
+
   /** Places a building: clears trees under it, takes it out of the pockets. */
   private build(proto: string, x: number, y: number, rot: number): boolean {
     const tiles = this.footprint(proto, x, y, rot);
@@ -1028,7 +1119,8 @@ export class WorldScene extends Phaser.Scene {
   // ── Hover read-outs ──────────────────────────────────────────────────────
 
   private updateHover(p: Phaser.Input.Pointer, tx: number, ty: number) {
-    if (!this.processUI || this.menu.open) return;
+    if (!this.processUI) return;
+    if (this.menu.open || this.hud?.open) { this.processUI.hover(null, 0, 0); return; }
     const ev = p.event instanceof MouseEvent ? p.event : null;
     this.processUI.hover(this.describe(tx, ty), ev ? ev.clientX : p.x, ev ? ev.clientY : p.y);
   }

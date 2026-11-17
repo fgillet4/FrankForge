@@ -110,6 +110,11 @@ export class ProcessUI {
     this.bar.append(this.tabs, this.buttons);
     this.root.append(this.bar, this.inspector, this.gridPanel, this.tooltip, this.alerts);
     document.body.append(this.root);
+    // The world's tooltip goes as soon as the pointer moves onto a panel or off the window.
+    const hide = () => { this.tooltip.style.display = 'none'; };
+    document.addEventListener('pointermove', e => { if (!(e.target instanceof HTMLCanvasElement)) hide(); });
+    document.addEventListener('pointerleave', hide);
+    window.addEventListener('blur', hide);
     this.renderBar();
     this.inspector.addEventListener('input', e => this.onInspectorInput(e));
     this.inspector.addEventListener('click', e => this.onInspectorClick(e));

@@ -73,6 +73,8 @@ export class Engineer {
   health = MAX_HEALTH;
   queue: CraftJob[] = [];
   research = { current: null as string | null, units: 0, done: new Set<string>() };
+  /** Index of the survival goal being worked on. */
+  goal = 0;
   stats = new Stats();
   /** Rounds left in the loaded magazine, and what kind. */
   rounds = 0;
@@ -265,7 +267,7 @@ export class Engineer {
     return {
       inv: this.inv.slots, armor: this.armor, weapon: this.weapon, ammo: this.ammo, health: this.health,
       queue: this.queue, research: { current: this.research.current, units: this.research.units, done: [...this.research.done] },
-      rounds: this.rounds, loaded: this.loaded,
+      rounds: this.rounds, loaded: this.loaded, goal: this.goal,
     };
   }
 
@@ -279,6 +281,7 @@ export class Engineer {
     this.research = { current: d.research.current, units: d.research.units, done: new Set(d.research.done) };
     this.rounds = d.rounds ?? 0;
     this.loaded = d.loaded ?? 'ammo';
+    this.goal = d.goal ?? 0;
     if (this.sandbox) for (const t of TECHS) this.research.done.add(t.id);
     this.applyResearch();
   }

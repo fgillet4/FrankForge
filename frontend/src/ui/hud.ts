@@ -65,6 +65,8 @@ export class Hud {
   private statsTab: 'produced' | 'consumed' | 'power' = 'produced';
   private statsRange = 60;
   private mini = el('div', 'hud-minimap');
+  private goalBox = el('div', 'hud-goal');
+  private lastGoal = '';
   private miniCanvas = el('canvas');
   private terrainImage: ImageData | null = null;
   private lastStatus = '';
@@ -72,7 +74,7 @@ export class Hud {
 
   constructor(private eng: Engineer, private factory: Factory, private host: HudHost) {
     this.mini.append(this.miniCanvas, el('small', undefined, 'M: big map'));
-    this.root.append(this.status, this.mini);
+    this.root.append(this.status, this.mini, this.goalBox);
     document.body.append(this.root);
     this.root.addEventListener('click', e => this.onClick(e as MouseEvent));
     this.root.addEventListener('contextmenu', e => { e.preventDefault(); this.onClick(e as MouseEvent, true); });
@@ -84,6 +86,22 @@ export class Hud {
   }
 
   get open() { return this.win !== null; }
+
+  /** The current survival goal under the minimap; null hides it. */
+  setGoal(goal: { title: string; hint: string } | null, index: number, total: number, progress: number) {
+    const html = goal ? `<small>Goal ${index + 1} of ${total}</small><b>${goal.title}</b><p>${goal.hint}</p>`
+      + `<div class="hud-goal-bar"><div style="width:${Math.round(progress * 100)}%"></div></div>` : '';
+    if (html === this.lastGoal) return;
+    // A new goal flashes in.
+    if (goal && this.lastGoal && !this.lastGoal.includes(goal.title)) {
+      this.goalBox.classList.remove('new');
+      void this.goalBox.offsetWidth;
+      this.goalBox.classList.add('new');
+    }
+    this.lastGoal = html;
+    this.goalBox.innerHTML = html;
+    this.goalBox.style.display = goal ? '' : 'none';
+  }
   get openMachine() { return this.winKind === 'machine' ? this.machineId : null; }
 
   destroy() { this.root.remove(); }
