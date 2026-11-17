@@ -106,9 +106,12 @@ function maxHp(kind: string, size: number) {
   return [0, 150, 300, 500, 700][size] ?? 500;
 }
 
-/** The tile a drill at (x, y) facing rot drops onto: the middle of the side it faces. */
+/**
+ * The tile a drill at (x, y) facing rot drops onto: the middle of the side it faces, the nearer
+ * of the two middles on an even side, which is where the paintings put the chute.
+ */
 export function drillOutput(x: number, y: number, size: number, rot: number): [number, number] {
-  const m = Math.floor(size / 2);
+  const m = Math.floor((size - 1) / 2);
   switch (rot) {
     case 1: return [x + size, y + m];
     case 2: return [x + m, y + size];

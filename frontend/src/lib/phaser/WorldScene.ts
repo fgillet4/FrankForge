@@ -1100,7 +1100,8 @@ export class WorldScene extends Phaser.Scene {
       if (!target) continue;
       // A furnace gets more of what it's smelting, or ore when it's empty; plates only on purpose.
       if (target === m.input && m.kind.endsWith('_furnace') && (m.input.isEmpty() ? !item.endsWith('_ore') : !m.input.count(item))) continue;
-      const k = Math.min(n, target.room(item));
+      // Fuel goes in a few at a time, so what's carried stretches round several machines.
+      const k = Math.min(n, target.room(item), target === m.fuel ? 5 : Infinity);
       if (k > 0) this.eng.inv.remove(item, k - target.add(item, k));
     }
     this.playSound('pickup', 0.4);

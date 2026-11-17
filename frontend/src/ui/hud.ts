@@ -283,7 +283,7 @@ export class Hud {
     if (m.kind === 'laser_turret') parts.push(`<p class="hud-note">${m.status ?? (m.firing ? 'Firing' : 'Watching')}</p>`);
     return `<header><img src="${iconUrl(m.kind)}" width="32" height="32" alt=""><h2>${title}</h2><small>${Math.ceil(m.hp)}/${m.maxHp} HP</small><button class="x" data-action="close">✕</button></header>
       <div class="hud-cols"><div class="hud-machine">${parts.join('')}</div>
-      <div><h3 style="margin-top:0">Your inventory <small>— click to put in</small></h3>${this.pocketsHtml('put')}</div></div>`;
+      <div><h3 style="margin-top:0">Your inventory</h3>${this.pocketsHtml('put')}</div></div>`;
   }
 
   private techHtml() {
@@ -399,6 +399,13 @@ export class Hud {
     const opts: [string, () => void][] = [];
     if (it?.gear) opts.push([it.gear === 'weapon' ? 'Wield' : it.gear === 'armor' ? 'Wear' : 'Load', () => e.equip(s.item)]);
     if (it?.places) opts.push(['Place', () => { this.host.pick(s.item); this.close(); }]);
+    if (s.count > 1 && e.inv.slots.includes(null)) opts.push(['Split', () => {
+      const stack = e.inv.slots[i], free = e.inv.slots.indexOf(null);
+      if (!stack || free < 0 || stack.count < 2) return;
+      const half = Math.floor(stack.count / 2);
+      stack.count -= half;
+      e.inv.slots[free] = { item: stack.item, count: half };
+    }]);
     opts.push(['Drop', () => {
       const stack = e.inv.slots[i];
       if (!stack || stack.item !== s.item) return;
@@ -428,6 +435,8 @@ export class Hud {
     const a = t.dataset.action;
     const i = Number(t.dataset.i);
     if (right && a === 'use') { this.slotMenu(ev, i); return; }
+    if (right && a === 'put') { this.putMenu(ev, i); return; }
+    if (right && a === 'craft') return;
     // Shift-click drops, as in RuneScape.
     if (a === 'use' && ev.shiftKey && e.inv.slots[i]) {
       const stack = e.inv.slots[i]!;
@@ -452,9 +461,9 @@ export class Hud {
       const id = t.dataset.r!;
       // Sandbox buildings cost nothing to place, so one goes straight into the hand.
       if (e.sandbox && ITEMS[RECIPES[id].out]?.places && !right) { this.host.pick(RECIPES[id].out); this.close(); return; }
-      if (e.sandbox) { e.inv.add(RECIPES[id].out, RECIPES[id].count * (right ? 5 : 1)); }
+      if (e.sandbox) { e.inv.add(RECIPES[id].out, RECIPES[id].count); }
       else {
-        const n = ev.shiftKey ? e.craftable(id) : right ? Math.min(5, e.craftable(id)) : 1;
+        const n = ev.shiftKey ? e.craftable(id) : 1;
         if (!n || !e.craft(id, n)) this.host.alert(`Not enough materials for ${name(RECIPES[id].out)}.`);
       }
     } else if (a === 'use') {
@@ -471,14 +480,23 @@ export class Hud {
     this.renderStatus();
   }
 
-  private putIntoMachine(i: number) {
+  /** Like a bank's deposit options: how much of a pocket's stack to put into the machine. */
+  private putMenu(ev: MouseEvent, i: number) {
+    const s = this.eng.inv.slots[i];
+    if (!s) return;
+    if (s.count === 1) { this.putIntoMachine(i); this.lastWin = ''; this.render(); return; }
+    const amounts: [string, number][] = [['Put 1', 1], ['Put 5', 5], ['Put 10', 10], ['Put half', Math.ceil(s.count / 2)], ['Put all', s.count]];
+    this.openMenu(ev, amounts.filter(([, n], k) => k >= 3 || n < s.count).map(([verb, n]) => [verb, () => this.putIntoMachine(i, n)]), s.item);
+  }
+
+  private putIntoMachine(i: number, most = Infinity) {
     const m = this.machineId !== null ? this.factory.entities.get(this.machineId) : undefined;
     const s = this.eng.inv.slots[i];
     if (!m || !s) return;
     const unlocked = this.eng.unlocked;
     const target = this.factory.slotFor(m, s.item, item => Object.values(RECIPES).some(r => r.station === 'smelt' && item in r.in && unlocked.has(r.id)));
     if (!target) { this.host.alert(`${name(s.item)} doesn't go in there.`); return; }
-    const n = Math.min(s.count, target.room(s.item));
+    const n = Math.min(s.count, most, target.room(s.item));
     if (n <= 0) { this.host.alert('No room for that.'); return; }
     const left = target.add(s.item, n);
     this.eng.inv.remove(s.item, n - left);

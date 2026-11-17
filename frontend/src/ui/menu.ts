@@ -34,8 +34,8 @@ export const HOW_TO_PLAY = `
     <kbd>W A S D</kbd><span>Walk (belts carry you along)</span>
     <kbd>Hold right-click</kbd><span>Mine: chop trees, break rocks, dig ore, pick buildings back up</span>
     <kbd>Hold Space</kbd><span>Shoot the alien nearest the cursor</span>
-    <kbd>E</kbd><span>Inventory, gear and hand crafting. In the crafting list, click to make one, right-click for five, Shift-click for as many as you can</span>
-    <kbd>Right-click item</kbd><span>In your pockets or gear slots: what you can do with it, such as wield, wear, place or drop. Shift-click a stack in your pockets to drop it straight away. Dropped stacks lie on the ground: click one in reach, or hold F beside it, to take it back</span>
+    <kbd>E</kbd><span>Inventory, gear and hand crafting. In the crafting list, click to make one, Shift-click for as many as you can. In a machine's window, click a stack in your pockets to put it all in, or right-click to put in 1, 5, 10 or half</span>
+    <kbd>Right-click item</kbd><span>In your pockets or gear slots: what you can do with it, such as wield, wear, place, split in half or drop. Shift-click a stack in your pockets to drop it straight away. Dropped stacks lie on the ground: click one in reach, or hold F beside it, to take it back</span>
     <kbd>T</kbd><span>Research</span>
     <kbd>P</kbd><span>Production graphs</span>
     <kbd>M</kbd><span>Enlarge the minimap; click it to look somewhere</span>
@@ -46,7 +46,7 @@ export const HOW_TO_PLAY = `
     <kbd>R</kbd><span>Rotate what you're placing, or the belt or inserter under the cursor</span>
     <kbd>Q</kbd><span>Pick up the kind of building under the cursor to place more</span>
     <kbd>Click</kbd><span>Open a machine, or inspect a process building</span>
-    <kbd>Ctrl/⌘-click</kbd><span>Quick transfer: take a machine's output (or a chest's contents), fill it with fuel and ore</span>
+    <kbd>Ctrl/⌘-click</kbd><span>Quick transfer: take a machine's output (or a chest's contents), fill it with ore and 5 fuel at a time, so your wood stretches round several machines</span>
     <kbd>Hold F</kbd><span>Pick items up off the belts you're standing by</span>
     <kbd>Alt</kbd><span>Alt mode: what each machine makes and which way every inserter works</span>
     <kbd>Shift-click</kbd><span>Repair a damaged building with a repair pack</span>
