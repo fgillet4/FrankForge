@@ -79,6 +79,7 @@ export function preloadProcessAssets(scene: Phaser.Scene) {
     for (const part of ['base', 'head', 'barrel']) scene.load.image(`ip_${kind}_${part}`, `assets/process/parts/${kind}_${part}.png`);
   }
   for (const kind of ['burner_drill', 'electric_drill', 'stone_furnace', 'electric_furnace', 'assembler']) scene.load.image(`ip_${kind}_frame`, `assets/process/parts/${kind}_frame.png`);
+  for (const id of Object.keys(PAINTED)) scene.load.image(`pf_${id}`, `assets/process/parts/${id}_frame.png`);
   for (const part of ['drill_bit', 'electric_furnace_crucible', 'assembler_arm', 'assembler_tool', 'pipe', 'pipe_nozzle', 'pipe_joint', 'rack_low', 'rack_high']) {
     scene.load.image(`ip_${part}`, `assets/process/parts/${part}.png`);
   }
@@ -102,6 +103,29 @@ export function createAnims(scene: Phaser.Scene) {
       frames: scene.anims.generateFrameNumbers(`pa_${name}`, { start: 0, end: m.frames - 1 }),
     });
   }
+}
+
+/**
+ * Process buildings painted as a still frame with their fire drawn on live: rows of peep windows
+ * and burner ports (first and last, as fractions of the image) and the top of the flue.
+ */
+const PAINTED: Record<string, { windows: [number, number, number, number]; burners: [number, number, number, number]; count: number; stack: [number, number] }> = {
+  cracker_furnace: { windows: [0.2, 0.548, 0.664, 0.748], burners: [0.19, 0.738, 0.625, 0.927], count: 10, stack: [0.738, 0.02] },
+};
+
+/** Roughly what colour steel and brick glow at a temperature [K], and how brightly. */
+function heatGlow(t: number): [number, number] {
+  const stops: [number, number][] = [[750, 0x4a0800], [900, 0xb02008], [1050, 0xff5a10], [1200, 0xffa030], [1400, 0xffe0a0]];
+  if (t <= stops[0][0]) return [stops[0][1], 0];
+  const a = Math.min(1, (t - 750) / 300);
+  for (let i = 1; i < stops.length; i++) {
+    if (t > stops[i][0]) continue;
+    const [t0, c0] = stops[i - 1], [t1, c1] = stops[i];
+    const c = Phaser.Display.Color.Interpolate.ColorWithColor(
+      Phaser.Display.Color.ValueToColor(c0), Phaser.Display.Color.ValueToColor(c1), 100, (t - t0) / (t1 - t0) * 100);
+    return [Phaser.Display.Color.GetColor(c.r, c.g, c.b), a];
+  }
+  return [stops[stops.length - 1][1], a];
 }
 
 const FLAMMABLE = ['h2', 'ch4', 'co', 'c2h4', 'c2h6', 'ch3oh', 'nh3'];
@@ -237,6 +261,8 @@ export class ProcessLayer {
   private wasRuptured = new Set<number>();
   private wasBlackout = false;
   private pipeGfx: Phaser.GameObjects.Graphics;
+  /** The live fire on painted buildings, just in front of each. */
+  private fireGfx = new Map<number, Phaser.GameObjects.Graphics>();
   private overlayGfx: Phaser.GameObjects.Graphics;
   private ghostImg: Phaser.GameObjects.Image | null = null;
   private wrecks: { x: number; y: number; img: Phaser.GameObjects.Image }[] = [];
@@ -509,9 +535,11 @@ export class ProcessLayer {
       const ruptured = e.vessels.some(v => v.ruptured);
       const name = ruptured ? 'wreck' : e.proto;
       const running = working(e.id) ?? isRunning(e, snap);
-      const anim = ANIMS[name] && (ruptured || running) && this.scene.anims.exists(`pa_${name}`) ? ANIMS[name] : null;
+      const paint = !ruptured && PAINTED[name] && this.scene.textures.exists(`pf_${name}`) ? PAINTED[name] : null;
+      const still = paint ? `pf_${name}` : `pb_${name}`;
+      const anim = !paint && ANIMS[name] && (ruptured || running) && this.scene.anims.exists(`pa_${name}`) ? ANIMS[name] : null;
       if (!img) {
-        img = this.scene.add.sprite(0, 0, `pb_${name}`).setOrigin(0.5, 1);
+        img = this.scene.add.sprite(0, 0, still).setOrigin(0.5, 1);
         this.images.set(e.id, img);
       }
       if (anim) {
@@ -520,9 +548,9 @@ export class ProcessLayer {
           img.play({ key: `pa_${name}`, startFrame: e.id % anim.frames });
           img.setOrigin(anim.ox, anim.oy);
         }
-      } else if (img.anims.isPlaying || img.texture.key !== `pb_${name}`) {
+      } else if (img.anims.isPlaying || img.texture.key !== still) {
         img.stop();
-        img.setTexture(`pb_${name}`).setOrigin(0.5, 1);
+        img.setTexture(still).setOrigin(0.5, 1);
       }
       const n = proto.size;
       const bottom = isoToScreen(e.x + n, e.y + n, camX, camY, zoom);
@@ -530,10 +558,12 @@ export class ProcessLayer {
       const cav = e.pipes.find(p => p.kind.kind === 'Pump')?.kind.cavitation ?? 0;
       const judder = cav > 0.01 ? Math.sin(time * 0.11 + e.id) * zoom * (0.6 + cav * 1.4) : 0;
       img.setPosition(bottom.x + judder, bottom.y + TILE_H * zoom * 0.08);
-      img.setScale((TILE_W * zoom) / SPRITE_TILE_PX * popScale(e.id, time));
+      img.setScale((paint ? n * TILE_W * zoom / img.width : (TILE_W * zoom) / SPRITE_TILE_PX) * popScale(e.id, time));
       img.setFlipX(e.rot % 2 === 1);
       img.setDepth(10 + (e.x + e.y + 2 * n) * 0.01);
       img.setTint(e.id === this.selected ? 0xfff2b0 : 0xffffff);
+      if (paint) this.drawFire(e, img, paint, zoom, time);
+      else if (this.fireGfx.has(e.id)) { this.fireGfx.get(e.id)!.destroy(); this.fireGfx.delete(e.id); }
       // Now and then a puff of vapour lifts the relief valve on a gas sphere in use.
       if (e.proto === 'gas_sphere' && running && !ruptured) {
         const t = ((time + e.id * 1700) % 5000) / 1600;
@@ -549,7 +579,7 @@ export class ProcessLayer {
       }
       // A glow on lit fireboxes and flare stacks that have no animation of their own.
       const fire = e.vessels.find(v => v.reactions.some(r => r.name.includes('combustion') && r.rate > 1e-3));
-      if (fire && !ruptured && !anim) {
+      if (fire && !ruptured && !anim && !paint) {
         const flicker = 0.75 + 0.25 * Math.sin(time * 0.02 + e.id);
         const top = isoToScreen(e.x + n / 2, e.y + n / 2, camX, camY, zoom);
         this.overlayGfx.fillStyle(0xff8a1c, 0.35 * flicker).fillCircle(top.x, top.y - TILE_H * zoom * 0.5, 10 * zoom * flicker);
@@ -561,6 +591,8 @@ export class ProcessLayer {
       if (!seen.has(id)) {
         img.destroy();
         this.images.delete(id);
+        this.fireGfx.get(id)?.destroy();
+        this.fireGfx.delete(id);
       }
     }
 
@@ -572,6 +604,51 @@ export class ProcessLayer {
     }
     if (ghost) this.drawGhost(ghost, camX, camY, zoom);
     else this.ghostImg?.setVisible(false);
+  }
+
+  /**
+   * A fired heater: the radiant box glows through its peep windows at the colour its temperature
+   * gives, the burners along the floor flicker while they're lit, and the flue breathes hot gas.
+   */
+  private drawFire(e: EntityView, img: Phaser.GameObjects.Sprite, spec: (typeof PAINTED)[string], zoom: number, time: number) {
+    let g = this.fireGfx.get(e.id);
+    if (!g) { g = this.scene.add.graphics(); this.fireGfx.set(e.id, g); }
+    g.clear().setDepth(img.depth + 0.0001);
+    const W = img.displayWidth, H = img.displayHeight;
+    const at = (fx: number, fy: number) => ({ x: img.x + ((img.flipX ? 1 - fx : fx) - 0.5) * W, y: img.y + (fy - 1) * H });
+    const row = ([x0, y0, x1, y1]: number[], k: number) => at(x0 + (x1 - x0) * k / (spec.count - 1), y0 + (y1 - y0) * k / (spec.count - 1));
+    const fired = e.vessels.find(v => v.reactions.some(r => r.name.includes('combustion')));
+    const lit = !!fired?.reactions.some(r => r.name.includes('combustion') && r.rate > 1e-3);
+    const [colour, a] = heatGlow(fired?.t ?? 0);
+    if (a > 0) {
+      // Each window a little parallelogram on the slanted face.
+      const a0 = row(spec.windows, 0), a1 = row(spec.windows, 1);
+      const sx = (a1.x - a0.x) * 0.3, sy = (a1.y - a0.y) * 0.3, hh = H * 0.017;
+      for (let k = 0; k < spec.count; k++) {
+        const c = row(spec.windows, k);
+        const fl = lit ? 0.82 + 0.18 * Math.sin(time * 0.017 + k * 1.7 + e.id) : 1;
+        g.fillStyle(colour, 0.22 * a * fl).fillEllipse(c.x, c.y, Math.abs(sx) * 5, hh * 4.5);
+        g.fillStyle(colour, Math.min(1, 0.4 + a * 0.6) * fl).fillPoints([
+          { x: c.x - sx, y: c.y - sy - hh }, { x: c.x + sx, y: c.y + sy - hh },
+          { x: c.x + sx, y: c.y + sy + hh }, { x: c.x - sx, y: c.y - sy + hh }], true);
+      }
+    }
+    if (lit) {
+      const r = W * 0.012;
+      for (let k = 0; k < spec.count; k++) {
+        const c = row(spec.burners, k);
+        const fl = 0.75 + 0.25 * Math.sin(time * 0.029 + k * 2.3 + e.id);
+        g.fillStyle(0xff7a1a, 0.35 * fl).fillCircle(c.x, c.y, r * 1.9 * fl);
+        g.fillStyle(0xffb040, 0.9).fillCircle(c.x, c.y, r * fl);
+        g.fillStyle(0x9ad8ff, 0.85).fillCircle(c.x, c.y, r * 0.45);
+      }
+      // Hot flue gas wavering up from the stack.
+      const top = at(spec.stack[0], spec.stack[1]);
+      for (let k = 0; k < 4; k++) {
+        const u = (time * 0.00035 + k / 4 + e.id * 0.137) % 1;
+        g.fillStyle(0x9a9490, 0.3 * (1 - u)).fillCircle(top.x + Math.sin(u * 5 + k) * 6 * zoom, top.y - u * 70 * zoom, (5 + u * 18) * zoom);
+      }
+    }
   }
 
   private drawPorts(protoId: string, x: number, y: number, rot: number, camX: number, camY: number, zoom: number) {
@@ -612,7 +689,7 @@ export class ProcessLayer {
       this.overlayGfx.fillStyle(0xffe066, 0.95).fillCircle(t.x, t.y, 4 * zoom);
     }
     // Buildings drawn from painted parts preview with their body.
-    const tex = ['base', 'frame'].map(k => `ip_${g.proto}_${k}`).find(k => this.scene.textures.exists(k) && !g.proto.endsWith('inserter')) ?? `pb_${g.proto}`;
+    const tex = [`ip_${g.proto}_base`, `ip_${g.proto}_frame`, `pf_${g.proto}`].find(k => this.scene.textures.exists(k) && !g.proto.endsWith('inserter')) ?? `pb_${g.proto}`;
     if (g.proto !== 'pipe' && this.scene.textures.exists(tex)) {
       if (!this.ghostImg) this.ghostImg = this.scene.add.image(0, 0, tex).setOrigin(0.5, 1).setDepth(899);
       if (this.ghostImg.texture.key !== tex) this.ghostImg.setTexture(tex);
