@@ -9,6 +9,7 @@
 import Phaser from 'phaser';
 import { TILE_W, TILE_H, isoToScreen } from '../phaser/isoMath';
 import { ITEMS, iconUrl } from '../game/items';
+import { popScale } from '../game/juice';
 import { PROTO, placedById, portTiles, type EntityView, type Snapshot, type VesselView } from './engine';
 
 const SPRITE_TILE_PX = 128;
@@ -108,6 +109,8 @@ export class CharacterSprite {
   moving = false;
   /** An action that overrides walking and idling while its sheets exist, e.g. 'build' or 'attack'. */
   action: string | null = null;
+  /** Flashes white until then [ms], after a hit. */
+  flashUntil = 0;
 
   constructor(private scene: Phaser.Scene, private kind = 'char') {}
 
@@ -138,6 +141,8 @@ export class CharacterSprite {
     const p = isoToScreen(x, y, camX, camY, zoom);
     this.sprite.setPosition(p.x, p.y + (TILE_H * zoom) / 2).setScale((TILE_W * zoom) / SPRITE_TILE_PX);
     this.sprite.setFlipX(this.flip).setDepth(10 + (x + y) * 0.01);
+    // A white flash when hit.
+    if (this.scene.time.now < this.flashUntil) this.sprite.setTintFill(0xffffff); else if (this.sprite.tintFill) this.sprite.clearTint();
     return true;
   }
 
@@ -373,7 +378,7 @@ export class ProcessLayer {
       const n = proto.size;
       const bottom = isoToScreen(e.x + n, e.y + n, camX, camY, zoom);
       img.setPosition(bottom.x, bottom.y + TILE_H * zoom * 0.08);
-      img.setScale((TILE_W * zoom) / SPRITE_TILE_PX);
+      img.setScale((TILE_W * zoom) / SPRITE_TILE_PX * popScale(e.id, time));
       img.setFlipX(e.rot % 2 === 1);
       img.setDepth(10 + (e.x + e.y + 2 * n) * 0.01);
       img.setTint(e.id === this.selected ? 0xfff2b0 : 0xffffff);

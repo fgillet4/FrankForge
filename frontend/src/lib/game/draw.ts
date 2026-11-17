@@ -11,6 +11,7 @@ import { ANIMS, drawInserterFlow, hitsSprite, type Pick } from '../process/rende
 import { BELT_SPEED, DIRS, type FEntity, type Factory } from './factory';
 import type { Combat } from './combat';
 import { RECIPES } from './items';
+import { popScale } from './juice';
 import type { NatureObject } from './nature';
 
 const SPRITE_TILE_PX = 128;
@@ -127,7 +128,7 @@ export class WorldRenderer {
         const b = this.at(v, e.x + e.size, e.y + e.size);
         // Working machines shake a little.
         const shake = e.active && e.kind === 'burner_drill' ? Math.sin(time * 0.05) * v.zoom : 0;
-        s.setPosition(b.x + shake, b.y + TILE_H * v.zoom * 0.08).setScale(scale).setDepth(10 + (e.x + e.y + 2 * e.size) * 0.01);
+        s.setPosition(b.x + shake, b.y + TILE_H * v.zoom * 0.08).setScale(scale * popScale(e.id, time)).setDepth(10 + (e.x + e.y + 2 * e.size) * 0.01);
         s.setFlipX(e.kind === 'gun_turret' ? Math.cos(e.aim ?? 0) - Math.sin(e.aim ?? 0) < 0 : e.rot % 2 === 1);
       }
       // Fire glow in working burner machines.
@@ -155,7 +156,8 @@ export class WorldRenderer {
         const img = this.nature.get(`${x},${y}`);
         if (img.frame.name !== o.kind) img.setFrame(o.kind);
         const p = this.at(v, x + 0.5 + o.ox, y + 0.5 + o.oy);
-        img.setPosition(p.x, p.y + TILE_H * v.zoom * 0.25).setScale(scale).setFlipX(o.flip).setDepth(10 + (x + y + 1.2) * 0.01);
+        const wob = this.wobble === `${x},${y}` ? Math.sin(time * 0.045) * 2.5 * v.zoom : 0;
+        img.setPosition(p.x + wob, p.y + TILE_H * v.zoom * 0.25).setScale(scale).setFlipX(o.flip).setDepth(10 + (x + y + 1.2) * 0.01);
       }
     }
     // Nests.
@@ -200,6 +202,8 @@ export class WorldRenderer {
 
   /** Inserters whose pickup and drop tiles to mark: one by id, or all of them while placing one. */
   flowFor: number | 'all' | null = null;
+  /** The tree or rock being mined, which shakes: its tile as "x,y". */
+  wobble: string | null = null;
   /** Alt mode: what each machine is making, shown over it. */
   altMode = false;
 

@@ -22,6 +22,8 @@ export interface Alien {
   /** What it's going for: a building id, or the engineer. */
   target: number | 'player' | null;
   nest: number;
+  /** When it was last hit [ms], for the flash. */
+  hitAt?: number;
   /** Moved since the last frame, for the walk animation. */
   vx: number;
   vy: number;
@@ -224,6 +226,13 @@ export class Combat {
     this.shots.push({ x0, y0, x1: tx + (Math.random() - 0.5) * 0.3, y1: ty + (Math.random() - 0.5) * 0.3, until: time + (laser ? 120 : 60), laser });
     this.sounds.push({ kind: laser ? 'laser' : 'gunshot', x: x0, y: y0 }, { kind: 'alien_hit', x: tx, y: ty });
     target.hp -= dmg;
+    if (!isNest) {
+      // Knocked back a little, away from the shot.
+      target.hitAt = time;
+      const d = Math.hypot(tx - x0, ty - y0) || 1;
+      target.x += (tx - x0) / d * 0.08;
+      target.y += (ty - y0) / d * 0.08;
+    }
     if (isNest && target.hp <= 0) {
       this.nests = this.nests.filter(n => n !== target);
       this.splats.push({ x: tx, y: ty, until: time + 60000 });

@@ -44,6 +44,7 @@ export const HOW_TO_PLAY = `
     <kbd>Q</kbd><span>Pick up the kind of building under the cursor to place more</span>
     <kbd>Click</kbd><span>Open a machine, or inspect a process building</span>
     <kbd>Ctrl/⌘-click</kbd><span>Quick transfer: take a machine's output (or a chest's contents), fill it with fuel and ore</span>
+    <kbd>Hold F</kbd><span>Pick items up off the belts you're standing by</span>
     <kbd>Alt</kbd><span>Alt mode: what each machine makes and which way every inserter works</span>
     <kbd>Shift-click</kbd><span>Repair a damaged building with a repair pack</span>
     <kbd>Mouse wheel</kbd><span>Zoom toward the cursor; drag to look around</span>

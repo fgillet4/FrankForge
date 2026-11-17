@@ -125,6 +125,24 @@
   "oy": 0.9794,
   "w": 55
  },
+ "char_shoot_ne": {
+  "fps": 8,
+  "frames": 24,
+  "h": 158,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.9966,
+  "w": 241
+ },
+ "char_shoot_se": {
+  "fps": 8,
+  "frames": 24,
+  "h": 121,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.9963,
+  "w": 206
+ },
  "char_walk_ne": {
   "fps": 8,
   "frames": 24,

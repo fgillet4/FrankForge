@@ -66,6 +66,7 @@ export class Hud {
   private statsRange = 60;
   private mini = el('div', 'hud-minimap');
   private goalBox = el('div', 'hud-goal');
+  private vignette = el('div', 'hud-hurt');
   private lastGoal = '';
   private miniCanvas = el('canvas');
   private terrainImage: ImageData | null = null;
@@ -74,7 +75,7 @@ export class Hud {
 
   constructor(private eng: Engineer, private factory: Factory, private host: HudHost) {
     this.mini.append(this.miniCanvas, el('small', undefined, 'M: big map'));
-    this.root.append(this.status, this.mini, this.goalBox);
+    this.root.append(this.vignette, this.status, this.mini, this.goalBox);
     document.body.append(this.root);
     this.root.addEventListener('click', e => this.onClick(e as MouseEvent));
     this.root.addEventListener('contextmenu', e => { e.preventDefault(); this.onClick(e as MouseEvent, true); });
@@ -139,7 +140,16 @@ export class Hud {
 
   // ── Rendering (called a few times a second) ──────────────────────────────
 
+  /** A red pulse at the screen's edges. */
+  hurt() {
+    this.vignette.classList.remove('hit');
+    void this.vignette.offsetWidth;
+    this.vignette.classList.add('hit');
+  }
+
   update() {
+    // The edges stay red while health is low.
+    this.vignette.style.setProperty('--low', String(Math.max(0, 1 - this.eng.health / (MAX_HEALTH * 0.4))));
     this.renderStatus();
     this.render();
     this.drawMinimap();

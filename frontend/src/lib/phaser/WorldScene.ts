@@ -40,6 +40,7 @@ import { AMMO_DAMAGE, Combat, WEAPONS, type Arena } from '../game/combat';
 import { NATURE, scatterNature, tileKey, type NatureObject } from '../game/nature';
 import { WorldRenderer, type View } from '../game/draw';
 import { GOALS, type GoalWorld } from '../game/goals';
+import { Juice, pop } from '../game/juice';
 
 const MIN_ZOOM = 0.3;
 const MAX_ZOOM = 4;
@@ -88,6 +89,7 @@ export class WorldScene extends Phaser.Scene {
   /** The gun stays raised until then [ms]. */
   private shootUntil = 0;
   private goalTimer = 0;
+  private tipTimer = 0;
   private aimTY = -1;
   private pointer = { x: 0, y: 0 };
 
@@ -115,7 +117,14 @@ export class WorldScene extends Phaser.Scene {
   private speedIndex = 2;
   private menu!: PauseMenu;
 
-  private keys!: Record<'w' | 'a' | 's' | 'd' | 'up' | 'down' | 'left' | 'right' | 'space' | 'shift', Phaser.Input.Keyboard.Key>;
+  private keys!: Record<'w' | 'a' | 's' | 'd' | 'up' | 'down' | 'left' | 'right' | 'space' | 'shift' | 'f', Phaser.Input.Keyboard.Key>;
+  private juice!: Juice;
+  /** Where mined things come from, so what's gained flies out of it. */
+  private flyFrom: { x: number; y: number } | null = null;
+  private stepTimer = 0;
+  private chipTimer = 0;
+  private pickTimer = 0;
+
 
   constructor() { super({ key: 'WorldScene' }); }
 
@@ -162,6 +171,7 @@ export class WorldScene extends Phaser.Scene {
     this.scene.moveBelow('WorldScene', 'GroundScene');
 
     this.worldDraw = new WorldRenderer(this);
+    this.juice = new Juice(this);
     this.playerGfx = this.add.graphics().setDepth(41);
     this.hoverGfx = this.add.graphics().setDepth(42);
     this.night = this.add.rectangle(0, 0, 10, 10, 0x0a1430, 0).setOrigin(0, 0).setDepth(980);
@@ -175,7 +185,7 @@ export class WorldScene extends Phaser.Scene {
     this.keys = {
       w: kb.addKey(K.W), a: kb.addKey(K.A), s: kb.addKey(K.S), d: kb.addKey(K.D),
       up: kb.addKey(K.UP), down: kb.addKey(K.DOWN), left: kb.addKey(K.LEFT), right: kb.addKey(K.RIGHT),
-      space: kb.addKey(K.SPACE), shift: kb.addKey(K.SHIFT),
+      space: kb.addKey(K.SPACE), shift: kb.addKey(K.SHIFT), f: kb.addKey(K.F),
     };
     kb.addCapture([K.TAB, K.SPACE]);
     kb.on('keydown-TAB', (e: KeyboardEvent) => {
@@ -249,8 +259,16 @@ export class WorldScene extends Phaser.Scene {
       if (this.simSpeed > 0) {
         this.tickMining(real);
         this.tickShooting(real, time);
+        this.tickPickup(real);
+      }
+      // Dust kicked up underfoot.
+      this.stepTimer -= real;
+      if (this.engineer?.moving && this.stepTimer <= 0) {
+        this.stepTimer = 0.22;
+        this.juice.dust(this.player.x + (Math.random() - 0.5) * 0.2, this.player.y + (Math.random() - 0.5) * 0.2, 0x9a8a70, 2);
       }
     }
+    this.juice.update(real, this.player);
     this.followPlayer();
 
     if (running && engine.engineReady() && this.processLayer) {
@@ -261,6 +279,18 @@ export class WorldScene extends Phaser.Scene {
       for (const s of this.combat.sounds.splice(0)) {
         const [vol, gap] = { gunshot: [0.25, 70], laser: [0.3, 90], alien_hit: [0.3, 90], alien_die: [0.45, 120] }[s.kind];
         this.playAt(s.kind, s.x, s.y, vol, gap);
+        // Turret muzzles flash and drop casings; lasers scorch.
+        if (s.kind === 'gunshot' && this.distanceTo(s.x, s.y) > 0.6) {
+          this.juice.burst(s.x, s.y, 3, { colour: [0xfff2a0, 0xffc040], size: 2.4, speed: 0.6, up: 10, z: 40, life: 0.08, heavy: false });
+          if (Math.random() < 0.5) this.juice.burst(s.x, s.y, 1, { colour: 0xd8a83a, size: 1.4, speed: 0.6, up: 110, z: 34, life: 1.4 });
+        }
+        if (s.kind === 'laser') this.juice.burst(s.x, s.y, 2, { colour: [0xff6050, 0xffd0c0], size: 2, speed: 0.4, up: 20, z: 40, life: 0.12, heavy: false });
+        // Goo from hits, a burst when one dies.
+        if (s.kind === 'alien_hit') this.juice.burst(s.x, s.y, 4, { colour: [0x7ad04a, 0x4a2a5a], size: 2, speed: 1.2, up: 90, z: 14, life: 0.5 });
+        if (s.kind === 'alien_die') {
+          this.juice.burst(s.x, s.y, 16, { colour: [0x7ad04a, 0x9ae05a, 0x4a2a5a], size: 3, speed: 2, up: 160, z: 10, life: 0.8 });
+          if (this.distanceTo(s.x, s.y) < 10) this.juice.kick(2);
+        }
       }
       this.combat.turrets([...this.factory.entities.values()].filter(e => e.kind.endsWith('_turret')), dt, time,
         id => this.served.get(id) ?? 0, this.eng.damageBonus, (item, n) => this.eng.stats.consume(item, n));
@@ -281,7 +311,7 @@ export class WorldScene extends Phaser.Scene {
         const emitted = Object.values(this.snapshot.emitted_kg).reduce((a, b) => a + b, 0);
         this.eng.stats.emissions.add(Math.max(0, emitted - this.lastEmitted));
         this.lastEmitted = emitted;
-        if (this.snapshot.events.some(e => e.includes('ruptured'))) this.playSound('rupture', 0.8);
+        if (this.snapshot.events.some(e => e.includes('ruptured'))) { this.playSound('rupture', 0.8); this.juice.kick(14); }
         if (this.snapshot.grid.blackout && !wasBlackout) this.playSound('alarm', 0.5);
         this.processUI?.update(this.snapshot);
       }
@@ -291,6 +321,13 @@ export class WorldScene extends Phaser.Scene {
       this.hudTimer = 150;
       this.hud.update();
       this.processUI?.refreshBar();
+    }
+    // Tooltips keep up with what they describe (an alien losing health, a furnace filling).
+    this.tipTimer -= delta;
+    if (this.tipTimer <= 0) {
+      this.tipTimer = 250;
+      const ap = this.input.activePointer;
+      if ((ap.event?.target as Element | undefined) instanceof HTMLCanvasElement) this.updateHover(ap, this.aimTX, this.aimTY);
     }
     this.goalTimer -= delta;
     if (this.goalTimer <= 0) { this.goalTimer = 500; this.tickGoals(); }
@@ -315,6 +352,7 @@ export class WorldScene extends Phaser.Scene {
       : aimedKind === 'inserter' || aimedKind === 'burner_inserter' ? engine.entityAt(this.aimTX, this.aimTY)
       : this.worldDraw.altMode ? 'all' : null;
     this.worldDraw.draw(view, time, this.factory, this.objects, this.combat);
+    this.juice.draw(view);
     const powerTool = this.placementType ? !!(engine.PROTO[this.placementType]?.power_w || engine.PROTO[this.placementType]?.wire) : false;
     this.worldDraw.drawPower(view, this.snapshot, time, powerTool || this.hoveredPole());
     this.drawAliens(view);
@@ -334,6 +372,7 @@ export class WorldScene extends Phaser.Scene {
     this.processUI?.destroy(); this.processUI = null;
     this.hud?.destroy(); this.hud = null;
     this.worldDraw?.destroy();
+    this.juice?.destroy();
     this.engineer?.destroy(); this.engineer = null;
     this.aliens.forEach(a => a.destroy()); this.aliens.clear();
     this.menu.hide();
@@ -532,6 +571,9 @@ export class WorldScene extends Phaser.Scene {
 
   private hurt(dmg: number) {
     this.eng.health -= dmg * this.eng.armorFactor;
+    this.juice.kick(3 + Math.min(6, dmg * 0.3));
+    this.hud?.hurt();
+    this.engineer && (this.engineer.flashUntil = this.time.now + 90);
     this.playAt('hurt', this.player.x, this.player.y, 0.4, 900);
     if (this.eng.health > 0) return;
     this.eng.health = MAX_HEALTH;
@@ -578,6 +620,7 @@ export class WorldScene extends Phaser.Scene {
       s.speed = a.speed;
       if (v > 1e-4) s.face(a.vx, a.vy);
       s.action = a.attacking ? 'attack' : null;
+      s.flashUntil = (a.hitAt ?? -1e9) + 80;
       s.draw(a.x, a.y, view.x, view.y, this.zoom);
       if (a.hp < a.maxHp) {
         const p = isoToScreen(a.x, a.y, view.x, view.y, this.zoom);
@@ -632,17 +675,48 @@ export class WorldScene extends Phaser.Scene {
     return null;
   }
 
+  /** What flies off whatever's being mined: wood and leaves, stone, ore, or bits of building. */
+  private chipColours(key: string): number[] {
+    if (key.startsWith('b')) return [0x8a9098, 0x5a6068, 0xffd070];
+    if (key.startsWith('n')) {
+      const kind = this.objects.get(tileKey(...(key.slice(1).split(',').map(Number) as [number, number])))?.kind ?? '';
+      if (/tree|fungus|cactus|bush/.test(kind)) return [0x7a5230, 0xa07040, 0x4f7a2a, 0x6a9a3a];
+      return [0x8a8680, 0x6a6660, 0xa8a49c];
+    }
+    const [tx, ty] = key.slice(1).split(',').map(Number);
+    const ore = MINED_ITEM[this.map.tiles[ty]?.[tx]?.resource];
+    return ore === 'copper_ore' ? [0xc8703a, 0x8a5a3a] : ore === 'stone' ? [0x8a8680, 0xa8a49c] : [0x6a7a88, 0x8a6a5a, 0x4a4f57];
+  }
+
+  /** Holding F picks items off belts within reach of the engineer's feet. */
+  private tickPickup(dt: number) {
+    this.pickTimer -= dt;
+    if (!this.keys.f.isDown || this.pickTimer > 0 || this.hud?.open || document.activeElement instanceof HTMLInputElement) return;
+    this.pickTimer = 0.08;
+    for (const e of this.factory.entities.values()) {
+      if (!e.items?.length || Math.hypot(e.x + 0.5 - this.player.x, e.y + 0.5 - this.player.y) > 1.6) continue;
+      if (this.eng.inv.room(e.items[0].item) <= 0) continue;
+      const it = e.items.shift()!;
+      this.flyFrom = { x: e.x + 0.5, y: e.y + 0.5 };
+      this.gain(it.item, 1);
+      this.flyFrom = null;
+      this.playSound('pickup', 0.12);
+      return;
+    }
+  }
+
   private gain(item: string, n: number) {
     const left = this.eng.inv.add(item, n);
     this.eng.stats.produce(item, n - left);
+    if (this.flyFrom && n - left > 0) for (let k = 0; k < Math.min(3, n - left); k++) this.juice.fly(item, this.flyFrom.x + (Math.random() - 0.5) * 0.4, this.flyFrom.y + (Math.random() - 0.5) * 0.4, 20 + k * 8);
     if (left) this.processUI?.alert('Your inventory is full.');
   }
 
   private tickMining(dt: number) {
     const p = this.input.activePointer;
-    if (!p.rightButtonDown() || this.hud?.open) { this.mining = null; this.miningProgress = 0; return; }
+    if (!p.rightButtonDown() || this.hud?.open) { this.mining = null; this.miningProgress = 0; this.worldDraw.wobble = null; return; }
     const target = this.mineTarget(this.aimTX, this.aimTY);
-    if (!target || this.distanceTo(target.x, target.y) > this.eng.reach) { this.mining = null; this.miningProgress = 0; return; }
+    if (!target || this.distanceTo(target.x, target.y) > this.eng.reach) { this.mining = null; this.miningProgress = 0; this.worldDraw.wobble = null; return; }
     if (this.mining?.key !== target.key) {
       this.mining = target;
       this.miningProgress = 0;
@@ -653,8 +727,20 @@ export class WorldScene extends Phaser.Scene {
     this.engineer?.face(target.x - this.player.x, target.y - this.player.y);
     if (this.engineer) this.engineer.action = 'build';
     this.miningProgress += dt;
+    const colours = this.chipColours(target.key);
+    this.worldDraw.wobble = target.key.startsWith('n') ? target.key.slice(1) : null;
+    this.chipTimer -= dt;
+    if (this.chipTimer <= 0) {
+      this.chipTimer = 0.16;
+      this.juice.burst(target.x, target.y, 4, { colour: colours, size: 3.2, speed: 1.3, up: 150, z: 18, life: 0.7 });
+    }
     if (this.miningProgress >= target.time) {
+      this.juice.burst(target.x, target.y, 16, { colour: colours, size: 3.6, speed: 1.8, up: 180, z: 14, life: 0.9 });
+      this.juice.dust(target.x, target.y, 0x9a8a70, 5);
+      this.worldDraw.wobble = null;
+      this.flyFrom = { x: target.x, y: target.y };
       target.done();
+      this.flyFrom = null;
       this.playSound(target.key.startsWith('b') ? 'remove' : 'pickup', 0.3);
       this.mining = null;
       this.miningProgress = 0;
@@ -705,6 +791,12 @@ export class WorldScene extends Phaser.Scene {
     const ty = 'spawnTimer' in target ? target.y + 1.5 : target.y;
     this.engineer?.face(tx - this.player.x, ty - this.player.y);
     this.shootUntil = this.time.now + Math.max(400, 1000 / w.rate + 150);
+    // Muzzle flash toward the target, a casing flicked out sideways, a nudge of recoil.
+    const d = Math.hypot(tx - this.player.x, ty - this.player.y) || 1;
+    const ux = (tx - this.player.x) / d, uy = (ty - this.player.y) / d;
+    this.juice.burst(this.player.x + ux * 0.45, this.player.y + uy * 0.45, 4, { colour: [0xfff2a0, 0xffc040], size: 2.2, speed: 0.8, up: 10, z: 34, life: 0.09, heavy: false, dir: [ux * 2, uy * 2] });
+    this.juice.burst(this.player.x, this.player.y, 1, { colour: 0xd8a83a, size: 1.4, speed: 0.4, up: 120, z: 30, life: 1.4, dir: [-uy * 1.2, ux * 1.2] });
+    this.juice.kick(0.8);
     this.combat.hit(target, (AMMO_DAMAGE[round] ?? 5) * (1 + this.eng.damageBonus), this.player.x, this.player.y, time);
   }
 
@@ -723,7 +815,8 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private viewInfo(): View {
-    return { x: this.cam.x + this.pan.x, y: this.cam.y + this.pan.y, zoom: this.zoom, w: this.scale.width, h: this.scale.height };
+    const j = this.juice?.shake ?? { x: 0, y: 0 };
+    return { x: this.cam.x + this.pan.x + j.x, y: this.cam.y + this.pan.y + j.y, zoom: this.zoom, w: this.scale.width, h: this.scale.height };
   }
 
   /** Centres the view on a tile, leaving the engineer where they are. */
@@ -1068,6 +1161,9 @@ export class WorldScene extends Phaser.Scene {
     }
     if (!this.sandbox) this.eng.inv.remove(proto, 1);
     this.playSound('place', 0.35);
+    for (const id of ids) pop(id, this.time.now);
+    for (let k = 0; k < n * 2; k++) this.juice.dust(x + Math.random() * n, y + Math.random() * n, 0x8a7a64, 2);
+    this.juice.kick(n >= 3 ? 1.5 : 0);
     this.processLayer?.built(proto, x, y);
     if (this.engineer) {
       this.engineer.face(x + n / 2 - this.player.x, y + n / 2 - this.player.y);
