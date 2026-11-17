@@ -56,8 +56,10 @@ export function preloadProcessAssets(scene: Phaser.Scene) {
   for (const kind of ['gun_turret', 'laser_turret']) {
     for (const part of ['base', 'head', 'barrel']) scene.load.image(`ip_${kind}_${part}`, `assets/process/parts/${kind}_${part}.png`);
   }
-  for (const kind of ['burner_drill', 'electric_drill']) scene.load.image(`ip_${kind}_frame`, `assets/process/parts/${kind}_frame.png`);
-  scene.load.image('ip_drill_bit', 'assets/process/parts/drill_bit.png');
+  for (const kind of ['burner_drill', 'electric_drill', 'stone_furnace', 'electric_furnace', 'assembler']) scene.load.image(`ip_${kind}_frame`, `assets/process/parts/${kind}_frame.png`);
+  for (const part of ['drill_bit', 'electric_furnace_crucible', 'assembler_arm', 'assembler_tool']) {
+    scene.load.image(`ip_${part}`, `assets/process/parts/${part}.png`);
+  }
   // Item icons, for things carried on belts and in hands.
   for (const id of Object.keys(ITEMS)) scene.load.image(`ic_${id}`, iconUrl(id));
   scene.load.atlas('nature', 'assets/process/nature.png', 'assets/process/nature.json');

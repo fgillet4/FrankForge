@@ -22,6 +22,10 @@ export interface Alien {
   /** What it's going for: a building id, or the engineer. */
   target: number | 'player' | null;
   nest: number;
+  /** Spawned to defend its nest: goes home after a chase instead of on to the base. */
+  guard?: boolean;
+  /** Where it last saw the engineer, and how much longer it will look there [s]. */
+  search?: { x: number; y: number; t: number };
   /** When it was last hit [ms], for the flash. */
   hitAt?: number;
   /** Moved since the last frame, for the walk animation. */
@@ -29,6 +33,10 @@ export interface Alien {
   vy: number;
   attacking: boolean;
 }
+
+/** How near the engineer has to come to be spotted, and how far off an alien loses them [tiles]. */
+const SIGHT = 10;
+const LOSE = 16;
 
 export interface Nest { id: number; x: number; y: number; hp: number; maxHp: number; spawnTimer: number }
 
@@ -100,6 +108,7 @@ export class Combat {
     this.aliens.push({
       id: this.nextId++, x: n.x + 1.5 + Math.random() - 0.5, y: n.y + 3.2, hp, maxHp: hp,
       speed: (big ? 2.2 : 2.6) + Math.random() * 0.4, damage: big ? 15 : 7, target, nest: n.id, vx: 0, vy: 0, attacking: false,
+      guard: target === 'player',
     });
   }
 
@@ -143,12 +152,22 @@ export class Combat {
   }
 
   private moveAlien(al: Alien, dt: number, a: Arena, buildings: ReturnType<Arena['buildings']>) {
-    // Pick a target: the engineer if close, else the nearest building.
+    // The engineer, once spotted, until they get far enough away; then a look round where they
+    // were last seen, and back to what it was doing: guards home to their nest, raiders on to
+    // the nearest building.
     const dp = Math.hypot(a.player.x - al.x, a.player.y - al.y);
-    if (dp < 10) al.target = 'player';
-    if (al.target === null || (typeof al.target === 'number' && !buildings.some(b => b.id === al.target))) {
+    if (dp < SIGHT) { al.target = 'player'; al.search = undefined; }
+    if (al.target === 'player' && dp > LOSE) {
+      al.target = null;
+      al.search = { x: a.player.x, y: a.player.y, t: 3 };
+    }
+    if (al.search) {
+      al.search.t -= dt;
+      if (al.search.t <= 0 || Math.hypot(al.search.x - al.x, al.search.y - al.y) < 0.5) al.search = undefined;
+    }
+    if (!al.search && !al.guard && (al.target === null || (typeof al.target === 'number' && !buildings.some(b => b.id === al.target)))) {
       let best = Infinity;
-      al.target = dp < 30 ? 'player' : null;
+      al.target = null;
       for (const b of buildings) {
         const d = Math.hypot(b.x - al.x, b.y - al.y);
         if (d < best) { best = d; al.target = b.id; }
@@ -156,7 +175,13 @@ export class Combat {
     }
     let tx: number, ty: number;
     if (al.target === 'player') { tx = a.player.x; ty = a.player.y; }
-    else {
+    else if (al.search) { tx = al.search.x; ty = al.search.y; }
+    else if (al.guard) {
+      const n = this.nests.find(m => m.id === al.nest);
+      // Home: mill about in front of the nest.
+      if (!n || Math.hypot(n.x + 1.5 - al.x, n.y + 3.2 - al.y) < 1.5) { al.vx = al.vy = 0; al.attacking = false; return; }
+      tx = n.x + 1.5; ty = n.y + 3.2;
+    } else {
       const b = buildings.find(x => x.id === al.target);
       if (!b) { al.vx = al.vy = 0; return; }
       tx = Math.min(Math.max(al.x, b.x), b.x + b.size);
@@ -166,6 +191,7 @@ export class Combat {
     const dy = ty - al.y;
     const d = Math.hypot(dx, dy);
     al.attacking = false;
+    if (d < 0.9 && al.target === null) { al.vx = al.vy = 0; return; }
     if (d < 0.9) {
       al.attacking = true;
       al.vx = dx; al.vy = dy;

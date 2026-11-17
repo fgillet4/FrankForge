@@ -70,8 +70,19 @@ const DRILL_PARTS: Record<string, { hole: [number, number]; chimney?: [number, n
   burner_drill: { hole: [0.45, 0.51], chimney: [0.11, 0.28], bit: 0.42, thick: 12 },
   electric_drill: { hole: [0.48, 0.69], bit: 0.55, thick: 16 },
 };
-/** Painted turret or drill parts loaded for this kind. */
+/** Furnaces: where the fire burns or the crucible sits, the chimney, and the output tray. */
+const FURNACE_PARTS: Record<string, { mouth?: [number, number, number, number]; well?: [number, number, number, number]; chimney?: [number, number]; tray?: [number, number] }> = {
+  // Mouth: bottom centre, width and height. Well: centre, front rim and the crucible's width.
+  stone_furnace: { mouth: [0.385, 0.81, 0.2, 0.19], chimney: [0.53, 0.04], tray: [0.86, 0.78] },
+  electric_furnace: { well: [0.53, 0.21, 0.3, 0.24] },
+};
+/** Assemblers: the work table, and the socket the arm stands in. */
+const ASSEMBLER_PARTS: Record<string, { table: [number, number]; socket: [number, number] }> = {
+  assembler: { table: [0.46, 0.41], socket: [0.59, 0.12] },
+};
+/** Painted parts loaded for this kind. */
 const partBody = (kind: string) => kind.endsWith('_turret') ? `ip_${kind}_base` : `ip_${kind}_frame`;
+const PARTED = (kind: string) => kind in TURRET_PARTS || kind in DRILL_PARTS || kind in FURNACE_PARTS || kind in ASSEMBLER_PARTS;
 
 /** Where the painted inserter bases stand and take their arm (fractions of the image). */
 const INSERTER_PARTS: Record<string, { width: number; foot: [number, number]; socket: [number, number] }> = {
@@ -135,8 +146,12 @@ export class WorldRenderer {
         this.drawInserter(v, e, time);
         if (this.flowFor === 'all' || this.flowFor === e.id) drawInserterFlow(this.overlay, e.x, e.y, e.rot, v.x, v.y, v.zoom, this.flowFor === 'all' ? 0.6 : 1);
       }
-      if ((e.kind in TURRET_PARTS || e.kind in DRILL_PARTS) && this.scene.textures.exists(partBody(e.kind))) {
-        if (e.kind in TURRET_PARTS) this.drawTurret(v, e, time); else this.drawDrill(v, e, time);
+      const parted = PARTED(e.kind) && this.scene.textures.exists(partBody(e.kind));
+      if (parted) {
+        if (e.kind in TURRET_PARTS) this.drawTurret(v, e, time);
+        else if (e.kind in DRILL_PARTS) this.drawDrill(v, e, time);
+        else if (e.kind in FURNACE_PARTS) this.drawFurnace(v, e, time);
+        else this.drawAssembler(v, e, time);
       } else if (SPRITED.has(e.kind)) {
         const s = this.sprites.get(`b${e.id}`);
         // Working machines play their animation; idle ones show the still sprite.
@@ -157,7 +172,7 @@ export class WorldRenderer {
         s.setFlipX(e.kind === 'gun_turret' ? Math.cos(e.aim ?? 0) - Math.sin(e.aim ?? 0) < 0 : e.rot % 2 === 1);
       }
       // Fire glow in working burner machines.
-      if (e.active && BURNING.has(e.kind)) {
+      if (e.active && BURNING.has(e.kind) && !parted) {
         const c = this.at(v, e.x + e.size * 0.5, e.y + e.size * 0.5);
         const fl = 0.7 + 0.3 * Math.sin(time * 0.02 + e.id);
         this.overlay.fillStyle(0xff8a1c, 0.22 * fl).fillCircle(c.x, c.y - TILE_H * v.zoom * 0.6, 16 * v.zoom * fl);
@@ -412,8 +427,15 @@ export class WorldRenderer {
     return img;
   }
 
-  /** Effects the renderer asks the scene for: ore chips and smoke, in tile space. */
-  fx: { chips(x: number, y: number): void; smoke(x: number, y: number, z: number): void } | null = null;
+  /** Effects the renderer asks the scene for: ore chips, smoke and sparks, in tile space. */
+  fx: { chips(x: number, y: number): void; smoke(x: number, y: number, z: number): void; sparks(x: number, y: number, z: number, colour: number[]): void } | null = null;
+
+  /** Where a point on screen over a building is in the world: tile position and height. */
+  private lift(v: View, e: FEntity, p: { x: number; y: number }) {
+    const ground = this.at(v, e.x + e.size / 2, e.y + e.size / 2);
+    const t = screenToIso(p.x, ground.y, v.x, v.y, v.zoom);
+    return { x: t.x, y: t.y, z: (ground.y - p.y) / v.zoom };
+  }
 
   /** A painted body anchored on its footprint like any building. */
   private body(v: View, e: FEntity, flip: boolean, dx = 0) {
@@ -479,10 +501,148 @@ export class WorldRenderer {
     if (!e.active || !this.fx) return;
     if (Math.random() < 0.12) this.fx.chips(e.x + e.size / 2, e.y + e.size / 2);
     if (spec.chimney && Math.random() < 0.1) {
-      const c = at(spec.chimney[0], spec.chimney[1]);
-      const ground = this.at(v, e.x + e.size / 2, e.y + e.size / 2);
-      const t = screenToIso(c.x, ground.y, v.x, v.y, v.zoom);
-      this.fx.smoke(t.x, t.y, (ground.y - c.y) / v.zoom);
+      const t = this.lift(v, e, at(spec.chimney[0], spec.chimney[1]));
+      this.fx.smoke(t.x, t.y, t.z);
+    }
+  }
+
+  /**
+   * A furnace. The stone furnace burns in its mouth, smokes from its chimney and sets what it
+   * made on its tray; the electric furnace's crucible glows in its induction well and rises out
+   * of it as each batch finishes.
+   */
+  private drawFurnace(v: View, e: FEntity, time: number) {
+    const spec = FURNACE_PARTS[e.kind];
+    const flip = e.rot % 2 === 1;
+    const { img, depth, at } = this.body(v, e, flip);
+    const g = this.arms.get(`f${e.id}`).clear().setDepth(depth + 0.0001);
+    if (spec.mouth) {
+      const [mx, my, mw, mh] = spec.mouth;
+      const b = at(mx, my);
+      const w = mw * img.displayWidth, h = mh * img.displayHeight;
+      if (e.active) {
+        const fl = 0.75 + 0.25 * Math.sin(time * 0.021 + e.id);
+        g.fillStyle(0xff5a10, 0.5 * fl).fillEllipse(b.x, b.y - h * 0.3, w * 0.95, h * 0.6);
+        // Tongues of flame licking up from the coals, each on its own flicker.
+        for (let k = 0; k < 5; k++) {
+          const x = b.x + (k - 2) * w * 0.15;
+          const n = Math.sin(time * 0.013 + k * 2.1 + e.id) * 0.5 + Math.sin(time * 0.031 + k * 1.3) * 0.5;
+          const tall = h * (0.42 + 0.22 * n) * (k === 0 || k === 4 ? 0.6 : 1);
+          const sway = Math.sin(time * 0.009 + k) * w * 0.05;
+          g.fillStyle(0xff7a1a, 0.9).fillTriangle(x - w * 0.09, b.y - 1, x + w * 0.09, b.y - 1, x + sway, b.y - tall);
+          g.fillStyle(0xffd040, 0.95).fillTriangle(x - w * 0.045, b.y - 1, x + w * 0.045, b.y - 1, x + sway * 0.7, b.y - tall * 0.55);
+        }
+        g.fillStyle(0xffe8a0, 0.9).fillEllipse(b.x, b.y - 1.5 * v.zoom, w * 0.7, h * 0.12);
+        if (this.fx && spec.chimney && Math.random() < 0.08) {
+          const t = this.lift(v, e, at(spec.chimney[0], spec.chimney[1]));
+          this.fx.smoke(t.x, t.y, t.z);
+        }
+        if (this.fx && Math.random() < 0.02) {
+          const t = this.lift(v, e, { x: b.x, y: b.y - h * 0.3 });
+          this.fx.sparks(t.x, t.y, t.z, [0xffb040, 0xffe080]);
+        }
+      } else if ((e.burn ?? 0) > 0 || e.fuel?.first()) {
+        // Banked coals.
+        g.fillStyle(0xc0400c, 0.6).fillEllipse(b.x, b.y - 1.5 * v.zoom, w * 0.6, h * 0.12);
+      }
+    }
+    if (spec.tray) {
+      const made = e.output?.first();
+      const key = made ? `ic_${made}` : null;
+      if (key && this.scene.textures.exists(key)) {
+        const t = at(spec.tray[0], spec.tray[1]);
+        const icon = this.items.get(`o${e.id}`);
+        if (icon.texture.key !== key) icon.setTexture(key);
+        icon.setPosition(t.x, t.y).setScale(TILE_W * v.zoom * 0.22 / 64).setAlpha(1).setDepth(depth + 0.0001);
+      }
+    }
+    if (spec.well) {
+      const [wx, wy, rimY, cw] = spec.well;
+      const c = at(wx, wy);
+      const rim = at(wx, rimY).y;
+      const p = e.progress ?? 0;
+      const cru = this.parts.get(`C${e.id}`);
+      if (cru.texture.key !== 'ip_electric_furnace_crucible') cru.setTexture('ip_electric_furnace_crucible');
+      const cs = cw * img.displayWidth / cru.width;
+      // Sunk in the well with its mouth level with the coils while it melts, lifted out as the
+      // batch finishes. The well's front rim hides the rest of it.
+      const rise = e.active ? 0.55 * Math.min(1, Math.max(0, (p - 0.75) / 0.2)) ** 2 + Math.sin(time * 0.004 + e.id) * 0.015 : -0.05;
+      const top = c.y - cru.height * cs * (0.16 + rise);
+      const shown = Math.max(0, (rim - top) / cs);
+      if (e.active) {
+        const fl = 0.8 + 0.2 * Math.sin(time * 0.017 + e.id);
+        g.fillStyle(0xff7020, 0.35 * fl).fillEllipse(c.x, c.y, cw * img.displayWidth * 1.35, cw * img.displayWidth * 0.7);
+      }
+      cru.setCrop(0, 0, cru.width, Math.min(cru.height, shown)).setOrigin(0.5, 0).setScale(cs).setRotation(0).setFlipX(flip)
+        .setPosition(c.x, top).setDepth(depth + 0.0002);
+      // Cold, it's just grey metal.
+      if (e.active) cru.clearTint(); else cru.setTint(0x55504c);
+      if (e.active && this.fx && Math.random() < 0.04) {
+        const t = this.lift(v, e, { x: c.x, y: top });
+        this.fx.sparks(t.x, t.y, t.z, [0xffa030, 0xfff0a0]);
+      }
+    }
+  }
+
+  /**
+   * An assembler: a robot arm standing at the back of its work bay, working over what's being
+   * made on the table, welding as it goes. Idle, it rests above the table.
+   */
+  private drawAssembler(v: View, e: FEntity, time: number) {
+    const spec = ASSEMBLER_PARTS[e.kind];
+    const flip = e.rot % 2 === 1;
+    const { depth, at } = this.body(v, e, flip);
+    const unit = TILE_H * v.zoom * 1.2;
+    const toWorld = (p: { x: number; y: number }) => { const t = this.lift(v, e, p); return { x: t.x, y: t.y, z: t.z * v.zoom / unit }; };
+    const proj = (p: { x: number; y: number; z: number }) => { const q = this.at(v, p.x, p.y); return { x: q.x, y: q.y - p.z * unit }; };
+    const tableScreen = at(spec.table[0], spec.table[1]);
+    const shoulder = toWorld(at(spec.socket[0], spec.socket[1]));
+    const table = toWorld(tableScreen);
+    // What it's making sits on the table.
+    const making = e.recipe ? RECIPES[e.recipe]?.out : undefined;
+    if (making && this.scene.textures.exists(`ic_${making}`)) {
+      const icon = this.items.get(`t${e.id}`);
+      if (icon.texture.key !== `ic_${making}`) icon.setTexture(`ic_${making}`);
+      const grow = e.active ? 0.6 + 0.4 * (e.progress ?? 0) : 1;
+      icon.setPosition(tableScreen.x, tableScreen.y - 4 * v.zoom).setScale(TILE_W * v.zoom * 0.3 * grow / 64).setAlpha(1).setDepth(depth + 0.00005);
+    }
+    // Working, the tool hops between spots around the piece and dips to weld each one.
+    let hand = { x: table.x - 0.1, y: table.y - 0.1, z: table.z + 0.6 };
+    let welding = false;
+    if (e.active) {
+      const beat = time / 650 + e.id * 0.37;
+      const k = Math.floor(beat), f = beat - k;
+      const spot = (n: number) => { const a = n * 2.4; return { x: table.x + Math.cos(a) * 0.22, y: table.y + Math.sin(a) * 0.22 }; };
+      const a = spot(k), b = spot(k + 1);
+      const m = Math.min(1, f / 0.4);
+      const s = m * m * (3 - 2 * m);
+      welding = f > 0.5;
+      hand = { x: a.x + (b.x - a.x) * s, y: a.y + (b.y - a.y) * s, z: table.z + 0.3 + (welding ? 0 : 0.25 * Math.sin(m * Math.PI) + 0.08) };
+    }
+    const L = 0.64 * Math.hypot(table.x - shoulder.x, table.y - shoulder.y, table.z - shoulder.z) + 0.05;
+    const D = Math.hypot(hand.x - shoulder.x, hand.y - shoulder.y, hand.z - shoulder.z);
+    const up = Math.sqrt(Math.max(0, L * L - (D / 2) ** 2));
+    const elbow = { x: (hand.x + shoulder.x) / 2, y: (hand.y + shoulder.y) / 2, z: (hand.z + shoulder.z) / 2 + up };
+    const S = proj(shoulder), E = proj(elbow), H = proj(hand);
+    this.segment(`l${e.id}`, 'ip_assembler_arm', S, E, v.zoom, depth + 0.0001, 0xd8d8d8, 13);
+    this.segment(`u${e.id}`, 'ip_assembler_arm', E, H, v.zoom, depth + 0.0002, 0xffffff, 12);
+    // The tool carries on from the forearm, bent down toward the work.
+    const tool = this.parts.get(`h${e.id}`);
+    if (tool.texture.key !== 'ip_assembler_tool') tool.setTexture('ip_assembler_tool');
+    const ang = Math.atan2(H.y - E.y, H.x - E.x);
+    const rot = Math.atan2(Math.sin(ang) * 0.4 + 0.6, Math.cos(ang) * 0.4);
+    const ts = 0.4 * TILE_W * v.zoom / tool.width;
+    tool.setOrigin(0.08, 0.5).setPosition(H.x, H.y).setScale(ts).setRotation(rot).setFlipY(Math.cos(rot) < 0).setDepth(depth + 0.0003).clearTint();
+    if (welding) {
+      const tip = { x: H.x + Math.cos(rot) * tool.width * ts * 0.9, y: H.y + Math.sin(rot) * tool.width * ts * 0.9 };
+      if (Math.floor(time / 40) % 2) {
+        this.overlay.fillStyle(0x80c8ff, 0.55).fillCircle(tip.x, tip.y, 5 * v.zoom);
+        this.overlay.fillStyle(0xffffff, 0.95).fillCircle(tip.x, tip.y, 2 * v.zoom);
+      }
+      if (this.fx && Math.random() < 0.15) {
+        const t = this.lift(v, e, tip);
+        this.fx.sparks(t.x, t.y, t.z, [0xbfe4ff, 0xffffff, 0xffe080]);
+      }
     }
   }
 
