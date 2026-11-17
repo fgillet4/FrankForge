@@ -29,6 +29,12 @@ const SPECIES_COLOUR: Record<string, number> = {
   nh3: 0xc6e85a, c2h4: 0xff8fd0, c2h6: 0xffbf8f, ch3oh: 0xb48cff,
 };
 
+/** A fluid's colour washed over grey steel: a hint of what's inside. */
+function wash(c: number): number {
+  const mix = (v: number) => Math.round(255 - (255 - v) * 0.4);
+  return (mix(c >> 16 & 255) << 16) | (mix(c >> 8 & 255) << 8) | mix(c & 255);
+}
+
 export function fluidColour(v: VesselView): number {
   let best = 'n2';
   let max = -1;
@@ -57,7 +63,7 @@ export function preloadProcessAssets(scene: Phaser.Scene) {
     for (const part of ['base', 'head', 'barrel']) scene.load.image(`ip_${kind}_${part}`, `assets/process/parts/${kind}_${part}.png`);
   }
   for (const kind of ['burner_drill', 'electric_drill', 'stone_furnace', 'electric_furnace', 'assembler']) scene.load.image(`ip_${kind}_frame`, `assets/process/parts/${kind}_frame.png`);
-  for (const part of ['drill_bit', 'electric_furnace_crucible', 'assembler_arm', 'assembler_tool']) {
+  for (const part of ['drill_bit', 'electric_furnace_crucible', 'assembler_arm', 'assembler_tool', 'pipe', 'pipe_nozzle', 'pipe_joint']) {
     scene.load.image(`ip_${part}`, `assets/process/parts/${part}.png`);
   }
   // Item icons, for things carried on belts and in hands.
@@ -219,6 +225,9 @@ export class ProcessLayer {
   private ghostImg: Phaser.GameObjects.Image | null = null;
   private wrecks: { x: number; y: number; img: Phaser.GameObjects.Image }[] = [];
   private pipeTiles = new Map<string, number>();
+  /** Painted pipe pieces by tile and direction, and those drawn this frame. */
+  private pipeImgs = new Map<string, Phaser.GameObjects.Image>();
+  private pipeSeen = new Set<string>();
   selected: number | null = null;
 
   constructor(private scene: Phaser.Scene) {
@@ -329,37 +338,89 @@ export class ProcessLayer {
       const p = isoToScreen(x + 0.5, y + 0.5, camX, camY, zoom);
       return { x: p.x, y: p.y - TILE_H * zoom * 0.18 };
     };
-    const portLinks: { from: { x: number; y: number }; to: { x: number; y: number }; colour: number }[] = [];
+    // Where pipes meet buildings: the pipe tile outside a port, and which way the port lies.
+    const portLinks: { x: number; y: number; dx: number; dy: number; si: number }[] = [];
+    const opens = new Set<string>();
     for (const e of snap.entities) {
       const proto = PROTO[e.proto];
       if (!proto) continue;
       for (const pt of portTiles(proto, e.x, e.y, e.rot)) {
         const si = this.pipeTiles.get(`${pt.outside[0]},${pt.outside[1]}`);
         if (si === undefined) continue;
-        portLinks.push({ from: centre(...pt.outside), to: centre(...pt.inside), colour: fluidColour(snap.segments[si].vessel) });
+        const [x, y] = pt.outside;
+        portLinks.push({ x, y, dx: pt.inside[0] - x, dy: pt.inside[1] - y, si });
+        opens.add(`${x},${y},${pt.inside[0] - x},${pt.inside[1] - y}`);
       }
     }
-    const w = Math.max(2, 7 * zoom);
-    for (const pass of [0, 1]) {
+    const painted = this.scene.textures.exists('ip_pipe') && this.scene.textures.exists('ip_pipe_joint');
+    if (painted) {
+      // Painted pipe: flanged lengths bolted together at each tile's centre, a cross fitting where
+      // a run turns, branches or ends, and a flanged nozzle where it meets a port. Each run takes
+      // a wash of its fluid's colour. Drawn in depth order with the buildings, so they hide it.
+      const depthAt = (x: number, y: number) => 10 + (x + y + 2) * 0.01 + 0.0005;
+      const DIRS4 = [[1, 0], [0, 1], [-1, 0], [0, -1]];
+      const pad = TILE_W * zoom;
+      const off = (p: { x: number; y: number }) => p.x < -pad || p.y < -pad || p.x > this.scene.scale.width + pad || p.y > this.scene.scale.height + pad;
+      const shadow = (a: { x: number; y: number }, b: { x: number; y: number }) => {
+        const lift = TILE_H * zoom * 0.18;
+        this.pipeGfx.lineStyle(9 * zoom, 0x000000, 0.18).lineBetween(a.x, a.y + lift, b.x, b.y + lift);
+      };
       snap.segments.forEach(seg => {
-        const colour = fluidColour(seg.vessel);
+        const tint = wash(fluidColour(seg.vessel));
         for (const [x, y] of seg.tiles) {
           const c = centre(x, y);
-          const links = [[1, 0], [0, 1]].filter(([dx, dy]) => this.pipeTiles.has(`${x + dx},${y + dy}`));
-          for (const [dx, dy] of links) {
+          if (off(c)) continue;
+          for (const [dx, dy] of [[1, 0], [0, 1]]) {
+            if (!this.pipeTiles.has(`${x + dx},${y + dy}`)) continue;
             const n = centre(x + dx, y + dy);
-            this.pipeGfx.lineStyle(pass ? w * 0.45 : w, pass ? colour : 0x2a2f36, 1).lineBetween(c.x, c.y, n.x, n.y);
+            shadow(c, n);
+            this.pipeSegment(`p${x},${y},${dx}`, 'ip_pipe', c, n, zoom, depthAt(x + dx, y + dy) - 0.0002, tint, 13, 0.035, 0.93);
           }
-          // Flanged joint.
-          this.pipeGfx.fillStyle(pass ? colour : 0x3a4048, 1).fillCircle(c.x, c.y, pass ? w * 0.3 : w * 0.62);
+          const joined = DIRS4.filter(([dx, dy]) => this.pipeTiles.has(`${x + dx},${y + dy}`) || opens.has(`${x},${y},${dx},${dy}`));
+          const straight = joined.length === 2 && joined[0][0] === -joined[1][0] && joined[0][1] === -joined[1][1];
+          if (!straight) {
+            const j = this.pipePart(`j${x},${y}`, 'ip_pipe_joint');
+            j.setOrigin(0.5, 0.55).setPosition(c.x, c.y).setScale(0.42 * TILE_W * zoom / j.width).setRotation(0).setDepth(depthAt(x, y)).setTint(tint);
+          }
         }
       });
       for (const l of portLinks) {
-        const mx = l.from.x + (l.to.x - l.from.x) * 0.5;
-        const my = l.from.y + (l.to.y - l.from.y) * 0.5;
-        this.pipeGfx.lineStyle(pass ? w * 0.45 : w, pass ? l.colour : 0x2a2f36, 1).lineBetween(l.from.x, l.from.y, mx, my);
+        const tint = wash(fluidColour(snap.segments[l.si].vessel));
+        const c = centre(l.x, l.y);
+        if (off(c)) continue;
+        const inner = centre(l.x + l.dx, l.y + l.dy);
+        // Half a length out to the building's wall, and the building's own nozzle meeting it there.
+        const edge = { x: (c.x + inner.x) / 2, y: (c.y + inner.y) / 2 };
+        const into = { x: c.x + (inner.x - c.x) * 0.85, y: c.y + (inner.y - c.y) * 0.85 };
+        shadow(c, edge);
+        this.pipeSegment(`q${l.x},${l.y},${l.dx},${l.dy}`, 'ip_pipe', c, edge, zoom, depthAt(l.x, l.y) - 0.0002, tint, 13, 0.035, 0.93);
+        this.pipeSegment(`n${l.x},${l.y},${l.dx},${l.dy}`, 'ip_pipe_nozzle', into, edge, zoom, depthAt(l.x, l.y) - 0.0001, 0xffffff, 17, 0, 0.88);
+      }
+    } else {
+      const w = Math.max(2, 7 * zoom);
+      for (const pass of [0, 1]) {
+        snap.segments.forEach(seg => {
+          const colour = fluidColour(seg.vessel);
+          for (const [x, y] of seg.tiles) {
+            const c = centre(x, y);
+            const links = [[1, 0], [0, 1]].filter(([dx, dy]) => this.pipeTiles.has(`${x + dx},${y + dy}`));
+            for (const [dx, dy] of links) {
+              const n = centre(x + dx, y + dy);
+              this.pipeGfx.lineStyle(pass ? w * 0.45 : w, pass ? colour : 0x2a2f36, 1).lineBetween(c.x, c.y, n.x, n.y);
+            }
+            // Flanged joint.
+            this.pipeGfx.fillStyle(pass ? colour : 0x3a4048, 1).fillCircle(c.x, c.y, pass ? w * 0.3 : w * 0.62);
+          }
+        });
+        for (const l of portLinks) {
+          const c = centre(l.x, l.y), to = centre(l.x + l.dx, l.y + l.dy);
+          this.pipeGfx.lineStyle(pass ? w * 0.45 : w, pass ? fluidColour(snap.segments[l.si].vessel) : 0x2a2f36, 1)
+            .lineBetween(c.x, c.y, (c.x + to.x) / 2, (c.y + to.y) / 2);
+        }
       }
     }
+    for (const [k, img] of this.pipeImgs) if (!this.pipeSeen.has(k)) { img.destroy(); this.pipeImgs.delete(k); }
+    this.pipeSeen.clear();
 
     // Buildings.
     for (const e of snap.entities) {
@@ -485,6 +546,24 @@ export class ProcessLayer {
     this.drawPorts(g.proto, g.x, g.y, g.rot, camX, camY, zoom);
   }
 
+  private pipePart(key: string, tex: string) {
+    let img = this.pipeImgs.get(key);
+    if (!img) { img = this.scene.add.image(0, 0, tex); this.pipeImgs.set(key, img); }
+    if (img.texture.key !== tex) img.setTexture(tex);
+    this.pipeSeen.add(key);
+    return img;
+  }
+
+  /** A piece of pipe stretched from a to b; `from` is where a sits along the image, `span` how much of it reaches b. */
+  private pipeSegment(key: string, tex: string, a: { x: number; y: number }, b: { x: number; y: number }, zoom: number, depth: number,
+    tint: number, thick: number, from: number, span: number) {
+    const img = this.pipePart(key, tex);
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    img.setOrigin(from, 0.5).setPosition(a.x, a.y).setRotation(Math.atan2(b.y - a.y, b.x - a.x))
+      .setScale(len / (img.width * span), thick * zoom / img.height).setDepth(depth).setTint(tint);
+    return img;
+  }
+
   /** The frontmost building drawn under a screen point. */
   pick(x: number, y: number): Pick | null {
     let best: Pick | null = null;
@@ -506,6 +585,8 @@ export class ProcessLayer {
     this.images.clear();
     this.wrecks.forEach(w => w.img.destroy());
     this.fx.forEach(f => f.sprite.destroy());
+    this.pipeImgs.forEach(i => i.destroy());
+    this.pipeImgs.clear();
     this.pipeGfx.destroy();
     this.overlayGfx.destroy();
     this.ghostImg?.destroy();

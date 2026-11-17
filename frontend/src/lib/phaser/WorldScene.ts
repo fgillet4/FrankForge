@@ -539,6 +539,24 @@ export class WorldScene extends Phaser.Scene {
     return !p || WALKABLE.has(p.proto);
   }
 
+  /** A building put down on the engineer shoves them to the nearest free ground. */
+  private stepOut() {
+    const { x, y } = this.player;
+    const tx = Math.floor(x), ty = Math.floor(y);
+    if (this.walkable(tx, ty)) return;
+    let best: { x: number; y: number } | null = null, bd = Infinity;
+    for (let r = 1; r <= 8 && !best; r++) {
+      for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r || !this.walkable(tx + dx, ty + dy)) continue;
+        // Just inside the free tile, on the side nearest where they stood.
+        const px = Phaser.Math.Clamp(x, tx + dx + 0.1, tx + dx + 0.9), py = Phaser.Math.Clamp(y, ty + dy + 0.1, ty + dy + 0.9);
+        const d = Math.hypot(px - x, py - y);
+        if (d < bd) { bd = d; best = { x: px, y: py }; }
+      }
+    }
+    if (best) this.player = best;
+  }
+
   /** WASD moves the engineer along the screen's axes; belts carry them along. */
   private movePlayer(dt: number) {
     const k = this.keys;
@@ -566,8 +584,9 @@ export class WorldScene extends Phaser.Scene {
 
     const nx = Phaser.Math.Clamp(this.player.x + mx * dt, 0, this.map.width - 0.01);
     const ny = Phaser.Math.Clamp(this.player.y + my * dt, 0, this.map.height - 0.01);
-    // Slide along water, cliffs and buildings instead of stopping dead.
-    if (this.walkable(Math.floor(nx), Math.floor(ny))) { this.player.x = nx; this.player.y = ny; }
+    // Slide along water, cliffs and buildings instead of stopping dead. Somehow inside one, walk out.
+    if (!this.walkable(Math.floor(this.player.x), Math.floor(this.player.y))) { this.player.x = nx; this.player.y = ny; }
+    else if (this.walkable(Math.floor(nx), Math.floor(ny))) { this.player.x = nx; this.player.y = ny; }
     else if (this.walkable(Math.floor(nx), Math.floor(this.player.y))) this.player.x = nx;
     else if (this.walkable(Math.floor(this.player.x), Math.floor(ny))) this.player.y = ny;
 
@@ -1172,6 +1191,7 @@ export class WorldScene extends Phaser.Scene {
     if (!this.sandbox) this.eng.inv.remove(proto, 1);
     this.playSound('place', 0.35);
     for (const id of ids) pop(id, this.time.now);
+    this.stepOut();
     for (let k = 0; k < n * 2; k++) this.juice.dust(x + Math.random() * n, y + Math.random() * n, 0x8a7a64, 2);
     this.juice.kick(n >= 3 ? 1.5 : 0);
     this.processLayer?.built(proto, x, y);
