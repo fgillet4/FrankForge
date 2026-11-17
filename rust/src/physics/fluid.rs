@@ -144,9 +144,16 @@ pub enum PipeKind {
     Valve { opening: f64 },
     /// One-way.
     Check,
-    /// Centrifugal pump: shut-off head [Pa], flow at zero head [m³/s], efficiency, electrical
-    /// power available this step [W] (set by the grid) and power used.
-    Pump { dp_max: f64, q_max: f64, eff: f64, rated_w: f64, power_avail: f64, power_used: f64 },
+    /// Centrifugal pump. Its rated curve (full impeller, full speed) has shut-off pressure `dp_max`
+    /// [Pa] falling parabolically to nothing at runout `q_max` [m³/s], with best efficiency `eff`
+    /// at half of runout. The impeller can be trimmed and a VFD can slow it; both follow the
+    /// affinity laws (flow ∝ N·D, head ∝ N²·D², power ∝ N³·D³). Short of power, it slows down.
+    /// The rest is the operating point, for display: flow [m³/s], pressure rise [Pa], efficiency,
+    /// actual speed fraction and the liquid's density.
+    Pump {
+        dp_max: f64, q_max: f64, eff: f64, rated_w: f64, power_avail: f64, power_used: f64,
+        trim: f64, speed: f64, q: f64, dp: f64, eff_now: f64, n: f64, rho: f64,
+    },
     /// Compressor: maximum pressure ratio, isentropic efficiency, power.
     Compressor { ratio_max: f64, eff: f64, rated_w: f64, power_avail: f64, power_used: f64 },
     /// Turbine: flow coefficient (Stodola), isentropic efficiency, admission valve opening, rated
@@ -321,14 +328,17 @@ impl Network {
             let mut fixed_dp = (pa - va.p()) - (pb - vb.p()) - head;
             let mut extra_w = 0.0;
             let q = p.mdot.abs() / d.rho;
+            // How fast a pump's pressure rise falls with mass flow, solved implicitly like friction.
+            let mut pump_slope = 0.0;
             match &mut p.kind {
-                PipeKind::Pump { dp_max, q_max, eff, rated_w, power_avail, power_used } => {
-                    // The pump's curve, scaled by the power it actually gets.
-                    let share = if *rated_w > 0.0 { (*power_avail / *rated_w).clamp(0.0, 1.0) } else { 0.0 };
-                    let pump_dp = *dp_max * share.sqrt() * (1.0 - (q / *q_max).powi(2)).max(0.0);
+                PipeKind::Pump { dp_max, q_max, eff, rated_w, power_avail, power_used, trim, speed, q: q_op, dp, eff_now, n, rho } => {
+                    let curve = pump_curve(*dp_max, *q_max, *eff, *trim, *speed, *rated_w, *power_avail);
+                    let (pump_dp, e_now, shaft) = curve.at(if forward { q } else { -q });
                     fixed_dp += pump_dp;
-                    *power_used = (q * pump_dp / *eff).min(*power_avail);
+                    pump_slope = curve.slope(if forward { q } else { -q }) / d.rho;
+                    *power_used = shaft.min(*power_avail);
                     extra_w = *power_used;
+                    (*q_op, *dp, *eff_now, *n, *rho) = (if forward { q } else { -q }, pump_dp, e_now, curve.n, d.rho);
                 }
                 PipeKind::Compressor { ratio_max, eff, rated_w: _, power_avail, power_used } => {
                     // Pressure ratio the available shaft power supports at this flow (ideal gas).
@@ -354,7 +364,7 @@ impl Network {
             let re = p.mdot.abs() / area * p.diameter / d.mu;
             let f = friction_factor(re, p.roughness / p.diameter);
             let mut k = (f * p.length / p.diameter + p.k_minor) / (2.0 * d.rho * area * area);
-            let lam = 32.0 * d.mu * p.length / (d.rho * area * p.diameter * p.diameter);
+            let lam = 32.0 * d.mu * p.length / (d.rho * area * p.diameter * p.diameter) + pump_slope;
             let mut blocked = false;
             match &p.kind {
                 PipeKind::Valve { opening } => {
@@ -643,8 +653,94 @@ impl Network {
     }
 }
 
+/// A centrifugal pump's curve at a given impeller trim and speed.
+pub struct PumpCurve {
+    /// Shut-off pressure [Pa], runout flow [m³/s], best efficiency, and the speed it really turns at.
+    pub dp0: f64,
+    pub q_run: f64,
+    pub eff_bep: f64,
+    pub n: f64,
+}
+
+/// Scales the rated curve by the affinity laws. The motor asks for rated power × N³D³; given
+/// less, the pump slows until what it needs matches what it gets (power ∝ N³).
+pub fn pump_curve(dp_max: f64, q_max: f64, eff: f64, trim: f64, speed: f64, rated_w: f64, power_avail: f64) -> PumpCurve {
+    let need = rated_w * (speed * trim).powi(3);
+    let share = if need > 0.0 { (power_avail / need).clamp(0.0, 1.0) } else { 0.0 };
+    let n = speed * share.cbrt();
+    let k = n * trim;
+    // Trimmed impellers lose a little efficiency: about 4 % per 10 % cut.
+    PumpCurve { dp0: dp_max * k * k, q_run: q_max * k, eff_bep: eff * (1.0 - 0.4 * (1.0 - trim)), n }
+}
+
+impl PumpCurve {
+    /// How steeply the pressure rise falls with flow [Pa per m³/s].
+    pub fn slope(&self, q: f64) -> f64 {
+        if self.q_run <= 0.0 {
+            return 0.0;
+        }
+        2.0 * self.dp0 * (q / self.q_run).abs() / self.q_run
+    }
+
+    /// Pressure rise [Pa], efficiency and shaft power [W] at a flow [m³/s].
+    pub fn at(&self, q: f64) -> (f64, f64, f64) {
+        if self.q_run <= 0.0 {
+            return (0.0, 0.0, 0.0);
+        }
+        // Flow is signed, forward through the pump. Past runout the head goes negative: pushed
+        // faster than it pumps, the pump holds the flow back; driven backwards, it resists more
+        // than its shut-off head. Always falling with flow, so it steadies the solve.
+        let r = q / self.q_run;
+        let dp = self.dp0 * (1.0 - r * r.abs());
+        // Shaft power rises with flow, as on a radial pump: two thirds of the best-efficiency
+        // point's at shut-off, where the impeller only churns the liquid. Efficiency is what's
+        // left of it as hydraulic power, so it is zero at shut-off and runout and peaks at the
+        // best-efficiency point, half of runout (the only place a rising power line lets it).
+        let q_bep = 0.5 * self.q_run;
+        let p_bep = q_bep * self.dp0 * 0.75 / self.eff_bep;
+        let shaft = p_bep * (2.0 + q.max(0.0) / q_bep) / 3.0;
+        (dp, (q * dp / shaft).max(0.0), shaft)
+    }
+}
+
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn pump_curves_follow_the_affinity_laws() {
+        let full = pump_curve(6e5, 0.05, 0.75, 1.0, 1.0, 22e3, 22e3);
+        let half = pump_curve(6e5, 0.05, 0.75, 1.0, 0.5, 22e3, 22e3 / 8.0);
+        assert!((half.q_run / full.q_run - 0.5).abs() < 1e-9, "flow ∝ N");
+        assert!((half.dp0 / full.dp0 - 0.25).abs() < 1e-9, "head ∝ N²");
+        // At the same point on the curve, power goes as N³.
+        let (_, _, p_full) = full.at(0.03);
+        let (_, _, p_half) = half.at(0.015);
+        assert!((p_half / p_full - 0.125).abs() < 1e-9, "power ∝ N³: {}", p_half / p_full);
+        // Trimming the impeller works the same way, at a small cost in efficiency.
+        let trimmed = pump_curve(6e5, 0.05, 0.75, 0.9, 1.0, 22e3, 22e3);
+        assert!((trimmed.dp0 / full.dp0 - 0.81).abs() < 1e-9);
+        assert!(trimmed.eff_bep < full.eff_bep);
+    }
+
+    #[test]
+    fn pump_power_rises_with_flow_and_efficiency_peaks_in_between() {
+        let c = pump_curve(6e5, 0.05, 0.75, 1.0, 1.0, 22e3, 22e3);
+        let pts: Vec<_> = (0..=10).map(|k| c.at(c.q_run * k as f64 / 10.0)).collect();
+        assert!(pts.windows(2).all(|w| w[1].2 > w[0].2), "shaft power rises with flow");
+        assert!(pts.windows(2).all(|w| w[1].0 <= w[0].0), "head falls with flow");
+        assert!(c.at(c.q_run * 1.2).0 < 0.0, "past runout it holds the flow back");
+        assert_eq!(pts[0].1, 0.0);
+        assert!(pts[10].1.abs() < 1e-9);
+        let best = pts.iter().map(|p| p.1).fold(0.0, f64::max);
+        assert!(best > 0.74 && best <= 0.75 + 1e-9, "best efficiency {best}");
+        let (_, e_bep, _) = c.at(0.5 * c.q_run);
+        assert!((e_bep - 0.75).abs() < 1e-9, "peaks at the best-efficiency point");
+        // The motor covers the whole curve.
+        assert!(pts[10].2 < 22e3);
+        // Starved of power, it slows: half the power turns it at the cube root of a half.
+        let starved = pump_curve(6e5, 0.05, 0.75, 1.0, 1.0, 22e3, 11e3);
+        assert!((starved.n - 0.5f64.cbrt()).abs() < 1e-9);
+    }
     use super::*;
     use crate::thermodynamics::species::index_of;
 

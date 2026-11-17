@@ -139,9 +139,9 @@ pub const PROTOS: &[Proto] = &[
     },
     Proto {
         id: "pump", name: "Centrifugal pump", category: "Logistics",
-        description: "Adds up to 6 bar of head, falling off along its curve toward 0.05 m³/s. 50 kW.",
+        description: "Adds up to 6 bar of head, falling off along its curve toward 0.05 m³/s (180 m³/h). Trim the impeller or slow it with a VFD to move the operating point. 22 kW motor.",
         ports: &[port(-1, 0, 0, Middle, "suction"), port(1, 0, 1, Middle, "discharge")],
-        link: Some(LinkDef::Pump { dp_bar: 6.0, q_max: 0.05 }), power_w: 50e3, ..BASE
+        link: Some(LinkDef::Pump { dp_bar: 6.0, q_max: 0.05 }), power_w: 22e3, ..BASE
     },
     Proto {
         id: "compressor", name: "Gas compressor", category: "Logistics",

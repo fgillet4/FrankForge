@@ -5,6 +5,7 @@
 
 import './process.css';
 import { iconUrl } from '../game/items';
+import { PumpCurvePanel } from './pumpCurve';
 import {
   PROTO, PROTOS, SPECIES, blackStart, setEnabled, setOpening, setReaction, layout,
   type EntityView, type Snapshot, type VesselView,
@@ -105,10 +106,13 @@ export class ProcessUI {
   private lastBar = '';
   onSelectProto: (id: string | null) => void = () => {};
   onCloseInspector: () => void = () => {};
+  /** Whether pumps' speed can be changed (variable-frequency drives researched). */
+  vfdUnlocked: () => boolean = () => true;
+  private curve = new PumpCurvePanel(() => this.vfdUnlocked());
 
   constructor() {
     this.bar.append(this.tabs, this.buttons);
-    this.root.append(this.bar, this.inspector, this.gridPanel, this.tooltip, this.alerts);
+    this.root.append(this.bar, this.inspector, this.gridPanel, this.tooltip, this.alerts, this.curve.root);
     document.body.append(this.root);
     // The world's tooltip goes as soon as the pointer moves onto a panel or off the window.
     const hide = () => { this.tooltip.style.display = 'none'; };
@@ -186,7 +190,10 @@ export class ProcessUI {
     const t = e.target as HTMLElement;
     if (t.dataset.action === 'close') {
       this.showInspector(null);
+      this.curve.close();
       this.onCloseInspector();
+    } else if (t.dataset.action === 'curve' && this.inspectorFor !== null) {
+      if (this.curve.id === this.inspectorFor) this.curve.close(); else this.curve.open(this.inspectorFor);
     } else if (t.dataset.action === 'reaction' && this.inspectorFor !== null) {
       setReaction(this.inspectorFor, t.dataset.value!);
       this.lastInspectorHtml = '';
@@ -199,6 +206,10 @@ export class ProcessUI {
   update(snap: Snapshot) {
     this.updateGrid(snap);
     for (const msg of snap.events) this.alert(msg);
+    if (this.curve.id !== null) {
+      const pump = snap.entities.find(x => x.id === this.curve.id);
+      if (pump) this.curve.update(pump); else this.curve.close();
+    }
     if (this.inspectorFor === null) return;
     const e = snap.entities.find(x => x.id === this.inspectorFor);
     if (!e) {
@@ -220,6 +231,12 @@ export class ProcessUI {
       hasOpening ? `<label class="pp-control">${kind === 'Turbine' ? 'Admission limit' : 'Opening'}
         <input type="range" min="0" max="100" step="1" value="${Math.round(e.opening * 100)}" data-action="opening">
         <b data-label="opening">${Math.round(e.opening * 100)}%</b></label>` : '',
+      kind === 'Pump' ? (() => {
+        const k = e.pipes[0].kind;
+        const head = (k.dp ?? 0) / ((k.rho && k.rho > 1 ? k.rho : 1000) * 9.80665);
+        return `<div class="pp-control">Running at <b>${((k.q ?? 0) * 3600).toFixed(1)} m³/h, ${head.toFixed(1)} m</b>
+          <button data-action="curve">${this.curve.id === e.id ? 'Hide curve' : 'Pump curve'}</button></div>`;
+      })() : '',
       p.power_w ? `<div class="pp-control">Power ${fmt.w(e.power_w)} of ${fmt.w(p.power_w)}
         <button data-action="toggle" data-on="${e.enabled}">${e.enabled ? 'Switch off' : 'Switch on'}</button></div>` : '',
       e.generation_w || p.generator_w ? `<div class="pp-control">Generating <b>${fmt.w(e.generation_w)}</b>${p.generator_w ? ` of ${fmt.w(p.generator_w)}` : ''}</div>` : '',

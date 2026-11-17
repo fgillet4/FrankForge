@@ -11,7 +11,9 @@ The plant simulation lives in `rust/` and runs in the browser as WebAssembly.
   flashed with the Peng–Robinson equation of state for temperature, pressure, and the liquid/vapour
   split. Water boils at the right temperature; closed drums sit on the saturation curve.
 - **Pressure-driven flow.** Pipes carry flow with inertia, Darcy–Weisbach friction, hydrostatic head and
-  choked gas flow, solved implicitly across the whole network. Pumps follow curves, valves have
+  choked gas flow, solved implicitly across the whole network. Centrifugal pumps run on real curves
+  (head, efficiency and shaft power against flow) that move with impeller trim and VFD speed by the
+  affinity laws; each pump's curve, with its live operating point, opens from its panel. Valves have
   equal-percentage trim, compressors heat the gas, turbines expand steam isentropically.
 - **Chemistry.** Reactions run at Arrhenius rates and stop at Gibbs equilibrium. Heat of reaction isn't
   scripted; it comes out of energy conservation.

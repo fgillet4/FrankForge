@@ -44,6 +44,9 @@ pub struct Entity {
     pub battery_charge: f64,
     /// Fraction of its rated power an electric building asks for (machines idle at a trickle).
     pub demand: f64,
+    /// Pumps: impeller diameter as a fraction of full size, and VFD speed as a fraction of rated.
+    pub trim: f64,
+    pub speed: f64,
     /// The power network it is wired into, if any.
     pub network: Option<usize>,
     // Where this entity's parts live in the current network and grid.
@@ -177,7 +180,7 @@ impl World {
             })
             .collect();
         let e = Entity {
-            id, proto, x, y, rot: rot % 4, vessels, opening: 1.0, enabled: true, battery_charge: p.battery_j * 0.5, demand: 1.0, network: None,
+            id, proto, x, y, rot: rot % 4, vessels, opening: 1.0, enabled: true, battery_charge: p.battery_j * 0.5, demand: 1.0, trim: 1.0, speed: 1.0, network: None,
             net_vessels: vec![], net_pipes: vec![], net_links: vec![], load: None, generator: None, battery: None,
         };
         let tiles: Vec<Tile> = e.tiles().collect();
@@ -222,6 +225,22 @@ impl World {
     pub fn set_opening(&mut self, id: u32, opening: f64) {
         if let Some(e) = self.entities.get_mut(&id) {
             e.opening = opening.clamp(0.0, 1.0);
+        }
+    }
+
+    /// Trims a pump's impeller (0.7–1 of full diameter) and sets its VFD speed (0–1 of rated).
+    /// The motor then asks the grid for rated power × (speed·trim)³.
+    pub fn set_pump(&mut self, id: u32, trim: f64, speed: f64) {
+        let Some(e) = self.entities.get_mut(&id) else { return };
+        e.trim = trim.clamp(0.7, 1.0);
+        e.speed = speed.clamp(0.0, 1.0);
+        e.demand = (e.trim * e.speed).powi(3);
+        for &pi in &e.net_pipes {
+            if let Some(p) = self.net.pipes.get_mut(pi) {
+                if let PipeKind::Pump { trim, speed, .. } = &mut p.kind {
+                    (*trim, *speed) = (e.trim, e.speed);
+                }
+            }
         }
     }
 
@@ -529,7 +548,8 @@ impl World {
                             LinkDef::Valve => PipeKind::Valve { opening: e.opening },
                             LinkDef::Check => PipeKind::Check,
                             LinkDef::Pump { dp_bar, q_max } => PipeKind::Pump {
-                                dp_max: dp_bar * 1e5, q_max, eff: 0.7, rated_w: p.power_w, power_avail: 0.0, power_used: 0.0,
+                                dp_max: dp_bar * 1e5, q_max, eff: 0.75, rated_w: p.power_w, power_avail: 0.0, power_used: 0.0,
+                                trim: e.trim, speed: e.speed, q: 0.0, dp: 0.0, eff_now: 0.0, n: 0.0, rho: 1000.0,
                             },
                             LinkDef::Compressor { ratio_max } => PipeKind::Compressor {
                                 ratio_max, eff: 0.75, rated_w: p.power_w, power_avail: 0.0, power_used: 0.0,

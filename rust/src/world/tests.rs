@@ -269,3 +269,41 @@ fn a_governed_burner_generator_holds_fifty_hertz() {
     }
     assert!((w.grids[0].frequency - 50.0).abs() < 0.1, "{}", w.grids[0].frequency);
 }
+
+#[test]
+fn slowing_a_pump_with_its_vfd_cuts_flow_and_power() {
+    let mut w = world();
+    let mut id = 100;
+    // Tank → pump → tank, the pump on a solar array.
+    w.place(1, "storage_tank", 0, 0, 0).unwrap(); // east bottom nozzle on (3, 1)
+    pipe_line(&mut w, &mut id, (3, 1), (4, 1));
+    w.place(2, "pump", 5, 1, 0).unwrap(); // suction (4, 1), discharge (6, 1)
+    pipe_line(&mut w, &mut id, (6, 1), (7, 1));
+    w.place(3, "storage_tank", 8, 0, 0).unwrap(); // top nozzle on (7, 1)
+    w.place(4, "solar_array", 4, 4, 0).unwrap();
+    w.place(5, "power_pole", 5, 3, 0).unwrap();
+    w.advance(0.0);
+    w.fill(1, "h2o", 4.0e6, 293.15);
+    // The far tank is blanketed with nitrogen at 2.5 bar, so the pump has a head to work against.
+    w.fill(3, "n2", 2.5e5 * 150.0 / (8.314 * 293.15), 293.15);
+    let run = |w: &mut World| {
+        for _ in 0..100 {
+            w.advance(0.1);
+        }
+        match w.net.pipes[w.entities[&2].net_pipes[0]].kind {
+            PipeKind::Pump { q, dp, eff_now, n, power_used, .. } => (q, dp, eff_now, n, power_used),
+            _ => panic!("not a pump"),
+        }
+    };
+    let (q1, dp1, eff1, n1, p1) = run(&mut w);
+    assert!(q1 > 0.0 && dp1 > 0.0 && eff1 > 0.3, "operating point {q1} m³/s, {dp1} Pa, η {eff1}, n {n1}");
+    w.set_pump(2, 1.0, 0.6);
+    let (q2, _, _, n2, p2) = run(&mut w);
+    assert!(n2 < n1 && (n2 - 0.6 * n1.min(1.0) / n1.min(1.0)).abs() < 0.05, "{n1} → {n2}");
+    assert!(q2 < q1 * 0.8, "slower pump, less flow: {q1} → {q2}");
+    assert!(p2 < p1 * 0.5, "and much less power: {p1} → {p2}");
+    // The setting survives a rebuild of the network.
+    w.place(6, "pipe", 20, 20, 0).unwrap();
+    let (_, _, _, n3, _) = run(&mut w);
+    assert!((n3 - n2).abs() < 0.02, "{n2} → {n3}");
+}

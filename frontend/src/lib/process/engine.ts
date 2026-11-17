@@ -44,7 +44,12 @@ export interface VesselView {
 
 export interface PipeView {
   mdot: number; velocity: number; vapour: boolean; choked: boolean;
-  kind: { kind: string; opening?: number; power_used?: number; power_out?: number; rated_w?: number };
+  kind: {
+    kind: string; opening?: number; power_used?: number; power_out?: number; rated_w?: number;
+    /** Pumps: rated curve, settings and operating point (see the engine's PipeKind::Pump). */
+    dp_max?: number; q_max?: number; eff?: number; trim?: number; speed?: number;
+    q?: number; dp?: number; eff_now?: number; n?: number; rho?: number;
+  };
 }
 
 export interface EntityView {
@@ -75,7 +80,11 @@ export interface Snapshot {
   emitted_kg: Record<string, number>;
 }
 
-export interface Placed { id: number; proto: string; x: number; y: number; rot: number; opening: number; enabled: boolean; reaction?: string }
+export interface Placed {
+  id: number; proto: string; x: number; y: number; rot: number; opening: number; enabled: boolean; reaction?: string;
+  /** Pumps: impeller trim and VFD speed, as fractions of full. */
+  trim?: number; speed?: number;
+}
 
 let world: ProcessWorld | null = null;
 export let PROTOS: Proto[] = [];
@@ -162,6 +171,13 @@ export function setReaction(id: number, reaction: string) {
   if (p) p.reaction = reaction;
 }
 
+/** Trims a pump's impeller (0.7–1) and sets its VFD speed (0–1). */
+export function setPump(id: number, trim: number, speed: number) {
+  world?.set_pump(id, trim, speed);
+  const p = placed.get(id);
+  if (p) { p.trim = trim; p.speed = speed; }
+}
+
 /** How much of its rated power an electric building asks for (0–1). */
 export function setDemand(id: number, fraction: number) {
   world?.set_demand(id, fraction);
@@ -203,5 +219,6 @@ export function restore(list: Placed[]) {
     if (p.opening !== 1) setOpening(p.id, p.opening);
     if (!p.enabled) setEnabled(p.id, false);
     if (p.reaction) setReaction(p.id, p.reaction);
+    if (p.trim !== undefined || p.speed !== undefined) setPump(p.id, p.trim ?? 1, p.speed ?? 1);
   }
 }

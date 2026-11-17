@@ -225,8 +225,11 @@ export class WorldScene extends Phaser.Scene {
         if (FACTORY_KINDS.has(p.proto) && !this.factory.entities.has(p.id)) this.factory.add(p.id, p.proto, p.x, p.y, p.rot, engine.PROTO[p.proto].size);
       }
       this.processLayer = new ProcessLayer(this);
+      // The engine, for poking at from the console while developing.
+      if (import.meta.env.DEV) (window as unknown as { engine: typeof engine }).engine = engine;
       this.processUI = new ProcessUI();
       this.processUI.barState = id => this.barState(id);
+      this.processUI.vfdUnlocked = () => this.sandbox || this.eng.research.done.has('vfd');
       this.processUI.onSelectProto = id => this.choose(id);
       this.processUI.onCloseInspector = () => this.select(null);
       this.hud = new Hud(this.eng, this.factory, {

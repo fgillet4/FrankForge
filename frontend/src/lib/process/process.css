@@ -135,3 +135,26 @@
   .pp-inspector { left: 12px; right: 12px; width: auto; top: auto; bottom: 150px; max-height: 45vh; }
     .pp-gridpanel { width: 170px; }
 }
+
+/* Pump curve, beside the inspector */
+.pp-curve {
+  position: absolute; right: 354px; top: 224px; width: 468px; display: none; padding: 10px 12px;
+  background: var(--pp-bg); border: 1px solid var(--pp-line); border-radius: 10px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+  pointer-events: auto;
+}
+.pp-curve.open { display: block; }
+.pp-curve-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+.pp-curve-head b { font-size: 15px; }
+.pp-curve-head button { margin-left: auto; background: none; border: 0; font-size: 16px; color: var(--pp-dim); }
+.pp-curve canvas { display: block; }
+.pp-curve-read { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px 10px; margin: 8px 0 4px; font-size: 11px; color: var(--pp-dim); }
+.pp-curve-read span { display: flex; flex-direction: column; }
+.pp-curve-read b { color: var(--pp-text); font-size: 13px; }
+.pp-curve .pp-control b { min-width: 62px; text-align: right; }
+.pp-curve-note { font-size: 12px; color: var(--pp-ok); margin-top: 4px; line-height: 1.35; }
+.pp-curve-note.warn { color: var(--pp-warn); }
+.pp-curve-note.bad { color: var(--pp-bad); }
+@media (max-width: 900px) {
+  .pp-curve { left: 12px; right: 12px; width: auto; top: 12px; }
+  .pp-curve canvas { max-width: 100%; }
+}

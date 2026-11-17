@@ -52,6 +52,10 @@ impl ProcessWorld {
         self.world.set_reaction(id, reaction);
     }
 
+    pub fn set_pump(&mut self, id: u32, trim: f64, speed: f64) {
+        self.world.set_pump(id, trim, speed);
+    }
+
     pub fn set_demand(&mut self, id: u32, fraction: f64) {
         self.world.set_demand(id, fraction);
     }

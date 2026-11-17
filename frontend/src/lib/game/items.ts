@@ -202,6 +202,8 @@ export const TECHS: Tech[] = [
   t('toolbelt', 'Toolbelt', '20 more inventory slots.', RG, 50, ['logistic_science'], [], { inventory: 20 }),
   t('electric_energy', 'Electric energy distribution', 'Substations, batteries and electric heaters.', RG, 75, ['logistic_science', 'steel'],
     ['substation', 'battery_bank', 'electric_heater']),
+  t('vfd', 'Variable-frequency drives', 'Run pumps at any speed from their pump curve: flow follows speed, head its square, power its cube.',
+    RG, 50, ['electric_energy', 'fluid_handling'], []),
   t('solar', 'Solar energy', 'Smelt silicon and build solar arrays.', RG, 100, ['electric_energy'], ['silicon', 'solar_array']),
   t('advanced_smelting', 'Advanced material processing', 'Electric furnaces.', RG, 75, ['logistic_science', 'steel'], ['electric_furnace']),
   t('military_2', 'Military 2', 'Piercing magazines and heavy armor.', RG, 50, ['logistic_science', 'military', 'steel'], ['ammo_piercing', 'armor_heavy']),
