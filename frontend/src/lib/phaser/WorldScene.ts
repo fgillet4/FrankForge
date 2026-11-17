@@ -262,9 +262,7 @@ export class WorldScene extends Phaser.Scene {
       // The engine, for poking at from the console while developing.
       if (import.meta.env.DEV) (window as unknown as { engine: typeof engine }).engine = engine;
       this.processUI = new ProcessUI();
-      this.processUI.barState = id => this.barState(id);
       this.processUI.vfdUnlocked = () => this.sandbox || this.eng.research.done.has('vfd');
-      this.processUI.onSelectProto = id => this.choose(id);
       this.processUI.onCloseInspector = () => this.select(null);
       this.processUI.onRotate = id => this.rotateBuilding(id);
       this.processUI.onLevel = l => this.changeLevel(l);
@@ -361,7 +359,6 @@ export class WorldScene extends Phaser.Scene {
     if (this.hudTimer <= 0 && this.hud) {
       this.hudTimer = 150;
       this.hud.update();
-      this.processUI?.refreshBar();
     }
     // Tooltips keep up with what they describe (an alien losing health, a furnace filling).
     this.tipTimer -= delta;
@@ -1122,12 +1119,6 @@ export class WorldScene extends Phaser.Scene {
 
   // ── Building ───────────────────────────────────────────────────────────────
 
-  private barState(id: string) {
-    if (id === 'wreck') return { visible: false, count: null };
-    const visible = this.eng.unlocked.has(id) || id === 'pipe';
-    return { visible, count: this.sandbox ? null : this.eng.inv.count(id) };
-  }
-
   /** Selects a building to place; with none in the pockets, crafts one if possible. */
   private choose(id: string | null) {
     // Picking pipe for a height takes the engineer up to it.
@@ -1145,10 +1136,6 @@ export class WorldScene extends Phaser.Scene {
       }
     }
     this.placementType = id;
-    if (this.processUI && this.processUI.selectedProto !== id) {
-      this.processUI.selectedProto = id;
-      this.processUI.refreshBar();
-    }
   }
 
   private rotate() {

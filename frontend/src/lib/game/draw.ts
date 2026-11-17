@@ -520,19 +520,34 @@ export class WorldRenderer {
       const [mx, my, mw, mh] = spec.mouth;
       const b = at(mx, my);
       const w = mw * img.displayWidth, h = mh * img.displayHeight;
-      if (e.active) {
-        const fl = 0.75 + 0.25 * Math.sin(time * 0.021 + e.id);
-        g.fillStyle(0xff5a10, 0.5 * fl).fillEllipse(b.x, b.y - h * 0.3, w * 0.95, h * 0.6);
-        // Tongues of flame licking up from the coals, each on its own flicker.
-        for (let k = 0; k < 5; k++) {
-          const x = b.x + (k - 2) * w * 0.15;
-          const n = Math.sin(time * 0.013 + k * 2.1 + e.id) * 0.5 + Math.sin(time * 0.031 + k * 1.3) * 0.5;
-          const tall = h * (0.42 + 0.22 * n) * (k === 0 || k === 4 ? 0.6 : 1);
-          const sway = Math.sin(time * 0.009 + k) * w * 0.05;
-          g.fillStyle(0xff7a1a, 0.9).fillTriangle(x - w * 0.09, b.y - 1, x + w * 0.09, b.y - 1, x + sway, b.y - tall);
-          g.fillStyle(0xffd040, 0.95).fillTriangle(x - w * 0.045, b.y - 1, x + w * 0.045, b.y - 1, x + sway * 0.7, b.y - tall * 0.55);
+      const lit = e.active || (e.burn ?? 0) > 0 || !!e.fuel?.first();
+      if (lit && this.scene.textures.exists('ip_fire_coals')) {
+        const fl = 0.8 + 0.12 * Math.sin(time * 0.021 + e.id) + 0.08 * Math.sin(time * 0.057 + e.id * 3);
+        if (e.active) g.fillStyle(0xff5a10, 0.35 * fl).fillEllipse(b.x, b.y - h * 0.35, w * 1.05, h * 0.75);
+        // The bed of coals: glowing and breathing while it burns, a dull red once banked.
+        const coals = this.parts.get(`k${e.id}`);
+        if (coals.texture.key !== 'ip_fire_coals') coals.setTexture('ip_fire_coals');
+        const glow = e.active ? Math.round(200 + 55 * fl) : 120;
+        coals.setOrigin(0.5, 1).setPosition(b.x, b.y + h * 0.04).setScale(w * 0.86 / coals.width).setRotation(0).setFlipX(false)
+          .setDepth(depth + 0.0002).setBlendMode(Phaser.BlendModes.NORMAL).setAlpha(1).setTint(Phaser.Display.Color.GetColor(glow, Math.round(glow * (e.active ? 0.85 : 0.45)), Math.round(glow * (e.active ? 0.75 : 0.35))));
+        if (e.active) {
+          // Painted flames layered and glowing: each sways, stretches and fades on its own beat,
+          // so together they never repeat the same shape.
+          const flames: [string, number, number, boolean][] = [['ip_fire_flame_b', 0.78, 0, false], ['ip_fire_flame_a', 0.9, 2.1, false], ['ip_fire_flame_b', 0.62, 4.3, true]];
+          flames.forEach(([key, width, ph, flipped], k) => {
+            const f = this.parts.get(`q${k}${e.id}`);
+            if (f.texture.key !== key) f.setTexture(key);
+            const t = time * 0.001 + ph + e.id;
+            const stretch = 0.82 + 0.16 * Math.sin(t * 7.3) + 0.08 * Math.sin(t * 17.1);
+            const s = w * width / f.width;
+            f.setOrigin(0.5, 1).setPosition(b.x + Math.sin(t * 3.1) * w * 0.04, b.y - h * 0.06)
+              .setScale(s * (1.04 - 0.08 * stretch), Math.min(s * stretch, h * 0.95 / f.height))
+              .setRotation(Math.sin(t * 2.3) * 0.05).setFlipX(flipped).setDepth(depth + 0.0003 + k * 0.00001)
+              .setBlendMode(Phaser.BlendModes.ADD).setAlpha(0.55 + 0.35 * Math.sin(t * 4.7 + k) ** 2).clearTint();
+          });
         }
-        g.fillStyle(0xffe8a0, 0.9).fillEllipse(b.x, b.y - 1.5 * v.zoom, w * 0.7, h * 0.12);
+      }
+      if (e.active) {
         if (this.fx && spec.chimney && Math.random() < 0.08) {
           const t = this.lift(v, e, at(spec.chimney[0], spec.chimney[1]));
           this.fx.smoke(t.x, t.y, t.z);
@@ -541,9 +556,6 @@ export class WorldRenderer {
           const t = this.lift(v, e, { x: b.x, y: b.y - h * 0.3 });
           this.fx.sparks(t.x, t.y, t.z, [0xffb040, 0xffe080]);
         }
-      } else if ((e.burn ?? 0) > 0 || e.fuel?.first()) {
-        // Banked coals.
-        g.fillStyle(0xc0400c, 0.6).fillEllipse(b.x, b.y - 1.5 * v.zoom, w * 0.6, h * 0.12);
       }
     }
     if (spec.tray) {

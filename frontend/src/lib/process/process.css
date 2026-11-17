@@ -19,47 +19,13 @@
 .pp-root small { color: var(--pp-dim); }
 
 /* Build bar */
-.pp-bar {
-  position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%);
-  max-width: calc(100vw - 32px);
-  background: var(--pp-bg); border: 1px solid var(--pp-line); border-radius: 10px;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
-}
-.pp-tabs { display: flex; gap: 2px; padding: 6px 6px 0; overflow-x: auto; }
-.pp-tabs button {
-  background: none; border: 0; border-bottom: 2px solid transparent; padding: 4px 10px; color: var(--pp-dim);
-}
-.pp-tabs button.on { color: var(--pp-text); border-bottom-color: var(--pp-accent); }
-.pp-buttons { display: flex; gap: 4px; padding: 6px; overflow-x: auto; }
-.pp-buttons button {
-  width: 78px; flex: none; display: flex; flex-direction: column; align-items: center; gap: 2px;
-  background: #222932; border: 1px solid #333c48; border-radius: 6px; padding: 4px 2px;
-}
-.pp-buttons button:hover { border-color: #56657a; }
-.pp-buttons button.on { border-color: var(--pp-accent); background: #3a2f1c; }
-.pp-buttons img { width: 48px; height: 48px; object-fit: contain; }
-.pp-buttons span { font-size: 11px; text-align: center; line-height: 1.15; }
-.pp-buttons button { position: relative; }
-.pp-buttons button.empty img { opacity: 0.45; }
-.pp-count {
-  position: absolute; right: 4px; top: 3px; font-style: normal; font-size: 11px; font-weight: 700;
-  background: #11161d; border-radius: 4px; padding: 0 4px; color: var(--pp-text);
-}
-.pp-count.none { color: var(--pp-bad); }
 .pp-choices { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 6px; }
 .pp-choices button { background: #222932; border: 1px solid #333c48; border-radius: 5px; padding: 3px 8px; font-size: 12px; }
 .pp-choices button.on { border-color: var(--pp-accent); background: #3a2f1c; }
-.pp-pipe-icon {
-  width: 48px; height: 48px; display: block; position: relative;
-}
-.pp-pipe-icon::before {
-  content: ''; position: absolute; left: 6px; right: 6px; top: 19px; height: 10px;
-  background: linear-gradient(#8a96a6, #4a5360); border-radius: 3px; box-shadow: 0 0 0 2px #2a2f36;
-}
 
 /* Inspector */
 .pp-inspector {
-  position: absolute; right: 12px; top: 224px; bottom: 140px; width: 330px; overflow-y: auto;
+  position: absolute; right: 12px; top: 224px; bottom: 12px; width: 330px; overflow-y: auto;
   background: var(--pp-bg); border: 1px solid var(--pp-line); border-radius: 10px; padding: 10px 12px;
   display: none; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
 }
@@ -107,16 +73,20 @@
 
 /* Grid panel */
 .pp-gridpanel {
-  position: absolute; left: 12px; top: 36px; width: 210px;
-  background: var(--pp-bg); border: 1px solid var(--pp-line); border-radius: 10px; padding: 8px 12px;
+  position: absolute; left: 12px; top: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px;
+  font-size: 12px; color: #c9d3df; font-variant-numeric: tabular-nums; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+  pointer-events: auto;
 }
+.pp-gridpanel span { white-space: nowrap; }
+.pp-wind { display: inline-block; font-style: normal; font-size: 10px; color: #9fd3ff; }
 .pp-freq { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .pp-freq.ok { color: var(--pp-ok); }
 .pp-freq.warn { color: var(--pp-warn); }
 .pp-freq.bad { color: var(--pp-bad); }
-.pp-gridpanel button {
-  margin-top: 6px; width: 100%; background: #5a1f1a; border: 1px solid var(--pp-bad); border-radius: 5px; padding: 4px;
+.pp-blackout {
+  background: #5a1f1a; border: 1px solid var(--pp-bad); border-radius: 5px; padding: 3px 10px; color: #ffd9d4; font-weight: 600;
 }
+.pp-inspector .pp-blackout { margin-top: 6px; width: 100%; }
 
 /* Hover read-out, alerts, help */
 .pp-tooltip {
@@ -133,7 +103,7 @@
 
 @media (max-width: 900px) {
   .pp-inspector { left: 12px; right: 12px; width: auto; top: auto; bottom: 150px; max-height: 45vh; }
-    .pp-gridpanel { width: 170px; }
+    .pp-gridpanel { right: 12px; }
 }
 
 /* Pump curve, beside the inspector */
@@ -161,16 +131,13 @@
 
 /* Flow view legend. */
 .pp-flow-legend {
-  position: fixed; left: 16px; bottom: 96px; z-index: 15; padding: 8px 10px; width: 220px;
-  background: rgba(12, 15, 20, 0.86); border: 1px solid #2c3440; border-radius: 6px;
-  color: #e8ecf1; font: 12px/1.4 'Chakra Petch', system-ui, sans-serif; pointer-events: none;
+  position: fixed; left: 12px; top: 90px; z-index: 15; display: flex; align-items: center; gap: 6px;
+  color: #c9d3df; font: 11px/14px 'Chakra Petch', system-ui, sans-serif; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9); pointer-events: none;
 }
-.pp-flow-legend b { display: block; margin-bottom: 4px; }
-.pp-flow-legend i { display: block; height: 8px; border-radius: 2px; }
-.pp-flow-legend span { display: flex; justify-content: space-between; color: #8d99a8; margin-top: 2px; }
-.pp-flow-legend em { font-style: normal; }
-.pp-flow-legend em.over { color: #fff; background: #d03b3b; padding: 0 4px; border-radius: 2px; }
-.pp-flow-legend small { display: block; color: #8d99a8; margin-top: 4px; }
+.pp-flow-legend b { font-weight: 600; color: #e8ecf1; }
+.pp-flow-legend i { display: block; width: 90px; height: 6px; border-radius: 3px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.6); }
+.pp-flow-legend em { font-style: normal; color: #c9d3df; }
+.pp-flow-legend em.over { color: #fff; background: #d03b3b; padding: 0 4px; border-radius: 2px; text-shadow: none; }
 
 /* Pipe hover card: hydraulics. */
 .pp-hyd { display: grid; gap: 1px; margin-top: 4px; padding-top: 4px; border-top: 1px solid rgba(255, 255, 255, 0.12); }
@@ -202,33 +169,30 @@
 .pp-switch.on::before { left: 40px; background: #6dff8a; box-shadow: 0 0 6px #6dff8a, inset 0 -1px 1px rgba(0, 0, 0, 0.3); }
 .pp-switch span { pointer-events: none; }
 
-/* Working height: a little lift shaft at the right edge. */
+/* Working height: a slim lift shaft under the ambient line, dim while on the ground. */
 .pp-altimeter {
-  position: fixed; right: 16px; top: 50%; transform: translateY(-50%); z-index: 14; width: 104px;
-  padding: 8px 10px; border-radius: 8px; background: rgba(12, 15, 20, 0.82); border: 1px solid #2c3440;
-  color: #e8ecf1; font: 12px/1.3 'Chakra Petch', system-ui, sans-serif; pointer-events: none;
+  position: fixed; left: 12px; top: 34px; z-index: 14; color: #c9d3df; pointer-events: none;
+  font: 11px/14px 'Chakra Petch', system-ui, sans-serif; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+  opacity: 1; transition: opacity 0.3s;
 }
-.pp-altimeter > b { display: block; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: #8d99a8; margin-bottom: 6px; }
-.pp-shaft { position: relative; display: grid; gap: 10px; padding-left: 20px; }
+.pp-altimeter[data-level="0"] { opacity: 0.55; }
+.pp-shaft { position: relative; display: grid; gap: 2px; padding-left: 13px; }
 .pp-shaft::before {
-  content: ''; position: absolute; left: 6px; top: 2px; bottom: 2px; width: 4px; border-radius: 2px;
-  background: repeating-linear-gradient(#3a4250 0 4px, #232a33 4px 8px);
+  content: ''; position: absolute; left: 4px; top: 1px; bottom: 1px; width: 2px; border-radius: 1px; background: rgba(140, 153, 168, 0.5);
 }
-.pp-shaft span { color: #6c7889; transition: color 0.2s; pointer-events: auto; cursor: pointer; }
-.pp-shaft span:hover { color: #c9d3df; }
-.pp-shaft span.on { color: #ffcf70; font-weight: 700; }
+.pp-shaft span { color: #8d99a8; transition: color 0.2s; pointer-events: auto; cursor: pointer; }
+.pp-shaft span:hover { color: #e8ecf1; }
+.pp-shaft span.on { color: #ffcf70; }
 .pp-car {
-  position: absolute; left: 1px; top: 0; width: 14px; height: 14px; border-radius: 3px;
-  background: linear-gradient(#ffcf70, #f0a63a); box-shadow: 0 0 8px rgba(240, 166, 58, 0.7), inset 0 -2px 0 rgba(0, 0, 0, 0.25);
+  position: absolute; left: 1px; top: 0; width: 8px; height: 8px; margin-top: 3px; border-radius: 2px;
+  background: #f0a63a; box-shadow: 0 0 6px rgba(240, 166, 58, 0.7);
   transition: top 0.38s cubic-bezier(.34, 1.56, .64, 1);
 }
-.pp-altimeter[data-level="2"] .pp-car { top: 1px; }
-.pp-altimeter[data-level="1"] .pp-car { top: 27px; }
-.pp-altimeter[data-level="0"] .pp-car { top: 53px; }
-.pp-altimeter small { display: block; margin-top: 6px; color: #8d99a8; font-size: 10px; }
-.pp-altimeter kbd { font: inherit; padding: 0 3px; border: 1px solid #3a4250; border-radius: 3px; }
-.pp-altimeter.bump { animation: pp-bump 0.35s ease-out; }
-@keyframes pp-bump { 30% { transform: translateY(-50%) scale(1.06); border-color: #f0a63a; } }
+.pp-altimeter[data-level="2"] .pp-car { top: 0; }
+.pp-altimeter[data-level="1"] .pp-car { top: 16px; }
+.pp-altimeter[data-level="0"] .pp-car { top: 32px; }
+.pp-altimeter.bump .pp-car { animation: pp-bump 0.35s ease-out; }
+@keyframes pp-bump { 30% { transform: scale(1.5); } }
 .pp-head .pp-rotate {
   font-size: 13px; color: var(--pp-text, #e8ecf1); padding: 3px 8px; margin-right: 4px; border-radius: 5px;
   border: 1px solid #3a4250; background: #1d232c; cursor: pointer;

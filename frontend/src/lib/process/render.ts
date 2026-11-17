@@ -80,7 +80,8 @@ export function preloadProcessAssets(scene: Phaser.Scene) {
   }
   for (const kind of ['burner_drill', 'electric_drill', 'stone_furnace', 'electric_furnace', 'assembler']) scene.load.image(`ip_${kind}_frame`, `assets/process/parts/${kind}_frame.png`);
   for (const id of Object.keys(PAINTED)) scene.load.image(`pf_${id}`, `assets/process/parts/${id}_frame.png`);
-  for (const part of ['drill_bit', 'electric_furnace_crucible', 'assembler_arm', 'assembler_tool', 'pipe', 'pipe_nozzle', 'pipe_joint', 'rack_low', 'rack_high']) {
+  for (const part of ['drill_bit', 'electric_furnace_crucible', 'assembler_arm', 'assembler_tool', 'pipe', 'pipe_nozzle', 'pipe_joint', 'rack_low', 'rack_high',
+    'fire_coals', 'fire_flame_a', 'fire_flame_b']) {
     scene.load.image(`ip_${part}`, `assets/process/parts/${part}.png`);
   }
   // Item icons, for things carried on belts and in hands.
@@ -106,11 +107,44 @@ export function createAnims(scene: Phaser.Scene) {
 }
 
 /**
- * Process buildings painted as a still frame with their fire drawn on live: rows of peep windows
- * and burner ports (first and last, as fractions of the image) and the top of the flue.
+ * Inline fittings, bolted into the line by their flanges: the centres of the two flange faces in
+ * the painting [px, left one first], and how far out from the fitting's centre they reach on the
+ * line [tiles]. The paintings run up to the right, so a line that falls to the right flips them.
  */
-const PAINTED: Record<string, { windows: [number, number, number, number]; burners: [number, number, number, number]; count: number; stack: [number, number] }> = {
-  cracker_furnace: { windows: [0.2, 0.548, 0.664, 0.748], burners: [0.19, 0.738, 0.625, 0.927], count: 10, stack: [0.738, 0.02] },
+const INLINE: Record<string, [[number, number], [number, number]]> = {
+  valve: [[6, 106], [120, 70]],
+  check_valve: [[6, 64], [122, 36]],
+};
+const INLINE_REACH = 0.62;
+
+/**
+ * The wind at a moment of the game [s]: a breeze that strengthens, eases and swings round over
+ * the day. Its way across the map in tiles (x, y, a unit vector) and its speed [m/s].
+ */
+export function wind(time: number) {
+  const speed = Math.max(0.3, 3.2 + 2.1 * Math.sin(time / 173) + 1.1 * Math.sin(time / 41 + 1.3) + 0.5 * Math.sin(time / 13));
+  const a = 0.8 + 0.9 * Math.sin(time / 311) + 0.3 * Math.sin(time / 67);
+  return { x: Math.cos(a), y: Math.sin(a), speed };
+}
+
+/** A row of like things on a painted frame: the first and last, as fractions of the image. */
+interface Row { from: [number, number]; to: [number, number]; count: number }
+
+/**
+ * Process buildings painted as a still frame with their fire drawn on live: the row of peep
+ * windows and the size of a pane (half its width as a share of the spacing, half its height as a
+ * share of the image), floor burners where they show, a roof that shimmers over roof burners, and
+ * the top of the flue.
+ */
+const PAINTED: Record<string, { windows: Row; pane: [number, number]; burners?: Row; roof?: [number, number, number]; stack: [number, number] }> = {
+  cracker_furnace: {
+    windows: { from: [0.2, 0.548], to: [0.664, 0.748], count: 10 }, pane: [0.3, 0.017],
+    burners: { from: [0.19, 0.738], to: [0.625, 0.927], count: 10 }, stack: [0.738, 0.02],
+  },
+  smr_reformer: {
+    windows: { from: [0.065, 0.492], to: [0.531, 0.697], count: 9 }, pane: [0.36, 0.022],
+    roof: [0.36, 0.3, 0.5], stack: [0.935, 0.021],
+  },
 };
 
 /** Roughly what colour steel and brick glow at a temperature [K], and how brightly. */
@@ -261,6 +295,8 @@ export class ProcessLayer {
   private wasRuptured = new Set<number>();
   private wasBlackout = false;
   private pipeGfx: Phaser.GameObjects.Graphics;
+  /** The plant's clock at the last snapshot [s], for the wind. */
+  private gameTime = 0;
   /** The live fire on painted buildings, just in front of each. */
   private fireGfx = new Map<number, Phaser.GameObjects.Graphics>();
   private overlayGfx: Phaser.GameObjects.Graphics;
@@ -376,6 +412,7 @@ export class ProcessLayer {
     ports: { all: boolean; hovered: number | null } = { all: false, hovered: null },
     /** For factory machines: whether they're working, which beats what the grid says. */
     working: (id: number) => boolean | undefined = () => undefined) {
+    if (snap) this.gameTime = snap.time;
     this.pipeGfx.clear();
     this.overlayGfx.clear();
     this.flowGfx.clear();
@@ -404,7 +441,7 @@ export class ProcessLayer {
     const risers = hydraulics(snap).risers;
     const fade = (l: number) => (l > this.viewLevel ? 0.3 : 1);
     // Where pipes meet buildings: the pipe tile outside a port, and which way the port lies.
-    const portLinks: { x: number; y: number; dx: number; dy: number; si: number }[] = [];
+    const portLinks: { x: number; y: number; dx: number; dy: number; si: number; inline: boolean }[] = [];
     const opens = new Set<string>();
     for (const e of snap.entities) {
       const proto = PROTO[e.proto];
@@ -413,7 +450,7 @@ export class ProcessLayer {
         const si = this.pipeTiles.get(`${pt.outside[0]},${pt.outside[1]}`);
         if (si === undefined) continue;
         const [x, y] = pt.outside;
-        portLinks.push({ x, y, dx: pt.inside[0] - x, dy: pt.inside[1] - y, si });
+        portLinks.push({ x, y, dx: pt.inside[0] - x, dy: pt.inside[1] - y, si, inline: e.proto in INLINE });
         opens.add(`${x},${y},${pt.inside[0] - x},${pt.inside[1] - y}`);
       }
     }
@@ -450,7 +487,13 @@ export class ProcessLayer {
           const riser = risers.has(`${x},${y}`);
           const joined = DIRS4.filter(([dx, dy]) => has(l, x + dx, y + dy) || (!l && opens.has(`${x},${y},${dx},${dy}`)));
           const straight = !riser && joined.length === 2 && joined[0][0] === -joined[1][0] && joined[0][1] === -joined[1][1];
-          if (!straight) {
+          if (joined.length === 1 && !riser) {
+            // A dead end: the pipe stops at a blind flange.
+            const [dx, dy] = joined[0];
+            const n = has(l, x + dx, y + dy) ? nc(l, x + dx, y + dy) : centre(x + dx, y + dy);
+            const a = { x: c.x + (n.x - c.x) * 0.3, y: c.y + (n.y - c.y) * 0.3 }, b = { x: c.x - (n.x - c.x) * 0.08, y: c.y - (n.y - c.y) * 0.08 };
+            this.pipeSegment(`e${l},${x},${y}`, 'ip_pipe_nozzle', a, b, zoom, depthAt(x, y) + lift + 0.0001, tint, 15 * fat, 0, 0.88).setAlpha(fade(l));
+          } else if (!straight) {
             const j = this.pipePart(`j${l},${x},${y}`, 'ip_pipe_joint');
             j.setOrigin(0.5, 0.55).setPosition(c.x, c.y).setScale(0.42 * fat * TILE_W * zoom / j.width).setRotation(0).setDepth(depthAt(x, y) + lift + 0.0001).setTint(tint).setAlpha(fade(l));
           }
@@ -489,12 +532,16 @@ export class ProcessLayer {
         const c = centre(l.x, l.y);
         if (off(c)) continue;
         const inner = centre(l.x + l.dx, l.y + l.dy);
-        // Half a length out to the building's wall, and the building's own nozzle meeting it there.
-        const edge = { x: (c.x + inner.x) / 2, y: (c.y + inner.y) / 2 };
-        const into = { x: c.x + (inner.x - c.x) * 0.85, y: c.y + (inner.y - c.y) * 0.85 };
+        // Half a length out to the building's wall, and the building's own nozzle meeting it there;
+        // an inline fitting brings its own flange to meet the pipe.
+        const reach = l.inline ? 1 - INLINE_REACH : 0.5;
+        const edge = { x: c.x + (inner.x - c.x) * reach, y: c.y + (inner.y - c.y) * reach };
         shadow(c, edge);
         this.pipeSegment(`q${l.x},${l.y},${l.dx},${l.dy}`, 'ip_pipe', c, edge, zoom, depthAt(l.x, l.y) - 0.0002, tint, 13 * fat, 0.035, 0.93);
-        this.pipeSegment(`n${l.x},${l.y},${l.dx},${l.dy}`, 'ip_pipe_nozzle', into, edge, zoom, depthAt(l.x, l.y) - 0.0001, 0xffffff, 17, 0, 0.88);
+        if (!l.inline) {
+          const into = { x: c.x + (inner.x - c.x) * 0.85, y: c.y + (inner.y - c.y) * 0.85 };
+          this.pipeSegment(`n${l.x},${l.y},${l.dx},${l.dy}`, 'ip_pipe_nozzle', into, edge, zoom, depthAt(l.x, l.y) - 0.0001, 0xffffff, 17, 0, 0.88);
+        }
       }
     } else {
       const w = Math.max(2, 7 * zoom);
@@ -559,9 +606,10 @@ export class ProcessLayer {
       const judder = cav > 0.01 ? Math.sin(time * 0.11 + e.id) * zoom * (0.6 + cav * 1.4) : 0;
       img.setPosition(bottom.x + judder, bottom.y + TILE_H * zoom * 0.08);
       img.setScale((paint ? n * TILE_W * zoom / img.width : (TILE_W * zoom) / SPRITE_TILE_PX) * popScale(e.id, time));
-      img.setFlipX(e.rot % 2 === 1);
+      img.setFlipX(e.rot % 2 === 1).setRotation(0).setOrigin(anim ? anim.ox : 0.5, anim ? anim.oy : 1);
       img.setDepth(10 + (e.x + e.y + 2 * n) * 0.01);
       img.setTint(e.id === this.selected ? 0xfff2b0 : 0xffffff);
+      if (INLINE[e.proto] && !anim && !ruptured) this.boltIn(e, img, INLINE[e.proto], centre, popScale(e.id, time));
       if (paint) this.drawFire(e, img, paint, zoom, time);
       else if (this.fireGfx.has(e.id)) { this.fireGfx.get(e.id)!.destroy(); this.fireGfx.delete(e.id); }
       // Now and then a puff of vapour lifts the relief valve on a gas sphere in use.
@@ -616,15 +664,15 @@ export class ProcessLayer {
     g.clear().setDepth(img.depth + 0.0001);
     const W = img.displayWidth, H = img.displayHeight;
     const at = (fx: number, fy: number) => ({ x: img.x + ((img.flipX ? 1 - fx : fx) - 0.5) * W, y: img.y + (fy - 1) * H });
-    const row = ([x0, y0, x1, y1]: number[], k: number) => at(x0 + (x1 - x0) * k / (spec.count - 1), y0 + (y1 - y0) * k / (spec.count - 1));
+    const row = ({ from: [x0, y0], to: [x1, y1], count }: Row, k: number) => at(x0 + (x1 - x0) * k / (count - 1), y0 + (y1 - y0) * k / (count - 1));
     const fired = e.vessels.find(v => v.reactions.some(r => r.name.includes('combustion')));
     const lit = !!fired?.reactions.some(r => r.name.includes('combustion') && r.rate > 1e-3);
     const [colour, a] = heatGlow(fired?.t ?? 0);
     if (a > 0) {
       // Each window a little parallelogram on the slanted face.
       const a0 = row(spec.windows, 0), a1 = row(spec.windows, 1);
-      const sx = (a1.x - a0.x) * 0.3, sy = (a1.y - a0.y) * 0.3, hh = H * 0.017;
-      for (let k = 0; k < spec.count; k++) {
+      const sx = (a1.x - a0.x) * spec.pane[0], sy = (a1.y - a0.y) * spec.pane[0], hh = H * spec.pane[1];
+      for (let k = 0; k < spec.windows.count; k++) {
         const c = row(spec.windows, k);
         const fl = lit ? 0.82 + 0.18 * Math.sin(time * 0.017 + k * 1.7 + e.id) : 1;
         g.fillStyle(colour, 0.22 * a * fl).fillEllipse(c.x, c.y, Math.abs(sx) * 5, hh * 4.5);
@@ -633,20 +681,32 @@ export class ProcessLayer {
           { x: c.x + sx, y: c.y + sy + hh }, { x: c.x - sx, y: c.y - sy + hh }], true);
       }
     }
-    if (lit) {
+    if (lit && spec.roof) {
+      // Burners firing down from the roof: only a shimmer of heat over it shows from outside.
+      const [rx, ry, rw] = spec.roof, c = at(rx, ry);
+      for (let k = 0; k < 3; k++) {
+        const u = (time * 0.0005 + k / 3 + e.id * 0.21) % 1;
+        g.fillStyle(0xff8a3a, 0.1 * Math.sin(u * Math.PI)).fillEllipse(c.x + Math.sin(u * 6 + k * 2) * W * 0.03, c.y - u * H * 0.08, W * rw * (0.6 + 0.4 * u), H * 0.05);
+      }
+    }
+    if (lit && spec.burners) {
       const r = W * 0.012;
-      for (let k = 0; k < spec.count; k++) {
+      for (let k = 0; k < spec.burners.count; k++) {
         const c = row(spec.burners, k);
         const fl = 0.75 + 0.25 * Math.sin(time * 0.029 + k * 2.3 + e.id);
         g.fillStyle(0xff7a1a, 0.35 * fl).fillCircle(c.x, c.y, r * 1.9 * fl);
         g.fillStyle(0xffb040, 0.9).fillCircle(c.x, c.y, r * fl);
         g.fillStyle(0x9ad8ff, 0.85).fillCircle(c.x, c.y, r * 0.45);
       }
+    }
+    if (lit) {
       // Hot flue gas wavering up from the stack.
+      const w = wind(this.gameTime), push = w.speed * 6 * zoom;
+      const drift = { x: (w.x - w.y) * push, y: (w.x + w.y) / 2 * push };
       const top = at(spec.stack[0], spec.stack[1]);
       for (let k = 0; k < 4; k++) {
         const u = (time * 0.00035 + k / 4 + e.id * 0.137) % 1;
-        g.fillStyle(0x9a9490, 0.3 * (1 - u)).fillCircle(top.x + Math.sin(u * 5 + k) * 6 * zoom, top.y - u * 70 * zoom, (5 + u * 18) * zoom);
+        g.fillStyle(0x9a9490, 0.3 * (1 - u)).fillCircle(top.x + Math.sin(u * 5 + k) * 6 * zoom + drift.x * u, top.y - u * 70 * zoom + drift.y * u, (5 + u * 18) * zoom);
       }
     }
   }
@@ -695,7 +755,8 @@ export class ProcessLayer {
       if (this.ghostImg.texture.key !== tex) this.ghostImg.setTexture(tex);
       const bottom = isoToScreen(g.x + n, g.y + n, camX, camY, zoom);
       this.ghostImg.setVisible(true).setAlpha(0.6).setPosition(bottom.x, bottom.y).setScale(n * TILE_W * zoom / this.ghostImg.width);
-      this.ghostImg.setFlipX(g.rot % 2 === 1).setTint(g.ok ? 0xffffff : 0xff8080);
+      // Inline fittings are painted along the other diagonal.
+      this.ghostImg.setFlipX((g.rot % 2 === 1) !== (g.proto in INLINE)).setTint(g.ok ? 0xffffff : 0xff8080);
     } else {
       this.ghostImg?.setVisible(false);
     }
@@ -763,9 +824,10 @@ export class ProcessLayer {
       document.body.append(this.legend);
     }
     const bar = `<i style="background:linear-gradient(90deg,${RAMP_CSS.join(',')})"></i>`;
+    // One line saying what the colours on the pipes mean.
     const html = this.flowView === 'velocity'
-      ? `<b>Flow view · velocity</b>${bar}<span><em>0</em><em>limit for the line</em><em class="over">over</em></span><small>V: pressure</small>`
-      : `<b>Flow view · pressure</b>${bar}<span><em>${(range!.min / 1e5).toFixed(1)} bar</em><em>${(range!.max / 1e5).toFixed(1)} bar</em></span><small>V: off</small>`;
+      ? `<b>Pipe speed</b><em>still</em>${bar}<em>at its limit</em><em class="over">too fast</em>`
+      : `<b>Pipe pressure</b><em>${(range!.min / 1e5).toFixed(1)} bar</em>${bar}<em>${(range!.max / 1e5).toFixed(1)} bar</em>`;
     if (this.legend.dataset.html !== html) { this.legend.innerHTML = html; this.legend.dataset.html = html; }
   }
 
@@ -789,6 +851,33 @@ export class ProcessLayer {
   }
 
   /** A piece of pipe stretched from a to b; `from` is where a sits along the image, `span` how much of it reaches b. */
+  /**
+   * Sets an inline fitting into its line: scaled and turned so the faces of its two flanges sit
+   * on the pipe's centreline, a little out past the edges of its tile, where the pipe stops.
+   */
+  private boltIn(e: EntityView, img: Phaser.GameObjects.Sprite, flanges: (typeof INLINE)[string],
+    centre: (x: number, y: number) => { x: number; y: number }, pop: number) {
+    const proto = PROTO[e.proto];
+    const mid = centre(e.x, e.y);
+    const ends = portTiles(proto, e.x, e.y, e.rot).map(pt => {
+      const o = centre(pt.outside[0], pt.outside[1]);
+      return { x: mid.x + (o.x - mid.x) * INLINE_REACH, y: mid.y + (o.y - mid.y) * INLINE_REACH };
+    }).sort((a, b) => a.x - b.x);
+    if (ends.length !== 2) return;
+    // Painted rising to the right; a line falling to the right takes the mirror image.
+    const flip = ends[1].y > ends[0].y;
+    const W = img.width, H = img.height;
+    const [[ax, ay], [bx, by]] = flanges;
+    const [l, r] = flip ? [[W - bx, by], [W - ax, ay]] : [[ax, ay], [bx, by]];
+    const s = Math.hypot(ends[1].x - ends[0].x, ends[1].y - ends[0].y) / Math.hypot(r[0] - l[0], r[1] - l[1]);
+    const turn = Math.atan2(ends[1].y - ends[0].y, ends[1].x - ends[0].x) - Math.atan2(r[1] - l[1], r[0] - l[0]);
+    // Where the painting's centre lands, carried from its left flange.
+    const vx = (W / 2 - l[0]) * s, vy = (H / 2 - l[1]) * s;
+    const cx = ends[0].x + vx * Math.cos(turn) - vy * Math.sin(turn), cy = ends[0].y + vx * Math.sin(turn) + vy * Math.cos(turn);
+    img.setOrigin(0.5, 0.5).setFlipX(flip).setRotation(turn).setScale(s * pop)
+      .setPosition(mid.x + (cx - mid.x) * pop, mid.y + (cy - mid.y) * pop);
+  }
+
   private pipeSegment(key: string, tex: string, a: { x: number; y: number }, b: { x: number; y: number }, zoom: number, depth: number,
     tint: number, thick: number, from: number, span: number) {
     const img = this.pipePart(key, tex);

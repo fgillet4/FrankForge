@@ -340,6 +340,8 @@ export class Hud {
     else if (a === 'research') { e.research.current = t.dataset.t!; e.research.units = 0; this.host.onResearch(); }
     else if (a === 'craft') {
       const id = t.dataset.r!;
+      // Sandbox buildings cost nothing to place, so one goes straight into the hand.
+      if (e.sandbox && ITEMS[RECIPES[id].out]?.places && !right) { this.host.pick(RECIPES[id].out); this.close(); return; }
       if (e.sandbox) { e.inv.add(RECIPES[id].out, RECIPES[id].count * (right ? 5 : 1)); }
       else {
         const n = ev.shiftKey ? e.craftable(id) : right ? Math.min(5, e.craftable(id)) : 1;

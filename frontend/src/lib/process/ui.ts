@@ -6,6 +6,7 @@
 import './process.css';
 import { iconUrl } from '../game/items';
 import { PumpCurvePanel } from './pumpCurve';
+import { wind } from './render';
 import { BORES, LIMITS, hydraulics, nodeKey, problems, pumpSides, stats, type FlowStats, type RunFlows } from './hydraulics';
 import {
   PROTO, PROTOS, SPECIES, blackStart, setEnabled, setOpening, setPipeDiameter, setReaction, layout, placedById,
@@ -37,7 +38,6 @@ const VESSEL_NAMES: Record<string, string[]> = {
   electrolyser: ['Cathode — H₂', 'Anode — O₂'],
 };
 
-const CATEGORY_ORDER = ['Logistics', 'Belts', 'Extraction', 'Production', 'Storage', 'Processing', 'Reactors', 'Power', 'Science', 'Defense', 'Utilities'];
 
 /** Reactions a CSTR can run. */
 const CSTR_REACTIONS: [string, string][] = [
@@ -106,23 +106,33 @@ function vesselHtml(v: VesselView, name: string): string {
   </div>`;
 }
 
+/** A power pole's network: how it's holding up, and what it's feeding. */
+function gridHtml(snap: Snapshot, network: number | null): string {
+  const g = network === null ? null : snap.grids[network];
+  if (!g) return '<div class="pp-section">Power network</div><div class="pp-control pp-dim">Not wired to anything that makes power.</div>';
+  const df = g.frequency - g.nominal;
+  const cls = g.blackout ? 'bad' : Math.abs(df) < 0.2 ? 'ok' : Math.abs(df) < 1 ? 'warn' : 'bad';
+  const unwired = snap.entities.filter(e => PROTO[e.proto]?.power_w && e.network === null).length;
+  return `<div class="pp-section">Power network${snap.grids.length > 1 ? ` · ${network! + 1} of ${snap.grids.length}` : ''}</div>
+    <div class="pp-freq ${cls}">${g.blackout ? 'BLACKOUT' : g.capacity_w <= 0 ? '<span class="pp-dim">No power</span>' : `${g.frequency.toFixed(2)} Hz`}</div>
+    <div class="pp-grid">
+      <span>Generation</span><b>${fmt.w(g.generation_w)}</b>
+      <span>Load</span><b>${fmt.w(g.load_w)}</b>
+      <span>Capacity</span><b>${fmt.w(g.capacity_w)}</b>
+      ${g.shed_fraction > 0 && g.capacity_w > 0 ? `<span>Load shed</span><b class="pp-bad">${fmt.pct(g.shed_fraction)}</b>` : ''}
+      ${unwired ? `<span>Unwired machines</span><b class="pp-warn">${unwired}</b>` : ''}
+    </div>
+    ${g.blackout ? '<button data-action="blackstart" class="pp-blackout">Black start</button>' : ''}`;
+}
+
 export class ProcessUI {
   private root = el('div', 'pp-root');
-  private bar = el('div', 'pp-bar');
-  private tabs = el('div', 'pp-tabs');
-  private buttons = el('div', 'pp-buttons');
   private inspector = el('div', 'pp-inspector');
   private gridPanel = el('div', 'pp-gridpanel');
   private tooltip = el('div', 'pp-tooltip');
   private alerts = el('div', 'pp-alerts');
-  private category = 'Logistics';
   private inspectorFor: number | null = null;
   private lastInspectorHtml = '';
-  selectedProto: string | null = null;
-  /** Whether a building shows in the bar (researched), and how many the engineer carries (null: free). */
-  barState: (id: string) => { visible: boolean; count: number | null } = () => ({ visible: true, count: null });
-  private lastBar = '';
-  onSelectProto: (id: string | null) => void = () => {};
   onCloseInspector: () => void = () => {};
   onRotate: (id: number) => void = () => {};
   onLevel: (level: number) => void = () => {};
@@ -131,8 +141,7 @@ export class ProcessUI {
   private curve = new PumpCurvePanel(() => this.vfdUnlocked());
 
   constructor() {
-    this.bar.append(this.tabs, this.buttons);
-    this.root.append(this.bar, this.inspector, this.gridPanel, this.tooltip, this.alerts, this.curve.root, this.altimeter);
+    this.root.append(this.inspector, this.gridPanel, this.tooltip, this.alerts, this.curve.root, this.altimeter);
     this.setLevel(0);
     document.body.append(this.root);
     // The world's tooltip goes as soon as the pointer moves onto a panel or off the window.
@@ -140,7 +149,6 @@ export class ProcessUI {
     document.addEventListener('pointermove', e => { if (!(e.target instanceof HTMLCanvasElement)) hide(); });
     document.addEventListener('pointerleave', hide);
     window.addEventListener('blur', hide);
-    this.renderBar();
     this.inspector.addEventListener('input', e => this.onInspectorInput(e));
     this.inspector.addEventListener('click', e => this.onInspectorClick(e));
     this.gridPanel.addEventListener('click', e => {
@@ -148,58 +156,13 @@ export class ProcessUI {
     });
   }
 
-  /** Redraws the build bar when what's researched or carried has changed. */
-  refreshBar() {
-    const key = PROTOS.map(p => { const st = this.barState(p.id); return `${st.visible ? 1 : 0}${st.count}`; }).join() + this.category + this.selectedProto;
-    if (key !== this.lastBar) this.renderBar();
-  }
-
-  private renderBar() {
-    // Rack pipe is the pipe tool at a height (H), not buttons of its own.
-    const shown = PROTOS.filter(p => this.barState(p.id).visible && p.id !== 'pipe_rack' && p.id !== 'pipe_rack_high');
-    const cats = CATEGORY_ORDER.filter(c => shown.some(p => p.category === c));
-    // Open on a tab with something in it to build.
-    if (!this.lastBar) {
-      const owned = cats.find(c => shown.some(p => p.category === c && (this.barState(p.id).count ?? 1) > 0));
-      if (owned) this.category = owned;
-    }
-    if (!cats.includes(this.category) && cats.length) this.category = cats[0];
-    this.lastBar = PROTOS.map(p => { const st = this.barState(p.id); return `${st.visible ? 1 : 0}${st.count}`; }).join() + this.category + this.selectedProto;
-    this.tabs.innerHTML = cats.map(c => `<button data-cat="${c}" class="${c === this.category ? 'on' : ''}">${c}</button>`).join('');
-    this.tabs.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
-      this.category = (b as HTMLElement).dataset.cat!;
-      this.renderBar();
-    }));
-    const items = shown.filter(p => p.category === this.category);
-    this.buttons.innerHTML = items.map(p => {
-      const count = this.barState(p.id).count;
-      const icon = p.id === 'pipe'
-        ? '<span class="pp-pipe-icon"></span>'
-        : `<img src="${iconUrl(p.id)}" alt="">`;
-      const power = p.power_w ? ` · uses ${fmt.w(p.power_w)}` : p.generator_w ? ` · ${fmt.w(p.generator_w)}` : '';
-      const badge = count === null ? '' : `<i class="pp-count${count ? '' : ' none'}">${count}</i>`;
-      return `<button data-id="${p.id}" class="${p.id === this.selectedProto ? 'on' : ''}${count === 0 ? ' empty' : ''}" title="${p.name} (${p.size}×${p.size})${power}\n${p.description}">${icon}<span>${p.name}</span>${badge}</button>`;
-    }).join('');
-    this.buttons.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
-      const id = (b as HTMLElement).dataset.id!;
-      this.selectProto(this.selectedProto === id ? null : id);
-    }));
-  }
-
-  selectProto(id: string | null) {
-    this.selectedProto = id;
-    if (id) this.category = PROTO[id]?.category ?? this.category;
-    this.renderBar();
-    this.onSelectProto(id);
-  }
-
   private altimeter = el('div', 'pp-altimeter');
 
   /** The working-height gauge: a lift car on a three-stop shaft. */
   setLevel(level: number) {
     if (!this.altimeter.childElementCount) {
-      this.altimeter.innerHTML = `<b>Height</b><div class="pp-shaft">${['High rack', 'Low rack', 'Ground'].map((n, i) =>
-        `<span data-stop="${2 - i}">${n}</span>`).join('')}<i class="pp-car"></i></div><small><kbd>H</kbd> up · <kbd>⇧H</kbd> down · <kbd>Esc</kbd> ground</small>`;
+      this.altimeter.innerHTML = `<div class="pp-shaft">${['High rack', 'Low rack', 'Ground'].map((n, i) =>
+        `<span data-stop="${2 - i}">${n}</span>`).join('')}<i class="pp-car"></i></div>`;
       this.altimeter.addEventListener('click', e => {
         const stop = (e.target as HTMLElement).closest<HTMLElement>('[data-stop]');
         if (stop) this.onLevel(Number(stop.dataset.stop));
@@ -230,6 +193,7 @@ export class ProcessUI {
   private onInspectorClick(e: Event) {
     const t = (e.target as HTMLElement).closest<HTMLElement>('[data-action]');
     if (!t) return;
+    if (t.dataset.action === 'blackstart') { blackStart(); return; }
     if (t.dataset.action === 'bore' && this.inspectorFor !== null) {
       setPipeDiameter(this.inspectorFor, Number(t.dataset.value));
       this.lastInspectorHtml = '';
@@ -267,7 +231,7 @@ export class ProcessUI {
       if (PROTO[pipe?.proto ?? '']?.levels?.length) this.renderPipe(pipe!, snap); else this.showInspector(null);
       return;
     }
-    this.renderInspector(e);
+    this.renderInspector(e, snap);
   }
 
   /** A pipe run: what's in it, how it flows, and its bore, which can be changed. */
@@ -301,7 +265,7 @@ export class ProcessUI {
     }
   }
 
-  private renderInspector(e: EntityView) {
+  private renderInspector(e: EntityView, snap: Snapshot) {
     const p = PROTO[e.proto];
     const names = VESSEL_NAMES[e.proto] ?? [];
     const kind = e.pipes[0]?.kind?.kind;
@@ -342,8 +306,9 @@ export class ProcessUI {
     const html = `<div class="pp-head"><img src="assets/process/icons/b_${e.proto}.png" alt=""><div><b>${p.name}</b><small>${p.size}×${p.size} · #${e.id}</small></div>${p.ports.length ? '<button data-action="rotate" class="pp-rotate" title="Rotate a quarter turn (R over it)">⟳ Rotate</button>' : ''}<button data-action="close">✕</button></div>
       <p class="pp-desc">${p.description}</p>
       ${controls}
+      ${e.proto === 'power_pole' || e.proto === 'substation' ? gridHtml(snap, e.network) : ''}
       ${e.vessels.map((v, i) => vesselHtml(v, names[i] ?? (e.vessels.length > 1 ? `Vessel ${i + 1}` : 'Contents'))).join('')}
-      ${flows ? `<div class="pp-section">Connections</div>${flows}` : '<div class="pp-section pp-dim">No pipes connected — ports are the coloured dots.</div>'}`;
+      ${flows ? `<div class="pp-section">Connections</div>${flows}` : p.ports.length ? '<div class="pp-section pp-dim">No pipes connected — ports are the coloured dots.</div>' : ''}`;
     if (dragging) return;
     if (html !== this.lastInspectorHtml) {
       this.inspector.innerHTML = html;
@@ -351,30 +316,22 @@ export class ProcessUI {
     }
   }
 
+  /** The world around the plant, in one quiet line; a blackout shouts. */
   private updateGrid(snap: Snapshot) {
-    const g = snap.grid;
-    const df = g.frequency - g.nominal;
-    const unwired = snap.entities.filter(e => PROTO[e.proto]?.power_w && e.network === null).length;
-    const cls = g.blackout ? 'bad' : Math.abs(df) < 0.2 ? 'ok' : Math.abs(df) < 1 ? 'warn' : 'bad';
-    const hours = ((snap.time / 600) * 24 + 0) % 24;
+    const hours = ((snap.time / 600) * 24) % 24;
     const clock = `${String(Math.floor(hours)).padStart(2, '0')}:${String(Math.floor((hours % 1) * 60)).padStart(2, '0')}`;
-    const co2 = snap.emitted_kg.co2 ?? 0;
-    const ch4 = snap.emitted_kg.ch4 ?? 0;
-    this.gridPanel.innerHTML = `
-      <div class="pp-freq ${cls}">${g.blackout ? 'BLACKOUT' : g.capacity_w <= 0 ? '<span class="pp-dim">No power</span>' : `${g.frequency.toFixed(2)} Hz`}</div>
-      <div class="pp-grid">
-        <span>Generation</span><b>${fmt.w(g.generation_w)}</b>
-        <span>Load</span><b>${fmt.w(g.load_w)}</b>
-        <span>Capacity</span><b>${fmt.w(g.capacity_w)}</b>
-        ${g.shed_fraction > 0 && g.capacity_w > 0 ? `<span>Load shed</span><b class="pp-bad">${fmt.pct(g.shed_fraction)}</b>` : ''}
-        ${snap.grids.length > 1 ? `<span>Networks</span><b>${snap.grids.length}</b>` : ''}
-        ${unwired ? `<span>Unwired</span><b class="pp-warn">${unwired}</b>` : ''}
-        <span>Time</span><b>${clock} ${snap.daylight > 0 ? '☀' : '☾'}</b>
-        <span>Ambient</span><b>${fmt.t(snap.ambient)}</b>
-        ${co2 > 0.01 ? `<span>CO₂ vented</span><b>${fmt.kg(co2)}</b>` : ''}
-        ${ch4 > 0.01 ? `<span>CH₄ vented</span><b class="pp-warn">${fmt.kg(ch4)}</b>` : ''}
-      </div>
-      ${g.blackout ? '<button data-action="blackstart">Black start</button>' : ''}`;
+    const w = wind(snap.time);
+    // The arrow points the way it blows, as it looks on screen.
+    const deg = Math.atan2((w.x + w.y) / 2, w.x - w.y) * 180 / Math.PI;
+    const vented = Object.entries(snap.emitted_kg).filter(([, kg]) => kg > 0.01)
+      .map(([id, kg]) => `${formula(id)} ${fmt.kg(kg)}`).join(', ');
+    const blackout = snap.grids.some(g => g.blackout);
+    const html = `<span title="Time of day">${clock} ${snap.daylight > 0 ? '☀' : '☾'}</span>
+      <span title="Air temperature">${fmt.t(snap.ambient)}</span>
+      <span title="Wind ${w.speed.toFixed(1)} m/s"><i class="pp-wind" style="transform:rotate(${deg.toFixed(0)}deg)">➤</i> ${w.speed.toFixed(1)} m/s</span>
+      <span title="Air: N₂ 78.1%, O₂ 21.0%, H₂O 0.9%, CO₂ 400 ppm${vented ? `\nVented so far: ${vented}` : ''}">N₂ 78 · O₂ 21 · CO₂ 400 ppm</span>
+      ${blackout ? '<button data-action="blackstart" class="pp-blackout">Blackout · Black start</button>' : ''}`;
+    if (html !== this.gridPanel.innerHTML) this.gridPanel.innerHTML = html;
   }
 
   /** Read-out for whatever is under the cursor. */
