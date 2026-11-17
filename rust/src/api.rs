@@ -56,6 +56,14 @@ impl ProcessWorld {
         self.world.set_pump(id, trim, speed);
     }
 
+    pub fn set_pipe_diameter(&mut self, id: u32, diameter: f64) {
+        self.world.set_pipe_diameter(id, diameter);
+    }
+
+    pub fn set_pump_wear(&mut self, id: u32, wear: f64) {
+        self.world.set_pump_wear(id, wear);
+    }
+
     pub fn set_demand(&mut self, id: u32, fraction: f64) {
         self.world.set_demand(id, fraction);
     }

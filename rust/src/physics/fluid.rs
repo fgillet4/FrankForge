@@ -150,9 +150,15 @@ pub enum PipeKind {
     /// affinity laws (flow ∝ N·D, head ∝ N²·D², power ∝ N³·D³). Short of power, it slows down.
     /// The rest is the operating point, for display: flow [m³/s], pressure rise [Pa], efficiency,
     /// actual speed fraction and the liquid's density.
+    ///
+    /// Starved at the suction, with less NPSH available than it needs, it cavitates: vapour
+    /// bubbles form at the impeller eye and collapse against the vanes. It loses head while it
+    /// does, and the collapsing bubbles pit the impeller, `wear` 0..1, which costs head and
+    /// efficiency for good; worn through, it pumps nothing.
     Pump {
         dp_max: f64, q_max: f64, eff: f64, rated_w: f64, power_avail: f64, power_used: f64,
         trim: f64, speed: f64, q: f64, dp: f64, eff_now: f64, n: f64, rho: f64,
+        npsha: f64, npshr: f64, cavitation: f64, wear: f64,
     },
     /// Compressor: maximum pressure ratio, isentropic efficiency, power.
     Compressor { ratio_max: f64, eff: f64, rated_w: f64, power_avail: f64, power_used: f64 },
@@ -334,8 +340,25 @@ impl Network {
             // How fast a pump's pressure rise falls with mass flow, solved implicitly like friction.
             let mut pump_slope = 0.0;
             match &mut p.kind {
-                PipeKind::Pump { dp_max, q_max, eff, rated_w, power_avail, power_used, trim, speed, q: q_op, dp, eff_now, n, rho } => {
-                    let curve = pump_curve(*dp_max, *q_max, *eff, *trim, *speed, *rated_w, *power_avail);
+                PipeKind::Pump {
+                    dp_max, q_max, eff, rated_w, power_avail, power_used, trim, speed, q: q_op, dp, eff_now, n, rho,
+                    npsha, npshr, cavitation, wear,
+                } => {
+                    let mut curve = pump_curve(*dp_max, *q_max, *eff, *trim, *speed, *rated_w, *power_avail);
+                    // NPSH at the suction port: absolute pressure there less the liquid's vapour
+                    // pressure, plus the velocity head; what it needs rises with flow and speed².
+                    // Pumps lifting from a well or the air (reservoirs) don't count.
+                    let suction_liquid = forward && !d.vapour && d.rho > 200.0 && va.reservoir.is_none();
+                    let v = q / area;
+                    *npsha = if suction_liquid { (pa - vapour_pressure(&va.state.x, va.t())) / (d.rho * G) + v * v / (2.0 * G) } else { 0.0 };
+                    let q_bep = 0.5 * curve.q_run;
+                    *npshr = if q_bep > 0.0 { npsh_required(q / q_bep, curve.n) } else { 0.0 };
+                    *cavitation = if suction_liquid && q > 1e-4 && *npshr > 0.0 { ((*npshr - *npsha) / *npshr).clamp(0.0, 1.0) } else { 0.0 };
+                    // Hard cavitation wears an impeller out in about twenty minutes.
+                    *wear = (*wear + *cavitation * dt / 1200.0).min(1.0);
+                    let worn = if *wear >= 1.0 { 0.0 } else { 1.0 - 0.35 * *wear };
+                    curve.dp0 *= worn * (1.0 - 0.5 * *cavitation);
+                    curve.eff_bep *= 1.0 - 0.3 * *wear;
                     let (pump_dp, e_now, shaft) = curve.at(if forward { q } else { -q });
                     fixed_dp += pump_dp;
                     pump_slope = curve.slope(if forward { q } else { -q }) / d.rho;
@@ -379,6 +402,10 @@ impl Network {
                         k += 2.0 * 1e8_f64.powf(1.0 - opening) / (2.0 * d.rho * area * area);
                     }
                 }
+                // A stopped pump or compressor: switched off or without power, the check valve on
+                // its discharge holds and nothing passes, either way.
+                PipeKind::Pump { n, .. } if *n < 0.02 => blocked = true,
+                PipeKind::Compressor { power_avail, .. } if *power_avail <= 0.0 => blocked = true,
                 PipeKind::Relief { set_p } => {
                     let over = (pa - *set_p) / (0.1 * *set_p);
                     if over <= 0.0 {
@@ -663,6 +690,25 @@ pub struct PumpCurve {
     pub q_run: f64,
     pub eff_bep: f64,
     pub n: f64,
+}
+
+/// NPSH a pump needs [m] at a flow given as a fraction of best-efficiency flow, at speed
+/// fraction `n`: 3 m at best efficiency at full speed, rising with the square of flow past it,
+/// and with speed² (affinity).
+pub fn npsh_required(of_bep: f64, n: f64) -> f64 {
+    3.0 * n * n * (0.45 + 0.55 * of_bep * of_bep)
+}
+
+/// A liquid's vapour pressure [Pa]: Raoult's law over the species below their critical point,
+/// each at Wilson's saturation pressure. Dissolved permanent gases don't count.
+pub fn vapour_pressure(x: &Comp, t: f64) -> f64 {
+    (0..NS)
+        .filter(|&i| x[i] > 0.0 && t < SPECIES[i].tc)
+        .map(|i| {
+            let s = &SPECIES[i];
+            x[i] * s.pc * (5.373 * (1.0 + s.omega) * (1.0 - s.tc / t)).exp()
+        })
+        .sum()
 }
 
 /// Scales the rated curve by the affinity laws. The motor asks for rated power × N³D³; given

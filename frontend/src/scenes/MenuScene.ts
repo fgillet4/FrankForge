@@ -78,7 +78,7 @@ export class MenuScene extends Phaser.Scene {
     preloadProcessAssets(this);
     this.load.atlas('terrain', 'assets/process/terrain.png', 'assets/process/terrain.json');
     this.load.atlas('deposits', 'assets/process/deposits.png', 'assets/process/deposits.json');
-    for (const name of ['rupture', 'alarm', 'ambient', 'place', 'remove', 'gunshot', 'laser', 'alien_hit', 'alien_die', 'chop', 'rock', 'pickup', 'research', 'hurt']) {
+    for (const name of ['rupture', 'alarm', 'ambient', 'place', 'remove', 'gunshot', 'laser', 'alien_hit', 'alien_die', 'chop', 'rock', 'pickup', 'research', 'hurt', 'cavitation']) {
       this.load.audio(`pp_${name}`, `assets/process/audio/${name}.mp3`);
     }
     const bar = this.root?.querySelector<HTMLElement>('.mm-load span');

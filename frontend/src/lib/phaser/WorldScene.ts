@@ -77,6 +77,9 @@ export class WorldScene extends Phaser.Scene {
   private ground!: GroundScene;
   private worldDraw!: WorldRenderer;
   private ambient: Phaser.Sound.BaseSound | null = null;
+  /** The rattle of the loudest cavitating pump near the engineer. */
+  private cavitationLoop: Phaser.Sound.WebAudioSound | null = null;
+  private cavitationVolume = 0;
 
   zoom = 1.2;
   private cam = { x: 0, y: 0 };
@@ -321,13 +324,15 @@ export class WorldScene extends Phaser.Scene {
       this.eng.health = Math.min(MAX_HEALTH, this.eng.health + 3 * dt);
     }
 
+    this.updateCavitationSound(delta);
     this.snapshotTimer -= delta;
     if (this.snapshotTimer <= 0 && engine.engineReady() && this.processLayer) {
       this.snapshotTimer = 100;
       const wasBlackout = this.snapshot?.grid.blackout ?? false;
       this.snapshot = engine.snapshot();
       if (this.snapshot) {
-        this.served = new Map(this.snapshot.entities.map(e => [e.id, e.network === null ? 0 : e.served]));
+        // Switched off, a machine gets nothing, whatever its grid could serve.
+        this.served = new Map(this.snapshot.entities.map(e => [e.id, e.network === null || !e.enabled ? 0 : e.served]));
         const emitted = Object.values(this.snapshot.emitted_kg).reduce((a, b) => a + b, 0);
         this.eng.stats.emissions.add(Math.max(0, emitted - this.lastEmitted));
         this.lastEmitted = emitted;
@@ -413,6 +418,7 @@ export class WorldScene extends Phaser.Scene {
   private quitToMenu() {
     this.save();
     this.ambient?.stop();
+    this.cavitationLoop?.destroy(); this.cavitationLoop = null;
     this.scene.stop('GroundScene');
     this.scene.start('MenuScene');
   }
@@ -428,12 +434,40 @@ export class WorldScene extends Phaser.Scene {
 
   private lastSound = new Map<string, number>();
 
+  /** Carrying ear defenders, the world comes through muffled. */
+  private get earMuffle() { return this.eng.inv.count('ear_defenders') > 0 ? 0.3 : 1; }
+
+  /**
+   * Cavitating pumps rattle like gravel through the casing: one loop, as loud as the worst of
+   * them where the engineer stands.
+   */
+  private updateCavitationSound(delta: number) {
+    let target = 0;
+    for (const e of this.snapshot?.entities ?? []) {
+      const c = e.pipes.find(p => p.kind.kind === 'Pump')?.kind.cavitation ?? 0;
+      if (c < 0.01) continue;
+      const n = engine.PROTO[e.proto]?.size ?? 1;
+      const d = Math.hypot(e.x + n / 2 - this.player.x, e.y + n / 2 - this.player.y);
+      target = Math.max(target, (0.35 + 0.65 * Math.min(1, c * 2)) * Math.max(0, 1 - d / 28) ** 2);
+    }
+    target *= 0.7 * this.earMuffle * (this.simSpeed > 0 ? 1 : 0);
+    this.cavitationVolume += (target - this.cavitationVolume) * Math.min(1, delta / 250);
+    if (!this.cavitationLoop && this.cavitationVolume > 0.01 && this.cache.audio.exists('pp_cavitation')) {
+      this.cavitationLoop = this.sound.add('pp_cavitation', { loop: true, volume: 0 }) as Phaser.Sound.WebAudioSound;
+      this.cavitationLoop.play();
+    }
+    if (this.cavitationLoop) {
+      this.cavitationLoop.setVolume(this.cavitationVolume);
+      if (this.cavitationVolume < 0.005 && target === 0) { this.cavitationLoop.destroy(); this.cavitationLoop = null; }
+    }
+  }
+
   /** A sound from somewhere in the world: quieter with distance, and not too often. */
   private playAt(name: string, x: number, y: number, volume: number, minGap: number) {
     const now = this.time.now;
     if (now - (this.lastSound.get(name) ?? -1e9) < minGap) return;
     const d = Math.hypot(x - this.player.x, y - this.player.y);
-    const v = volume * Math.max(0, 1 - d / 40);
+    const v = volume * Math.max(0, 1 - d / 40) * this.earMuffle;
     if (v < 0.02) return;
     this.lastSound.set(name, now);
     this.playSound(name, v);
@@ -946,7 +980,8 @@ export class WorldScene extends Phaser.Scene {
       this.hud?.showMachine(id);
       return;
     }
-    this.select(this.snapshot?.entities.some(e => e.id === id) ? id : null);
+    // Buildings in the plant, and pipes, open the inspector.
+    this.select(this.snapshot?.entities.some(e => e.id === id) || engine.placedById(id)?.proto === 'pipe' ? id : null);
   }
 
   /**

@@ -307,3 +307,126 @@ fn slowing_a_pump_with_its_vfd_cuts_flow_and_power() {
     let (_, _, _, n3, _) = run(&mut w);
     assert!((n3 - n2).abs() < 0.02, "{n2} → {n3}");
 }
+
+#[test]
+fn a_pump_starved_of_npsh_cavitates_and_wears_its_impeller() {
+    // Tank → pump → tank, as above; the suction tank holds water at `t`, under air or nothing.
+    let setup = |t: f64, evacuate: bool| {
+        let mut w = world();
+        let mut id = 100;
+        w.place(1, "storage_tank", 0, 0, 0).unwrap();
+        pipe_line(&mut w, &mut id, (3, 1), (4, 1));
+        w.place(2, "pump", 5, 1, 0).unwrap();
+        pipe_line(&mut w, &mut id, (6, 1), (7, 1));
+        w.place(3, "storage_tank", 8, 0, 0).unwrap();
+        w.place(4, "solar_array", 4, 4, 0).unwrap();
+        w.place(5, "power_pole", 5, 3, 0).unwrap();
+        w.advance(0.0);
+        // Nothing over the water but its own vapour: pump the air out first.
+        for gas in ["n2", "o2", "ar", "co2"] {
+            if evacuate {
+                w.take(1, gas, 1e6);
+            }
+        }
+        w.fill(1, "h2o", 1.5e6, t);
+        w
+    };
+    let pump = |w: &World| match w.net.pipes[w.entities[&2].net_pipes[0]].kind {
+        PipeKind::Pump { q, npsha, npshr, cavitation, wear, .. } => (q, npsha, npshr, cavitation, wear),
+        _ => panic!("not a pump"),
+    };
+    // Cold water under air: plenty of margin, no harm done.
+    let mut cold = setup(293.15, false);
+    for _ in 0..100 {
+        cold.advance(0.1);
+    }
+    let (_, a, r, c, wear) = pump(&cold);
+    assert!(a > r && c == 0.0 && wear < 1e-3, "cold: NPSHa {a}, NPSHr {r}, cavitation {c}, wear {wear}");
+    // Hot water with only its own vapour over it: just the liquid's height to work with.
+    let mut hot = setup(370.0, true);
+    for _ in 0..100 {
+        hot.advance(0.1);
+    }
+    let (q, a, r, c, wear) = pump(&hot);
+    assert!(q > 0.0 && a < r && c > 0.0 && wear > 0.0, "hot: q {q}, NPSHa {a}, NPSHr {r}, cavitation {c}, wear {wear}");
+    // Wear is kept through a rebuild, and a worn-through impeller pumps nothing.
+    hot.place(6, "pipe", 20, 20, 0).unwrap();
+    hot.advance(0.1);
+    assert!(pump(&hot).4 >= wear);
+    hot.set_pump_wear(2, 1.0);
+    for _ in 0..100 {
+        hot.advance(0.1);
+    }
+    // Liquid may still pass through it, but the pump adds no head.
+    let dp = match hot.net.pipes[hot.entities[&2].net_pipes[0]].kind {
+        PipeKind::Pump { dp, .. } => dp,
+        _ => unreachable!(),
+    };
+    assert!(dp.abs() < 1e3, "worn through, yet {dp} Pa");
+    assert!(hot.events.iter().any(|e| e.contains("worn its impeller through")) || hot.entities[&2].wear >= 1.0);
+}
+
+#[test]
+fn a_wider_pipe_run_carries_more_for_the_same_push() {
+    // Tank → pump → tank; how much it moves with the standard bore, then with the runs re-bored.
+    let flow = |d: Option<f64>| {
+        let mut w = world();
+        let mut id = 100;
+        w.place(1, "storage_tank", 0, 0, 0).unwrap();
+        pipe_line(&mut w, &mut id, (3, 1), (4, 1));
+        w.place(2, "pump", 5, 1, 0).unwrap();
+        pipe_line(&mut w, &mut id, (6, 1), (7, 1));
+        w.place(3, "storage_tank", 8, 0, 0).unwrap();
+        w.place(4, "solar_array", 4, 4, 0).unwrap();
+        w.place(5, "power_pole", 5, 3, 0).unwrap();
+        w.advance(0.0);
+        if let Some(d) = d {
+            w.set_pipe_diameter(100, d);
+            w.set_pipe_diameter(102, d);
+            // A pipe added to a run takes its bore.
+            w.place(200, "pipe", 4, 2, 0).unwrap();
+            assert_eq!(w.entities[&200].diameter, d);
+        }
+        w.fill(1, "h2o", 4.0e6, 293.15);
+        w.fill(3, "n2", 2.5e5 * 150.0 / (8.314 * 293.15), 293.15);
+        for _ in 0..100 {
+            w.advance(0.1);
+        }
+        let snap = w.snapshot();
+        assert!(snap.segments.iter().all(|s| (s.diameter - d.unwrap_or(PIPE_DIAMETER)).abs() < 1e-9));
+        match w.net.pipes[w.entities[&2].net_pipes[0]].kind {
+            PipeKind::Pump { q, .. } => q,
+            _ => unreachable!(),
+        }
+    };
+    let (narrow, wide) = (flow(Some(0.05)), flow(None));
+    assert!(narrow > 0.0 && narrow < wide * 0.8, "a 50 mm line throttles the pump: {narrow} vs {wide} m³/s");
+}
+
+#[test]
+fn a_switched_off_pump_stops_the_flow() {
+    let mut w = world();
+    let mut id = 100;
+    w.place(1, "storage_tank", 0, 0, 0).unwrap();
+    pipe_line(&mut w, &mut id, (3, 1), (4, 1));
+    w.place(2, "pump", 5, 1, 0).unwrap();
+    pipe_line(&mut w, &mut id, (6, 1), (7, 1));
+    w.place(3, "storage_tank", 8, 0, 0).unwrap();
+    w.place(4, "solar_array", 4, 4, 0).unwrap();
+    w.place(5, "power_pole", 5, 3, 0).unwrap();
+    w.advance(0.0);
+    // A full tank beside an empty one: the water's own head would drain it across.
+    w.fill(1, "h2o", 4.0e6, 293.15);
+    let flow = |w: &mut World| {
+        for _ in 0..100 {
+            w.advance(0.1);
+        }
+        w.net.pipes[w.entities[&2].net_pipes[0]].mdot
+    };
+    let on = flow(&mut w);
+    assert!(on > 1.0, "{on} kg/s, {:?}", w.net.pipes[w.entities[&2].net_pipes[0]].kind);
+    w.set_enabled(2, false);
+    assert!(flow(&mut w).abs() < 1e-6, "still flowing when off");
+    w.set_enabled(2, true);
+    assert!(flow(&mut w) > 1.0, "and runs again when switched back on");
+}

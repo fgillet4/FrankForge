@@ -374,6 +374,8 @@ export class ProcessLayer {
       };
       snap.segments.forEach(seg => {
         const tint = wash(fluidColour(seg.vessel));
+        // Wider bores draw fatter.
+        const fat = Math.min(1.7, Math.max(0.6, Math.pow((seg.diameter || 0.15) / 0.15, 0.6)));
         for (const [x, y] of seg.tiles) {
           const c = centre(x, y);
           if (off(c)) continue;
@@ -381,18 +383,19 @@ export class ProcessLayer {
             if (!this.pipeTiles.has(`${x + dx},${y + dy}`)) continue;
             const n = centre(x + dx, y + dy);
             shadow(c, n);
-            this.pipeSegment(`p${x},${y},${dx}`, 'ip_pipe', c, n, zoom, depthAt(x + dx, y + dy) - 0.0002, tint, 13, 0.035, 0.93);
+            this.pipeSegment(`p${x},${y},${dx}`, 'ip_pipe', c, n, zoom, depthAt(x + dx, y + dy) - 0.0002, tint, 13 * fat, 0.035, 0.93);
           }
           const joined = DIRS4.filter(([dx, dy]) => this.pipeTiles.has(`${x + dx},${y + dy}`) || opens.has(`${x},${y},${dx},${dy}`));
           const straight = joined.length === 2 && joined[0][0] === -joined[1][0] && joined[0][1] === -joined[1][1];
           if (!straight) {
             const j = this.pipePart(`j${x},${y}`, 'ip_pipe_joint');
-            j.setOrigin(0.5, 0.55).setPosition(c.x, c.y).setScale(0.42 * TILE_W * zoom / j.width).setRotation(0).setDepth(depthAt(x, y)).setTint(tint);
+            j.setOrigin(0.5, 0.55).setPosition(c.x, c.y).setScale(0.42 * fat * TILE_W * zoom / j.width).setRotation(0).setDepth(depthAt(x, y)).setTint(tint);
           }
         }
       });
       for (const l of portLinks) {
         const tint = wash(fluidColour(snap.segments[l.si].vessel));
+        const fat = Math.min(1.7, Math.max(0.6, Math.pow((snap.segments[l.si].diameter || 0.15) / 0.15, 0.6)));
         const c = centre(l.x, l.y);
         if (off(c)) continue;
         const inner = centre(l.x + l.dx, l.y + l.dy);
@@ -400,7 +403,7 @@ export class ProcessLayer {
         const edge = { x: (c.x + inner.x) / 2, y: (c.y + inner.y) / 2 };
         const into = { x: c.x + (inner.x - c.x) * 0.85, y: c.y + (inner.y - c.y) * 0.85 };
         shadow(c, edge);
-        this.pipeSegment(`q${l.x},${l.y},${l.dx},${l.dy}`, 'ip_pipe', c, edge, zoom, depthAt(l.x, l.y) - 0.0002, tint, 13, 0.035, 0.93);
+        this.pipeSegment(`q${l.x},${l.y},${l.dx},${l.dy}`, 'ip_pipe', c, edge, zoom, depthAt(l.x, l.y) - 0.0002, tint, 13 * fat, 0.035, 0.93);
         this.pipeSegment(`n${l.x},${l.y},${l.dx},${l.dy}`, 'ip_pipe_nozzle', into, edge, zoom, depthAt(l.x, l.y) - 0.0001, 0xffffff, 17, 0, 0.88);
       }
     } else {
@@ -459,7 +462,10 @@ export class ProcessLayer {
       }
       const n = proto.size;
       const bottom = isoToScreen(e.x + n, e.y + n, camX, camY, zoom);
-      img.setPosition(bottom.x, bottom.y + TILE_H * zoom * 0.08);
+      // A cavitating pump shudders.
+      const cav = e.pipes.find(p => p.kind.kind === 'Pump')?.kind.cavitation ?? 0;
+      const judder = cav > 0.01 ? Math.sin(time * 0.11 + e.id) * zoom * (0.6 + cav * 1.4) : 0;
+      img.setPosition(bottom.x + judder, bottom.y + TILE_H * zoom * 0.08);
       img.setScale((TILE_W * zoom) / SPRITE_TILE_PX * popScale(e.id, time));
       img.setFlipX(e.rot % 2 === 1);
       img.setDepth(10 + (e.x + e.y + 2 * n) * 0.01);
@@ -569,7 +575,7 @@ export class ProcessLayer {
     const g = this.flowGfx;
     const line = (a: { x: number; y: number }, b: { x: number; y: number }, mdot: number, si: number) => {
       const run = h.runs[si];
-      const st = stats(mdot, run.fluid);
+      const st = stats(mdot, run.fluid, run.d);
       const colour = this.flowView === 'pressure'
         ? ramp((snap.segments[si].vessel.p - pMin) / (pMax - pMin))
         : problems(st, run.service, run.fluid).length && (st.v > LIMITS[run.service].vMax || st.v > st.ve) ? OVER : ramp(st.v / LIMITS[run.service].vMax);
@@ -628,7 +634,7 @@ export class ProcessLayer {
     const si = h.runAt.get(`${x},${y}`);
     if (si === undefined) return null;
     const run = h.runs[si];
-    const st = stats(run.tile.get(`${x},${y}`) ?? 0, run.fluid);
+    const st = stats(run.tile.get(`${x},${y}`) ?? 0, run.fluid, run.d);
     return { run, stats: st, problems: problems(st, run.service, run.fluid) };
   }
 

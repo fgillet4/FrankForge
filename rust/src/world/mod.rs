@@ -47,6 +47,10 @@ pub struct Entity {
     /// Pumps: impeller diameter as a fraction of full size, and VFD speed as a fraction of rated.
     pub trim: f64,
     pub speed: f64,
+    /// Pumps: how far cavitation has eaten the impeller, 0..1 (1: worn through).
+    pub wear: f64,
+    /// Pipes: inner diameter [m].
+    pub diameter: f64,
     /// The power network it is wired into, if any.
     pub network: Option<usize>,
     // Where this entity's parts live in the current network and grid.
@@ -89,6 +93,8 @@ struct TileShare {
 pub struct Segment {
     pub tiles: Vec<Tile>,
     pub vessel: usize,
+    /// Bore of the run [m]: its narrowest tile's.
+    pub diameter: f64,
 }
 
 pub struct World {
@@ -180,7 +186,7 @@ impl World {
             })
             .collect();
         let e = Entity {
-            id, proto, x, y, rot: rot % 4, vessels, opening: 1.0, enabled: true, battery_charge: p.battery_j * 0.5, demand: 1.0, trim: 1.0, speed: 1.0, network: None,
+            id, proto, x, y, rot: rot % 4, vessels, opening: 1.0, enabled: true, battery_charge: p.battery_j * 0.5, demand: 1.0, trim: 1.0, speed: 1.0, wear: 0.0, diameter: PIPE_DIAMETER, network: None,
             net_vessels: vec![], net_pipes: vec![], net_links: vec![], load: None, generator: None, battery: None,
         };
         let tiles: Vec<Tile> = e.tiles().collect();
@@ -188,6 +194,18 @@ impl World {
             return Err(format!("tile {t:?} is taken"));
         }
         self.sync_back();
+        // A pipe laid on to a run takes the run's bore.
+        let mut e = e;
+        if e.proto().id == "pipe" {
+            let next = [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().find_map(|d| {
+                let id = self.occupied.get(&(e.x + d.0, e.y + d.1))?;
+                let n = &self.entities[id];
+                (n.proto().id == "pipe").then_some(n.diameter)
+            });
+            if let Some(d) = next {
+                e.diameter = d;
+            }
+        }
         for t in tiles {
             self.occupied.insert(t, id);
         }
@@ -225,6 +243,32 @@ impl World {
     pub fn set_opening(&mut self, id: u32, opening: f64) {
         if let Some(e) = self.entities.get_mut(&id) {
             e.opening = opening.clamp(0.0, 1.0);
+        }
+    }
+
+    /// Re-bores the whole pipe run a pipe belongs to [m].
+    pub fn set_pipe_diameter(&mut self, id: u32, diameter: f64) {
+        self.rebuild_if_dirty();
+        let Some(e) = self.entities.get(&id) else { return };
+        let Some(&si) = self.segment_of.get(&(e.x, e.y)) else { return };
+        let tiles: std::collections::HashSet<Tile> = self.segments[si].tiles.iter().copied().collect();
+        let d = diameter.clamp(0.025, 0.6);
+        for e in self.entities.values_mut() {
+            if e.proto().id == "pipe" && tiles.contains(&(e.x, e.y)) {
+                e.diameter = d;
+            }
+        }
+        self.dirty = true;
+    }
+
+    /// Sets how worn a pump's impeller is (0..1), as when loading a save.
+    pub fn set_pump_wear(&mut self, id: u32, wear: f64) {
+        let Some(e) = self.entities.get_mut(&id) else { return };
+        e.wear = wear.clamp(0.0, 1.0);
+        for &pi in &e.net_pipes {
+            if let PipeKind::Pump { wear, .. } = &mut self.net.pipes[pi].kind {
+                *wear = e.wear;
+            }
         }
     }
 
@@ -350,8 +394,8 @@ impl World {
         // Pipe segments: connected components of pipe tiles.
         let pipe_proto = protos::proto("pipe").unwrap();
         let pipe_tiles: Vec<Tile> = self.entities.values().filter(|e| e.proto == pipe_proto).map(|e| (e.x, e.y)).collect();
+        let bore: HashMap<Tile, f64> = self.entities.values().filter(|e| e.proto == pipe_proto).map(|e| ((e.x, e.y), e.diameter)).collect();
         let is_pipe: std::collections::HashSet<Tile> = pipe_tiles.iter().copied().collect();
-        let area = std::f64::consts::PI * PIPE_DIAMETER * PIPE_DIAMETER / 4.0;
         for &start in &pipe_tiles {
             if self.segment_of.contains_key(&start) {
                 continue;
@@ -371,13 +415,15 @@ impl World {
                 }
             }
             let k = tiles.len() as f64;
+            let diameter = tiles.iter().map(|t| bore[t]).fold(f64::INFINITY, f64::min);
+            let area = std::f64::consts::PI * diameter * diameter / 4.0;
             // Fittings, headers and the run into each machine add hold-up beyond the straight pipe;
             // it also keeps a segment's contents larger than one step's throughput.
-            let mut v = Vessel::new((area * k).max(SEGMENT_MIN_VOLUME), PIPE_DIAMETER, ambient);
+            let mut v = Vessel::new((area * k).max(SEGMENT_MIN_VOLUME), diameter, ambient);
             v.design_p = 150e5;
             v.ua_ambient = 0.5 * k;
             // Contents: the old tiles' shares, and fresh tiles purged with nitrogen at 1 atm.
-            let fresh = Vessel::new(v.volume / k, PIPE_DIAMETER, ambient);
+            let fresh = Vessel::new(v.volume / k, diameter, ambient);
             let (mut n, mut u, mut t_guess, mut p_guess, mut known) = ([0.0; NS], 0.0, 0.0, 0.0, 0.0);
             for t in &tiles {
                 if let Some(s) = shares.get(t) {
@@ -405,7 +451,7 @@ impl World {
                 v.state = Flash { ..fresh.state };
             }
             let vi = self.net.add_vessel(v);
-            self.segments.push(Segment { tiles, vessel: vi });
+            self.segments.push(Segment { tiles, vessel: vi, diameter });
         }
 
         // Buildings: their vessels, reservoirs, power hookups.
@@ -536,20 +582,21 @@ impl World {
                     // Link buildings: one element between side 0 and side 1. With a source, side 0
                     // is the building's own reservoir.
                     let e = &self.entities[id];
-                    let side = |s: usize| -> Option<(usize, f64)> {
+                    let side = |s: usize| -> Option<(usize, f64, f64)> {
                         if p.source.is_some() && s == 0 {
-                            return Some((*e.net_vessels.last().unwrap(), 2.0));
+                            return Some((*e.net_vessels.last().unwrap(), 2.0, f64::INFINITY));
                         }
                         let k = (0..ports_len).find(|&k| p.ports[k].vessel == s)?;
-                        seg_for(*id, k).map(|si| (self.segments[si].vessel, lengths[&(*id, k)]))
+                        seg_for(*id, k).map(|si| (self.segments[si].vessel, lengths[&(*id, k)], self.segments[si].diameter))
                     };
-                    if let (Some((a, la)), Some((b, lb))) = (side(0), side(1)) {
+                    if let (Some((a, la, da)), Some((b, lb, db))) = (side(0), side(1)) {
                         let kind = match link {
                             LinkDef::Valve => PipeKind::Valve { opening: e.opening },
                             LinkDef::Check => PipeKind::Check,
                             LinkDef::Pump { dp_bar, q_max } => PipeKind::Pump {
                                 dp_max: dp_bar * 1e5, q_max, eff: 0.75, rated_w: p.power_w, power_avail: 0.0, power_used: 0.0,
                                 trim: e.trim, speed: e.speed, q: 0.0, dp: 0.0, eff_now: 0.0, n: 0.0, rho: 1000.0,
+                                npsha: 0.0, npshr: 0.0, cavitation: 0.0, wear: e.wear,
                             },
                             LinkDef::Compressor { ratio_max } => PipeKind::Compressor {
                                 ratio_max, eff: 0.75, rated_w: p.power_w, power_avail: 0.0, power_used: 0.0,
@@ -561,8 +608,9 @@ impl World {
                         };
                         let diameter = match link {
                             LinkDef::Open { diameter } => diameter,
-                            _ if p.source.is_some() => 0.08,
-                            _ => PIPE_DIAMETER,
+                            _ if p.source.is_some() => 0.08f64.min(db),
+                            // Through the machine at the bore of the narrower line.
+                            _ => da.min(db),
                         };
                         let mut pipe = Pipe::new(a, b, la + lb, diameter, kind);
                         let port_of = |s: usize| if p.source.is_some() && s == 0 { None } else { (0..ports_len).find(|&k| p.ports[k].vessel == s) };
@@ -577,7 +625,7 @@ impl World {
                         let e = &self.entities[id];
                         let def = &p.ports[k];
                         let vi = e.net_vessels[def.vessel];
-                        let mut pipe = Pipe::new(vi, self.segments[si].vessel, lengths[&(*id, k)], PIPE_DIAMETER, PipeKind::Plain);
+                        let mut pipe = Pipe::new(vi, self.segments[si].vessel, lengths[&(*id, k)], self.segments[si].diameter, PipeKind::Plain);
                         pipe.ha = port_height(def.at, &self.net.vessels[vi]);
                         pipe.ports = [None, Some(k)];
                         pipe.mdot = old_flows.get(&(*id, k)).copied().unwrap_or(0.0);
@@ -660,6 +708,19 @@ impl World {
         }
         let before: Vec<Comp> = self.net.vessels.iter().map(|v| v.n).collect();
         self.net.step(DT);
+        // Pump impellers keep their wear across rebuilds of the network; say when one goes.
+        for e in self.entities.values_mut() {
+            for &pi in &e.net_pipes {
+                if let PipeKind::Pump { wear, .. } = self.net.pipes[pi].kind {
+                    if wear >= 1.0 && e.wear < 1.0 {
+                        self.events.push(format!("{} #{}: cavitation has worn its impeller through. Pick it up and put it back to fit a new one.", e.proto().name, e.id));
+                    } else if wear >= 0.5 && e.wear < 0.5 {
+                        self.events.push(format!("{} #{}: its impeller is badly pitted by cavitation.", e.proto().name, e.id));
+                    }
+                    e.wear = wear;
+                }
+            }
+        }
         // Electrolysers make their oxygen in the anode vessel: move it there.
         for e in self.entities.values() {
             if e.proto().electrolyser {
@@ -931,6 +992,7 @@ pub struct EntityView {
 pub struct SegmentView {
     pub tiles: Vec<Tile>,
     pub vessel: VesselView,
+    pub diameter: f64,
 }
 
 #[derive(Serialize)]
@@ -963,18 +1025,6 @@ fn comp_map(c: &Comp) -> BTreeMap<&'static str, f64> {
     (0..NS).filter(|&i| c[i] > 1e-6).map(|i| (SPECIES[i].id, c[i])).collect()
 }
 
-/// A liquid's vapour pressure [Pa]: Raoult's law over the species below their critical point,
-/// each at Wilson's saturation pressure. Dissolved permanent gases don't count.
-fn vapour_pressure(x: &Comp, t: f64) -> f64 {
-    (0..NS)
-        .filter(|&i| x[i] > 0.0 && t < SPECIES[i].tc)
-        .map(|i| {
-            let s = &SPECIES[i];
-            x[i] * s.pc * (5.373 * (1.0 + s.omega) * (1.0 - s.tc / t)).exp()
-        })
-        .sum()
-}
-
 fn vessel_view(v: &Vessel) -> VesselView {
     let s = &v.state;
     let moles = v.moles();
@@ -1001,7 +1051,7 @@ fn vessel_view(v: &Vessel) -> VesselView {
         mass: (0..NS).map(|i| v.n[i] * SPECIES[i].mw * 1e-3).sum(), z: comp_map(&z), x: comp_map(&s.x), y: comp_map(&s.y),
         rho_liq: if s.beta < 1.0 { s.rho_liq() } else { 0.0 }, rho_vap: if s.beta > 0.0 { s.rho_vap() } else { 0.0 },
         mu_liq: if s.beta < 1.0 { s.mu_liq() } else { 0.0 }, mu_vap: if s.beta > 0.0 { s.mu_vap() } else { 0.0 },
-        p_vap: if s.beta < 1.0 { vapour_pressure(&s.x, s.t) } else { 0.0 },
+        p_vap: if s.beta < 1.0 { crate::physics::fluid::vapour_pressure(&s.x, s.t) } else { 0.0 },
         q_net: v.q_net, design_p: v.design_p, ruptured: v.ruptured, reactions,
     }
 }
@@ -1033,7 +1083,7 @@ impl World {
                 served: grid.and_then(|g| e.load.map(|l| g.loads[l].served)).unwrap_or(0.0),
             })
             .collect();
-        let segments = self.segments.iter().map(|s| SegmentView { tiles: s.tiles.clone(), vessel: vessel_view(&self.net.vessels[s.vessel]) }).collect();
+        let segments = self.segments.iter().map(|s| SegmentView { tiles: s.tiles.clone(), vessel: vessel_view(&self.net.vessels[s.vessel]), diameter: s.diameter }).collect();
         let view = |g: &Grid| GridView {
             frequency: g.frequency, nominal: F_NOMINAL, generation_w: g.generation_w, load_w: g.load_w,
             shed_fraction: g.shed_fraction, blackout: g.blackout, capacity_w: capacity(g),

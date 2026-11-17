@@ -47,6 +47,7 @@ export const ITEMS: Record<string, Item> = Object.fromEntries([
   item('smg', 'Submachine gun', 5, { gear: 'weapon' }),
   item('armor_light', 'Light armor', 1, { gear: 'armor' }),
   item('armor_heavy', 'Heavy armor', 1, { gear: 'armor' }),
+  item('ear_defenders', 'Ear defenders', 1),
   item('repair_pack', 'Repair pack'),
   item('science_red', 'Automation science pack', 200),
   item('science_green', 'Logistic science pack', 200),
@@ -109,6 +110,8 @@ export const RECIPES: Record<string, Recipe> = Object.fromEntries(([
   r('smg', 1, { iron_gear: 10, copper_plate: 5, iron_plate: 10 }, 10),
   r('armor_light', 1, { iron_plate: 40 }, 3),
   r('armor_heavy', 1, { copper_plate: 100, steel_plate: 50 }, 8),
+  // Worn while carried: loud machinery and gunfire come through muffled.
+  r('ear_defenders', 1, { iron_plate: 2, wood: 2 }, 1),
   r('repair_pack', 1, { circuit: 2, iron_gear: 2 }, 0.5),
   // Science.
   r('science_red', 1, { copper_plate: 1, iron_gear: 1 }, 5),

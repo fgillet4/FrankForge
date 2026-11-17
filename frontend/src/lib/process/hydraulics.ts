@@ -12,10 +12,13 @@
 
 import { PROTO, portTiles, type EntityView, type Snapshot, type VesselView } from './engine';
 
-/** Bore and roughness of every pipe (the engine's PIPE_DIAMETER, commercial steel). */
+/** Standard bore (the engine's PIPE_DIAMETER) and roughness (commercial steel). */
 export const PIPE_D = 0.15;
 const ROUGH = 4.5e-5;
-const AREA = Math.PI * PIPE_D * PIPE_D / 4;
+const area = (d: number) => Math.PI * d * d / 4;
+
+/** Bores a run can be given [m], with their nominal sizes. */
+export const BORES: [number, string][] = [[0.05, 'DN 50 · 2″'], [0.08, 'DN 80 · 3″'], [0.1, 'DN 100 · 4″'], [0.15, 'DN 150 · 6″'], [0.2, 'DN 200 · 8″'], [0.3, 'DN 300 · 12″']];
 const G = 9.80665;
 
 export type Service = 'suction' | 'discharge' | 'liquid' | 'gas';
@@ -32,10 +35,10 @@ export const LIMITS: Record<Service, { label: string; vMax: number; dpMax: numbe
 export const erosional = (rho: number, C = 100) => C * 0.3048 / Math.sqrt(rho * 0.062428);
 
 /** Darcy friction factor, as the engine has it: laminar, Swamee–Jain, blended between. */
-export function friction(re: number): number {
+export function friction(re: number, d = PIPE_D): number {
   if (re < 1) return 64;
   const lam = 64 / re;
-  const turb = 0.25 / Math.log10(ROUGH / PIPE_D / 3.7 + 5.74 / Math.pow(Math.max(re, 2300), 0.9)) ** 2;
+  const turb = 0.25 / Math.log10(ROUGH / d / 3.7 + 5.74 / Math.pow(Math.max(re, 2300), 0.9)) ** 2;
   if (re <= 2300) return lam;
   if (re >= 4000) return turb;
   const t = (re - 2300) / 1700;
@@ -58,14 +61,14 @@ export interface FlowStats {
 }
 
 /** Velocity, Reynolds number, friction and pressure gradient [kPa/100 m] of a mass flow. */
-export function stats(mdot: number, fl: RunFluid): FlowStats {
-  const v = Math.abs(mdot) / (fl.rho * AREA);
-  const re = fl.rho * v * PIPE_D / fl.mu;
-  const f = friction(re);
+export function stats(mdot: number, fl: RunFluid, d = PIPE_D): FlowStats {
+  const v = Math.abs(mdot) / (fl.rho * area(d));
+  const re = fl.rho * v * d / fl.mu;
+  const f = friction(re, d);
   return {
     mdot, v, q: Math.abs(mdot) / fl.rho, re, f,
     regime: re < 2300 ? 'laminar' : re < 4000 ? 'transitional' : 'turbulent',
-    dp100: f * (100 / PIPE_D) * fl.rho * v * v / 2 / 1000,
+    dp100: f * (100 / d) * fl.rho * v * v / 2 / 1000,
     rhoV2: fl.rho * v * v, ve: erosional(fl.rho),
   };
 }
@@ -84,6 +87,8 @@ export function problems(s: FlowStats, service: Service, fl: RunFluid): string[]
 
 export interface RunFlows {
   service: Service;
+  /** Bore [m]. */
+  d: number;
   fluid: RunFluid;
   /** Mass flow across each tile edge, keyed "x,y,x" or "x,y,y" for the edge to x+1 or y+1; positive toward +x / +y [kg/s]. */
   edges: Map<string, number>;
@@ -108,7 +113,7 @@ export function hydraulics(snap: Snapshot): Hydraulics {
   const runAt = new Map<string, number>();
   snap.segments.forEach((seg, si) => seg.tiles.forEach(([x, y]) => runAt.set(`${x},${y}`, si)));
   const runs: RunFlows[] = snap.segments.map(seg => ({
-    service: 'liquid', fluid: runFluid(seg.vessel), edges: new Map(), ports: [], tile: new Map(),
+    service: 'liquid', d: seg.diameter || PIPE_D, fluid: runFluid(seg.vessel), edges: new Map(), ports: [], tile: new Map(),
   }));
   const pumps: [number, 0 | 1][] = [];
   for (const e of snap.entities) {
@@ -198,8 +203,8 @@ export function pumpSides(snap: Snapshot, e: EntityView): { suction: VesselView 
  * NPSH available at a pump's suction [m]: absolute pressure less the liquid's vapour pressure,
  * as head, plus the velocity head in the suction line.
  */
-export function npshAvailable(suction: VesselView, q: number, rho: number): number {
-  const v = q / AREA;
+export function npshAvailable(suction: VesselView, q: number, rho: number, d = PIPE_D): number {
+  const v = q / area(d);
   return (suction.p - suction.p_vap) / (rho * G) + v * v / (2 * G);
 }
 

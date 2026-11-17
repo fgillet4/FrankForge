@@ -121,9 +121,11 @@ export class PumpCurvePanel {
     const hStatic = sides.suction && sides.discharge ? (sides.discharge.p - sides.suction.p) / (rho * G) : null;
     const sys = hStatic === null ? null : { h0: hStatic, k: q > 1e-5 ? Math.max(0, head - hStatic) / (q * q) : 0 };
     const liquid = !!sides.suction && sides.suction.beta < 0.5;
-    const npsha = sides.suction && liquid ? npshAvailable(sides.suction, q, rho) : null;
-    const npshr = npshRequired(q, now.qBep, n);
-    const npsh = npsha === null ? null : { a: npsha, suction: sides.suction!, r: npshr };
+    // The engine's own figures, from the pressure at the suction nozzle.
+    const npsha = k.npsha ? k.npsha : sides.suction && liquid ? npshAvailable(sides.suction, q, rho) : null;
+    const npshr = k.npshr || npshRequired(q, now.qBep, n);
+    const wear = k.wear ?? 0;
+    const npsh = npsha === null || !sides.suction ? null : { a: npsha, suction: sides.suction, r: npshr };
     this.readout.innerHTML = [
       ['Flow', `${(q * 3600).toFixed(1)} m³/h`],
       ['Head', `${head.toFixed(1)} m`],
@@ -133,13 +135,17 @@ export class PumpCurvePanel {
       ['Of BEP flow', `${(ratio * 100).toFixed(0)} %`],
       ['Static head', hStatic === null ? '—' : `${hStatic.toFixed(1)} m`],
       ['NPSH avail. / req.', npsha === null ? '—' : `${npsha.toFixed(1)} / ${npshr.toFixed(1)} m`],
+      ['Impeller wear', wear >= 1 ? 'worn through' : `${(wear * 100).toFixed(wear < 0.1 ? 1 : 0)} %`],
     ].map(([a, b]) => `<span>${a}<b>${b}</b></span>`).join('');
     const starved = speed > 0 && n < speed * 0.98;
     this.note.className = 'pp-curve-note';
     let msg = '';
+    const onGas = k.rho !== undefined && k.rho > 0 && k.rho < 200 && Math.abs(q) > 1e-5;
     if (speed === 0) msg = 'Stopped.';
+    else if (onGas) { msg = 'Moving gas, not liquid: its lines are full of air or vapour. The figures above mean little until liquid reaches it.'; this.note.classList.add('warn'); }
     else if (starved) { msg = 'Not getting enough power: the motor has slowed down.'; this.note.classList.add('bad'); }
-    else if (npsha !== null && q > 1e-5 && npsha < npshr) { msg = `Cavitating: ${npsha.toFixed(1)} m of NPSH available, ${npshr.toFixed(1)} m needed. Raise the suction pressure, or slow the pump.`; this.note.classList.add('bad'); }
+    else if (wear >= 1) { msg = 'The impeller is worn through: it pumps nothing. Pick the pump up and put it back to fit a new one.'; this.note.classList.add('bad'); }
+    else if ((k.cavitation ?? 0) > 0.01) { msg = `Cavitating: ${(k.npsha ?? 0).toFixed(1)} m of NPSH available, ${(k.npshr ?? 0).toFixed(1)} m needed. It's losing head and wearing its impeller. Raise the suction pressure or level, or slow the pump.`; this.note.classList.add('bad'); }
     else if (q < 1e-5) { msg = 'Dead-headed: no flow. The liquid in the casing just heats up.'; this.note.classList.add('bad'); }
     else if (ratio < 0.7) { msg = 'Running left of the best-efficiency point: recirculation and wasted power. Trim the impeller or slow it down.'; this.note.classList.add('warn'); }
     else if (ratio > 1.2) { msg = 'Running right of the best-efficiency point: high power and a risk of cavitation.'; this.note.classList.add('warn'); }

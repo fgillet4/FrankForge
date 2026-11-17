@@ -6,11 +6,28 @@
 import './process.css';
 import { iconUrl } from '../game/items';
 import { PumpCurvePanel } from './pumpCurve';
-import { LIMITS, pumpSides, type FlowStats, type RunFlows } from './hydraulics';
+import { BORES, LIMITS, hydraulics, problems, pumpSides, stats, type FlowStats, type RunFlows } from './hydraulics';
 import {
-  PROTO, PROTOS, SPECIES, blackStart, setEnabled, setOpening, setReaction, layout,
-  type EntityView, type Snapshot, type VesselView,
+  PROTO, PROTOS, SPECIES, blackStart, setEnabled, setOpening, setPipeDiameter, setReaction, layout, placedById,
+  type EntityView, type Placed, type Snapshot, type VesselView,
 } from './engine';
+
+/** What's in a vessel, in words: "Water", "Steam", "Mostly methane, with ethane". */
+export function fluidName(v: VesselView): string {
+  if (v.moles < 1e-6) return 'Empty';
+  const top = Object.entries(v.z).sort((a, b) => b[1] - a[1]);
+  // A few bubbles of dissolved gas don't make a liquid line two-phase.
+  const gas = v.beta >= 0.98, liquid = v.beta <= 0.02;
+  const name = (id: string) => {
+    if (id === 'h2o') return gas ? 'steam' : liquid ? 'water' : 'water and steam';
+    return (SPECIES[id]?.name ?? id).toLowerCase();
+  };
+  const cap = (t: string) => t[0].toUpperCase() + t.slice(1);
+  const [first, f1] = top[0];
+  const phase = first === 'h2o' ? '' : gas ? ' (gas)' : liquid ? ' (liquid)' : ' (boiling)';
+  if (f1 > 0.9 || top.length === 1) return cap(name(first)) + phase;
+  return `Mostly ${name(first)}, with ${name(top[1][0])}${phase}`;
+}
 
 const VESSEL_NAMES: Record<string, string[]> = {
   fired_boiler: ['Firebox', 'Steam drum'],
@@ -188,7 +205,13 @@ export class ProcessUI {
   }
 
   private onInspectorClick(e: Event) {
-    const t = e.target as HTMLElement;
+    const t = (e.target as HTMLElement).closest<HTMLElement>('[data-action]');
+    if (!t) return;
+    if (t.dataset.action === 'bore' && this.inspectorFor !== null) {
+      setPipeDiameter(this.inspectorFor, Number(t.dataset.value));
+      this.lastInspectorHtml = '';
+      return;
+    }
     if (t.dataset.action === 'close') {
       this.showInspector(null);
       this.curve.close();
@@ -214,10 +237,39 @@ export class ProcessUI {
     if (this.inspectorFor === null) return;
     const e = snap.entities.find(x => x.id === this.inspectorFor);
     if (!e) {
-      this.showInspector(null);
+      const pipe = placedById(this.inspectorFor);
+      if (pipe?.proto === 'pipe') this.renderPipe(pipe, snap); else this.showInspector(null);
       return;
     }
     this.renderInspector(e);
+  }
+
+  /** A pipe run: what's in it, how it flows, and its bore, which can be changed. */
+  private renderPipe(pipe: Placed, snap: Snapshot) {
+    const h = hydraulics(snap);
+    const si = h.runAt.get(`${pipe.x},${pipe.y}`);
+    if (si === undefined) { this.showInspector(null); return; }
+    const run = h.runs[si], v = snap.segments[si].vessel;
+    const st = stats(run.tile.get(`${pipe.x},${pipe.y}`) ?? 0, run.fluid, run.d);
+    const issues = problems(st, run.service, run.fluid);
+    const lim = LIMITS[run.service];
+    const html = `<div class="pp-head"><img src="${iconUrl('pipe')}" alt=""><div><b>Pipe run · ${fluidName(v)}</b><small>${snap.segments[si].tiles.length} tiles · ${lim.label}</small></div><button data-action="close">✕</button></div>
+      <div class="pp-section">Bore</div>
+      <div class="pp-choices">${BORES.map(([d, label]) =>
+        `<button data-action="bore" data-value="${d}" class="${Math.abs(d - run.d) < 1e-6 ? 'on' : ''}">${label}</button>`).join('')}</div>
+      <p class="pp-desc">A wider line carries more for the same push, with less friction, and holds more. Laying pipe on to a run gives it the run's bore.</p>
+      <div class="pp-section">Flow here</div>
+      ${st.v < 0.005 ? '<div class="pp-control pp-dim">Not flowing</div>' : `<div class="pp-grid">
+        <span>Flow</span><b>${(st.q * 3600).toFixed(st.q * 3600 < 10 ? 2 : 1)} m³/h</b>
+        <span>Velocity</span><b class="${st.v > lim.vMax ? 'pp-bad' : ''}">${st.v.toFixed(2)} m/s <small>of ${lim.vMax}</small></b>
+        <span>Reynolds</span><b>${st.re >= 1e4 ? st.re.toExponential(1) : st.re.toFixed(0)} <small>${st.regime}</small></b>
+        <span>Friction</span><b class="${st.dp100 > lim.dpMax ? 'pp-bad' : ''}">${st.dp100.toFixed(st.dp100 < 10 ? 2 : 0)} kPa/100 m</b>
+      </div>${issues.map(p => `<div class="pp-control pp-bad">${p}</div>`).join('')}`}
+      ${vesselHtml(v, 'Contents')}`;
+    if (html !== this.lastInspectorHtml) {
+      this.inspector.innerHTML = html;
+      this.lastInspectorHtml = html;
+    }
   }
 
   private renderInspector(e: EntityView) {
@@ -235,11 +287,17 @@ export class ProcessUI {
       kind === 'Pump' ? (() => {
         const k = e.pipes[0].kind;
         const head = (k.dp ?? 0) / ((k.rho && k.rho > 1 ? k.rho : 1000) * 9.80665);
-        return `<div class="pp-control">Running at <b>${((k.q ?? 0) * 3600).toFixed(1)} m³/h, ${head.toFixed(1)} m</b>
+        const wear = k.wear ?? 0;
+        const health = (k.cavitation ?? 0) > 0.01 ? '<div class="pp-control pp-bad">Cavitating: the impeller is being eaten away</div>' : '';
+        const worn = wear > 0.01 ? `<div class="pp-control${wear >= 1 ? ' pp-bad' : ''}">Impeller ${wear >= 1 ? 'worn through: pick the pump up and put it back to fit a new one' : `wear <b>${fmt.pct(wear)}</b>`}</div>` : '';
+        const onGas = (k.rho ?? 1000) < 200 && Math.abs(k.q ?? 0) > 1e-5;
+        const running = onGas ? '<span class="pp-warn">Moving gas: its lines hold air or vapour, not liquid</span>'
+          : `Running at <b>${((k.q ?? 0) * 3600).toFixed(1)} m³/h, ${head.toFixed(1)} m</b>`;
+        return health + worn + `<div class="pp-control">${running}
           <button data-action="curve">${this.curve.id === e.id ? 'Hide curve' : 'Pump curve'}</button></div>`;
       })() : '',
       p.power_w ? `<div class="pp-control">Power ${fmt.w(e.power_w)} of ${fmt.w(p.power_w)}
-        <button data-action="toggle" data-on="${e.enabled}">${e.enabled ? 'Switch off' : 'Switch on'}</button></div>` : '',
+        <button class="pp-switch ${e.enabled ? 'on' : ''}" data-action="toggle" data-on="${e.enabled}" title="${e.enabled ? 'Switch off' : 'Switch on'}"><i></i><span>${e.enabled ? 'ON' : 'OFF'}</span></button></div>` : '',
       e.generation_w || p.generator_w ? `<div class="pp-control">Generating <b>${fmt.w(e.generation_w)}</b>${p.generator_w ? ` of ${fmt.w(p.generator_w)}` : ''}</div>` : '',
       p.selectable ? `<div class="pp-section">Reaction</div><div class="pp-choices">${CSTR_REACTIONS.map(([id, name]) => {
         const current = layout().find(x => x.id === e.id)?.reaction ?? 'methanol';
@@ -338,12 +396,18 @@ export function segmentTooltip(v: VesselView, flow?: { run: RunFlows; stats: Flo
       ${flow.problems.map(p => `<small class="pp-bad">${p}</small>`).join('')}
     </div>`;
   }
-  return `<b>Pipe</b> · ${fmt.p(v.p)} · ${fmt.t(v.t)} · ${phase}<br><small>${top}</small>${hyd}`;
+  const bore = flow ? ` · ${BORES.find(b => Math.abs(b[0] - flow.run.d) < 1e-6)?.[1].split(' · ')[0] ?? `${(flow.run.d * 1000).toFixed(0)} mm`}` : '';
+  return `<b>Pipe · ${fluidName(v)}</b><br>${fmt.p(v.p)} · ${fmt.t(v.t)} · ${phase}${bore}<br><small>${top}</small>${hyd}`;
 }
 
 export function entityTooltip(e: EntityView): string {
   const p = PROTO[e.proto];
   const v = e.vessels[0];
   const state = v ? ` · ${fmt.p(v.p)} · ${fmt.t(v.t)}` : e.pipes[0] ? ` · ${fmt.flow(e.pipes[0].mdot)}` : '';
-  return `<b>${p?.name ?? e.proto}</b>${state}`;
+  const k = e.pipes.find(x => x.kind.kind === 'Pump')?.kind;
+  const pump = !k ? '' : (k.cavitation ?? 0) > 0.01
+    ? `<br><small class="pp-bad">Cavitating: NPSH ${(k.npsha ?? 0).toFixed(1)} m available, ${(k.npshr ?? 0).toFixed(1)} m needed</small>`
+    : '';
+  const wear = k && (k.wear ?? 0) > 0.01 ? `<br><small class="${(k.wear ?? 0) >= 1 ? 'pp-bad' : ''}">Impeller ${(k.wear ?? 0) >= 1 ? 'worn through' : `wear ${fmt.pct(k.wear ?? 0)}`}</small>` : '';
+  return `<b>${p?.name ?? e.proto}</b>${state}${pump}${wear}`;
 }

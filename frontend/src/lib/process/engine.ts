@@ -53,6 +53,8 @@ export interface PipeView {
     /** Pumps: rated curve, settings and operating point (see the engine's PipeKind::Pump). */
     dp_max?: number; q_max?: number; eff?: number; trim?: number; speed?: number;
     q?: number; dp?: number; eff_now?: number; n?: number; rho?: number;
+    /** Pumps: NPSH available and required [m], how hard it's cavitating (0..1), impeller wear (0..1). */
+    npsha?: number; npshr?: number; cavitation?: number; wear?: number;
   };
 }
 
@@ -73,7 +75,7 @@ export interface GridView {
 export interface Snapshot {
   time: number; daylight: number; ambient: number;
   entities: EntityView[];
-  segments: { tiles: [number, number][]; vessel: VesselView }[];
+  segments: { tiles: [number, number][]; vessel: VesselView; diameter: number }[];
   /** The biggest network, and all of them. */
   grid: GridView;
   main_grid: number | null;
@@ -88,6 +90,10 @@ export interface Placed {
   id: number; proto: string; x: number; y: number; rot: number; opening: number; enabled: boolean; reaction?: string;
   /** Pumps: impeller trim and VFD speed, as fractions of full. */
   trim?: number; speed?: number;
+  /** Pumps: impeller worn by cavitation, 0..1. */
+  wear?: number;
+  /** Pipes: bore [m], when not the standard one. */
+  diameter?: number;
 }
 
 let world: ProcessWorld | null = null;
@@ -205,7 +211,33 @@ export function advance(seconds: number) {
 }
 
 export function snapshot(): Snapshot | null {
-  return world ? JSON.parse(world.snapshot()) : null;
+  if (!world) return null;
+  const snap: Snapshot = JSON.parse(world.snapshot());
+  // Keep pipe bores with the layout, so a save remembers them (new pipes take their run's).
+  for (const seg of snap.segments) {
+    const pipes = seg.tiles.map(([x, y]) => placed.get(entityAt(x, y)));
+    if (Math.abs(seg.diameter - 0.15) < 1e-6 && !pipes.some(p => p?.diameter)) continue;
+    for (const p of pipes) if (p) p.diameter = seg.diameter;
+  }
+  // Keep pump wear with the layout, so a save remembers it.
+  for (const e of snap.entities) {
+    const wear = e.pipes.find(p => p.kind.kind === 'Pump')?.kind.wear;
+    const p = placed.get(e.id);
+    if (p && wear) p.wear = wear;
+  }
+  return snap;
+}
+
+/** Re-bores the whole pipe run a pipe belongs to [m]. */
+export function setPipeDiameter(id: number, diameter: number) {
+  world?.set_pipe_diameter(id, diameter);
+}
+
+/** Sets how worn a pump's impeller is (0..1). */
+export function setPumpWear(id: number, wear: number) {
+  world?.set_pump_wear(id, wear);
+  const p = placed.get(id);
+  if (p) p.wear = wear;
 }
 
 /** The layout (not the contents) for saving. */
@@ -224,5 +256,7 @@ export function restore(list: Placed[]) {
     if (!p.enabled) setEnabled(p.id, false);
     if (p.reaction) setReaction(p.id, p.reaction);
     if (p.trim !== undefined || p.speed !== undefined) setPump(p.id, p.trim ?? 1, p.speed ?? 1);
+    if (p.wear) setPumpWear(p.id, p.wear);
+    if (p.diameter && p.proto === 'pipe') setPipeDiameter(p.id, p.diameter);
   }
 }

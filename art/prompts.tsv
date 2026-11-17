@@ -156,3 +156,4 @@ part_assembler_tool	part	a robot arm tool head of grey steel: a compact welding 
 part_pipe	part	one straight section of industrial steel process pipe: a thick grey steel tube with a raised bolted flange ring at each end, a weld seam and slight weathering, perfectly straight and horizontal
 part_pipe_nozzle	part	a short steel pipe nozzle stub: a thick grey steel tube coming from the left with a large round bolted flange with a dark gasket at its right end, heavy hex bolts round the flange
 part_pipe_joint	building	a single compact steel pipe junction fitting on its own on a 1x1 tile footprint: a squat round cast steel cross fitting with four short stubby flanged outlets pointing to the four sides, bolted flanges, a small drain plug on top. Grey weathered steel. No pipes attached.
+item_ear_defenders	icon	a pair of bright orange industrial ear defenders: two padded ear cups on a black headband, like safety earmuffs.
