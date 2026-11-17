@@ -34,7 +34,8 @@ export const HOW_TO_PLAY = `
     <kbd>W A S D</kbd><span>Walk (belts carry you along)</span>
     <kbd>Hold right-click</kbd><span>Mine: chop trees, break rocks, dig ore, pick buildings back up</span>
     <kbd>Hold Space</kbd><span>Shoot the alien nearest the cursor</span>
-    <kbd>E</kbd><span>Inventory, gear and hand crafting</span>
+    <kbd>E</kbd><span>Inventory, gear and hand crafting. In the crafting list, click to make one, right-click for five, Shift-click for as many as you can</span>
+    <kbd>Right-click item</kbd><span>In your pockets or gear slots: what you can do with it, such as wield, wear, place or drop. Shift-click a stack in your pockets to drop it straight away. Dropped stacks lie on the ground: click one in reach, or hold F beside it, to take it back</span>
     <kbd>T</kbd><span>Research</span>
     <kbd>P</kbd><span>Production graphs</span>
     <kbd>M</kbd><span>Enlarge the minimap; click it to look somewhere</span>

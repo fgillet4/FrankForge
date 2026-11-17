@@ -52,6 +52,8 @@ export interface HudHost {
   /** Feed composition of a chemical plant, for its panel. */
   plantFeed(id: number): string;
   alert(msg: string): void;
+  /** Drops a stack on the ground at the engineer's feet. */
+  drop(item: string, count: number): void;
   onResearch(): void;
 }
 
@@ -79,6 +81,28 @@ export class Hud {
     document.body.append(this.root);
     this.root.addEventListener('click', e => this.onClick(e as MouseEvent));
     this.root.addEventListener('contextmenu', e => { e.preventDefault(); this.onClick(e as MouseEvent, true); });
+    // Hover cards straight away, like the world's, instead of the browser's slow ones: each
+    // title moves into the card as the pointer reaches it.
+    this.root.append(this.tip);
+    this.root.addEventListener('pointerover', e => {
+      const t = (e.target as HTMLElement).closest<HTMLElement>('[title], [data-tip]');
+      if (!t || this.ctx) { this.tip.style.display = 'none'; return; }
+      if (t.title) { t.dataset.tip = t.title; t.removeAttribute('title'); }
+      const [head, ...rest] = t.dataset.tip!.split('\n');
+      this.tip.innerHTML = `<b>${head}</b>${rest.map(l => `<br><small>${l}</small>`).join('')}`;
+      this.tip.style.display = 'block';
+      this.placeTip(e as PointerEvent);
+    });
+    this.root.addEventListener('pointermove', e => {
+      // Panels redraw under a still pointer; keep the browser's own tooltip from coming back.
+      const t = (e.target as HTMLElement).closest<HTMLElement>('[title]');
+      if (t) { t.dataset.tip = t.title; t.removeAttribute('title'); }
+      if (this.tip.style.display === 'block') this.placeTip(e as PointerEvent);
+    });
+    this.root.addEventListener('pointerout', e => {
+      const to = (e as PointerEvent).relatedTarget as HTMLElement | null;
+      if (!to?.closest?.('[data-tip]')) this.tip.style.display = 'none';
+    });
     this.miniCanvas.addEventListener('click', e => {
       const r = this.miniCanvas.getBoundingClientRect();
       this.host.panTo((e.clientX - r.left) / r.width * host.map.width, (e.clientY - r.top) / r.height * host.map.height);
@@ -119,6 +143,8 @@ export class Hud {
   }
 
   close() {
+    this.closeMenu();
+    this.hideTip();
     this.win?.remove();
     this.win = null;
     this.winKind = null;
@@ -209,7 +235,7 @@ export class Hud {
     const crafts = shown.map(r => {
       const n = e.sandbox ? 99 : e.craftable(r.id);
       const needs = Object.entries(r.in).map(([id, k]) => `${k} × ${name(id)} (${e.inv.count(id)})`).join('\n');
-      return slot(r.out, n || undefined, `data-action="craft" data-r="${r.id}" title="${name(r.out)}${r.count > 1 ? ` ×${r.count}` : ''} — ${r.time}s\n${needs}\nClick: 1 · Right-click: 5 · Shift: all"`, n ? '' : 'off');
+      return slot(r.out, n || undefined, `data-action="craft" data-r="${r.id}" title="${name(r.out)}${r.count > 1 ? ` ×${r.count}` : ''} — ${r.time}s\n${needs}"`, n ? '' : 'off');
     }).join('');
     return `<header><h2>Inventory</h2><small>Click a building to place it, gear to wear it</small><button class="hud-btn" data-action="sort">Sort</button><button class="x" data-action="close">✕</button></header>
       <div class="hud-cols">
@@ -323,12 +349,96 @@ export class Hud {
 
   // ── Clicks ───────────────────────────────────────────────────────────────
 
+  private tip = el('div', 'hud-tip');
+
+  private placeTip(e: PointerEvent) {
+    const w = this.tip.offsetWidth, h = this.tip.offsetHeight;
+    this.tip.style.left = `${Math.min(innerWidth - w - 4, e.clientX + 16)}px`;
+    this.tip.style.top = `${Math.min(innerHeight - h - 4, e.clientY + 16)}px`;
+  }
+
+  /** RuneScape-style: a right-click on something carried lists what can be done with it. */
+  private ctx: HTMLDivElement | null = null;
+
+  private closeMenu() { this.ctx?.remove(); this.ctx = null; }
+
+  private hideTip() { this.tip.style.display = 'none'; }
+
+  private openMenu(ev: MouseEvent, options: [string, () => void][], item: string) {
+    this.closeMenu();
+    this.hideTip();
+    const m = el('div', 'hud-ctx') as HTMLDivElement;
+    const label = name(item);
+    m.innerHTML = `<header>Choose Option</header>${[...options.map(([verb]) => verb), 'Cancel'].map((verb, k) =>
+      `<button data-ctx="${k}">${verb}${verb === 'Cancel' ? '' : ` <em>${label}</em>`}</button>`).join('')}`;
+    m.addEventListener('click', e => {
+      e.stopPropagation();
+      const b = (e.target as HTMLElement).closest<HTMLElement>('[data-ctx]');
+      if (!b) return;
+      options[Number(b.dataset.ctx)]?.[1]();
+      this.closeMenu();
+      this.lastWin = '';
+      this.render();
+      this.renderStatus();
+    });
+    m.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); });
+    // Like the original, it goes away once the pointer wanders off it.
+    m.addEventListener('pointerleave', () => this.closeMenu());
+    this.root.append(m);
+    const w = m.offsetWidth, h = m.offsetHeight;
+    m.style.left = `${Math.max(4, Math.min(innerWidth - w - 4, ev.clientX - w / 2))}px`;
+    m.style.top = `${Math.max(4, Math.min(innerHeight - h - 4, ev.clientY - 10))}px`;
+    this.ctx = m;
+  }
+
+  /** What can be done with the stack in a pocket. */
+  private slotMenu(ev: MouseEvent, i: number) {
+    const e = this.eng, s = e.inv.slots[i];
+    if (!s) return;
+    const it = ITEMS[s.item];
+    const opts: [string, () => void][] = [];
+    if (it?.gear) opts.push([it.gear === 'weapon' ? 'Wield' : it.gear === 'armor' ? 'Wear' : 'Load', () => e.equip(s.item)]);
+    if (it?.places) opts.push(['Place', () => { this.host.pick(s.item); this.close(); }]);
+    opts.push(['Drop', () => {
+      const stack = e.inv.slots[i];
+      if (!stack || stack.item !== s.item) return;
+      e.inv.slots[i] = null;
+      this.host.drop(stack.item, stack.count);
+    }]);
+    this.openMenu(ev, opts, s.item);
+  }
+
+  /** What can be done with worn or held gear. */
+  private gearMenu(ev: MouseEvent, slot: 'armor' | 'weapon' | 'ammo') {
+    const e = this.eng;
+    const item = slot === 'ammo' ? e.ammo?.item : slot === 'armor' ? e.armor : e.weapon;
+    if (!item) return;
+    this.openMenu(ev, [['Remove', () => e.unequip(slot)], ['Drop', () => {
+      const count = slot === 'ammo' ? e.ammo?.count ?? 0 : 1;
+      if (slot === 'ammo') { e.ammo = null; e.rounds = 0; } else if (slot === 'armor') e.armor = null; else e.weapon = null;
+      this.host.drop(item, count);
+    }]], item);
+  }
+
   private onClick(ev: MouseEvent, right = false) {
+    if (this.ctx && !(ev.target as HTMLElement).closest('.hud-ctx')) this.closeMenu();
     const t = (ev.target as HTMLElement).closest<HTMLElement>('[data-action]');
     if (!t) return;
     const e = this.eng;
     const a = t.dataset.action;
     const i = Number(t.dataset.i);
+    if (right && a === 'use') { this.slotMenu(ev, i); return; }
+    // Shift-click drops, as in RuneScape.
+    if (a === 'use' && ev.shiftKey && e.inv.slots[i]) {
+      const stack = e.inv.slots[i]!;
+      e.inv.slots[i] = null;
+      this.host.drop(stack.item, stack.count);
+      this.hideTip();
+      this.lastWin = '';
+      this.render();
+      return;
+    }
+    if (right && a === 'unequip') { this.gearMenu(ev, t.dataset.slot as 'armor' | 'weapon' | 'ammo'); return; }
     if (a === 'close') this.close();
     else if (a === 'tech') this.toggle('tech');
     else if (a === 'tab') this.craftTab = t.dataset.t!;

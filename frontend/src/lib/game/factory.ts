@@ -106,6 +106,17 @@ function maxHp(kind: string, size: number) {
   return [0, 150, 300, 500, 700][size] ?? 500;
 }
 
+/** The tile a drill at (x, y) facing rot drops onto: the middle of the side it faces. */
+export function drillOutput(x: number, y: number, size: number, rot: number): [number, number] {
+  const m = Math.floor(size / 2);
+  switch (rot) {
+    case 1: return [x + size, y + m];
+    case 2: return [x + m, y + size];
+    case 3: return [x - 1, y + m];
+    default: return [x + m, y - 1];
+  }
+}
+
 export class Factory {
   entities = new Map<number, FEntity>();
   /** Ore taken from each tile, keyed y·100000+x. */
@@ -449,13 +460,7 @@ export class Factory {
 
   /** The tile a drill drops onto: the middle of the side it faces. */
   outputTile(e: FEntity): [number, number] {
-    const m = Math.floor(e.size / 2);
-    switch (e.rot) {
-      case 1: return [e.x + e.size, e.y + m];
-      case 2: return [e.x + m, e.y + e.size];
-      case 3: return [e.x - 1, e.y + m];
-      default: return [e.x + m, e.y - 1];
-    }
+    return drillOutput(e.x, e.y, e.size, e.rot);
   }
 
   private deliver(e: FEntity, item: string, ctx: FactoryContext): boolean {

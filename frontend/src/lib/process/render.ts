@@ -10,6 +10,7 @@ import Phaser from 'phaser';
 import { TILE_W, TILE_H, isoToScreen } from '../phaser/isoMath';
 import { ITEMS, iconUrl } from '../game/items';
 import { popScale } from '../game/juice';
+import { drillPainting } from '../game/draw';
 import { PROTO, placedById, portTiles, type EntityView, type Snapshot, type VesselView } from './engine';
 import { LIMITS, OVER, RAMP_CSS, hydraulics, nodeKey, problems, ramp, stats, type PipeNode } from './hydraulics';
 
@@ -81,7 +82,7 @@ export function preloadProcessAssets(scene: Phaser.Scene) {
   for (const kind of ['burner_drill', 'electric_drill', 'stone_furnace', 'electric_furnace', 'assembler']) scene.load.image(`ip_${kind}_frame`, `assets/process/parts/${kind}_frame.png`);
   for (const id of Object.keys(PAINTED)) scene.load.image(`pf_${id}`, `assets/process/parts/${id}_frame.png`);
   for (const part of ['drill_bit', 'electric_furnace_crucible', 'assembler_arm', 'assembler_tool', 'pipe', 'pipe_nozzle', 'pipe_joint', 'rack_low', 'rack_high',
-    'fire_coals', 'fire_flame_a', 'fire_flame_b']) {
+    'fire_coals', 'fire_flame_a', 'fire_flame_b', 'burner_drill_frame_back', 'electric_drill_frame_back']) {
     scene.load.image(`ip_${part}`, `assets/process/parts/${part}.png`);
   }
   // Item icons, for things carried on belts and in hands.
@@ -136,11 +137,13 @@ interface Row { from: [number, number]; to: [number, number]; count: number }
  * share of the image), floor burners where they show, a roof that shimmers over roof burners, and
  * the top of the flue.
  */
-const PAINTED: Record<string, { windows: Row; pane: [number, number]; burners?: Row; roof?: [number, number, number]; stack: [number, number] }> = {
+const PAINTED: Record<string, { windows?: Row; pane?: [number, number]; burners?: Row; roof?: [number, number, number]; stack?: [number, number]; fan?: [number, number, number, number] }> = {
   cracker_furnace: {
     windows: { from: [0.2, 0.548], to: [0.664, 0.748], count: 10 }, pane: [0.3, 0.017],
     burners: { from: [0.19, 0.738], to: [0.625, 0.927], count: 10 }, stack: [0.738, 0.02],
   },
+  // The fan: centre of its shroud's opening, and the opening's half width and height.
+  compressor: { fan: [0.68, 0.275, 0.096, 0.051] },
   smr_reformer: {
     windows: { from: [0.065, 0.492], to: [0.531, 0.697], count: 9 }, pane: [0.36, 0.022],
     roof: [0.36, 0.3, 0.5], stack: [0.935, 0.021],
@@ -284,6 +287,24 @@ export function drawInserterFlow(g: Phaser.GameObjects.Graphics, x: number, y: n
   g.fillStyle(0xffffff, 0.95 * alpha).fillTriangle(tip.x, tip.y, l.x, l.y, r.x, r.y);
 }
 
+/** Where a drill's ore comes out: an arrow from the middle of the side it faces to the tile it drops on. */
+export function drawDrillOutput(g: Phaser.GameObjects.Graphics, x: number, y: number, size: number, rot: number,
+  out: [number, number], camX: number, camY: number, zoom: number, alpha = 1) {
+  const [dx, dy] = [[0, -1], [1, 0], [0, 1], [-1, 0]][rot % 4];
+  const at = (ix: number, iy: number) => isoToScreen(ix, iy, camX, camY, zoom);
+  const cx = out[0] + 0.5, cy = out[1] + 0.5, r = 0.36;
+  const pts = [at(cx - r, cy - r), at(cx + r, cy - r), at(cx + r, cy + r), at(cx - r, cy + r)];
+  g.fillStyle(0xffd23a, 0.22 * alpha).fillPoints(pts, true);
+  g.lineStyle(Math.max(1.5, 2 * zoom), 0xffd23a, 0.95 * alpha).strokePoints(pts, true);
+  const [px, py] = [-dy, dx];
+  const from = at(cx - dx * 0.95, cy - dy * 0.95), tip = at(cx + dx * 0.15, cy + dy * 0.15);
+  const l = at(cx - dx * 0.15 + px * 0.2, cy - dy * 0.15 + py * 0.2), rr = at(cx - dx * 0.15 - px * 0.2, cy - dy * 0.15 - py * 0.2);
+  g.lineStyle(Math.max(3, 5 * zoom), 0x000000, 0.45 * alpha).lineBetween(from.x, from.y, tip.x, tip.y);
+  g.lineStyle(Math.max(1.5, 2.5 * zoom), 0xffffff, 0.95 * alpha).lineBetween(from.x, from.y, tip.x, tip.y);
+  g.fillStyle(0xffffff, 0.95 * alpha).fillTriangle(tip.x, tip.y, l.x, l.y, rr.x, rr.y);
+  void size;
+}
+
 /** Something picked on screen: the tile it stands on and how far forward it's drawn. */
 export interface Pick { tx: number; ty: number; depth: number }
 
@@ -299,6 +320,8 @@ export class ProcessLayer {
   private gameTime = 0;
   /** The live fire on painted buildings, just in front of each. */
   private fireGfx = new Map<number, Phaser.GameObjects.Graphics>();
+  /** Each cooler fan's angle and speed (0..1), carried from frame to frame. */
+  private fans = new Map<number, { angle: number; speed: number; t: number }>();
   private overlayGfx: Phaser.GameObjects.Graphics;
   private ghostImg: Phaser.GameObjects.Image | null = null;
   private wrecks: { x: number; y: number; img: Phaser.GameObjects.Image }[] = [];
@@ -603,7 +626,9 @@ export class ProcessLayer {
       const bottom = isoToScreen(e.x + n, e.y + n, camX, camY, zoom);
       // A cavitating pump shudders.
       const cav = e.pipes.find(p => p.kind.kind === 'Pump')?.kind.cavitation ?? 0;
-      const judder = cav > 0.01 ? Math.sin(time * 0.11 + e.id) * zoom * (0.6 + cav * 1.4) : 0;
+      // A running compressor thrums.
+      const thrum = (e.pipes.find(p => p.kind.kind === 'Compressor')?.kind.power_used ?? 0) > 1e3 ? 0.35 : 0;
+      const judder = cav > 0.01 ? Math.sin(time * 0.11 + e.id) * zoom * (0.6 + cav * 1.4) : Math.sin(time * 0.09 + e.id) * zoom * thrum;
       img.setPosition(bottom.x + judder, bottom.y + TILE_H * zoom * 0.08);
       img.setScale((paint ? n * TILE_W * zoom / img.width : (TILE_W * zoom) / SPRITE_TILE_PX) * popScale(e.id, time));
       img.setFlipX(e.rot % 2 === 1).setRotation(0).setOrigin(anim ? anim.ox : 0.5, anim ? anim.oy : 1);
@@ -668,7 +693,8 @@ export class ProcessLayer {
     const fired = e.vessels.find(v => v.reactions.some(r => r.name.includes('combustion')));
     const lit = !!fired?.reactions.some(r => r.name.includes('combustion') && r.rate > 1e-3);
     const [colour, a] = heatGlow(fired?.t ?? 0);
-    if (a > 0) {
+    if (spec.fan) this.drawFan(e, g, at, spec.fan, W, H, time);
+    if (a > 0 && spec.windows && spec.pane) {
       // Each window a little parallelogram on the slanted face.
       const a0 = row(spec.windows, 0), a1 = row(spec.windows, 1);
       const sx = (a1.x - a0.x) * spec.pane[0], sy = (a1.y - a0.y) * spec.pane[0], hh = H * spec.pane[1];
@@ -699,7 +725,7 @@ export class ProcessLayer {
         g.fillStyle(0x9ad8ff, 0.85).fillCircle(c.x, c.y, r * 0.45);
       }
     }
-    if (lit) {
+    if (lit && spec.stack) {
       // Hot flue gas wavering up from the stack.
       const w = wind(this.gameTime), push = w.speed * 6 * zoom;
       const drift = { x: (w.x - w.y) * push, y: (w.x + w.y) / 2 * push };
@@ -709,6 +735,34 @@ export class ProcessLayer {
         g.fillStyle(0x9a9490, 0.3 * (1 - u)).fillCircle(top.x + Math.sin(u * 5 + k) * 6 * zoom + drift.x * u, top.y - u * 70 * zoom + drift.y * u, (5 + u * 18) * zoom);
       }
     }
+  }
+
+  /**
+   * The cooler's fan, turning with the compressor's shaft power: blades drawn on the plane of the
+   * shroud, spinning up and running down rather than starting and stopping dead.
+   */
+  private drawFan(e: EntityView, g: Phaser.GameObjects.Graphics, at: (fx: number, fy: number) => { x: number; y: number },
+    [fx, fy, frx, fry]: [number, number, number, number], W: number, H: number, time: number) {
+    const k = e.pipes.find(p => p.kind.kind === 'Compressor')?.kind;
+    const want = e.enabled ? Math.min(1, (k?.power_used ?? 0) / (PROTO[e.proto]?.power_w || 1.5e6) * 3) : 0;
+    const f = this.fans.get(e.id) ?? { angle: e.id, speed: 0, t: time };
+    const dt = Math.min(0.1, (time - f.t) / 1000);
+    f.speed += (want - f.speed) * Math.min(1, dt * 0.8);
+    f.angle += f.speed * 14 * dt;
+    f.t = time;
+    this.fans.set(e.id, f);
+    const c = at(fx, fy), rx = frx * W * 0.92, ry = fry * H * 0.92;
+    const pt = (a: number, r: number) => ({ x: c.x + Math.cos(a) * rx * r, y: c.y + Math.sin(a) * ry * r });
+    // A blur of the disc as it comes up to speed.
+    if (f.speed > 0.15) g.fillStyle(0x7a8288, 0.3 * f.speed).fillEllipse(c.x, c.y, rx * 2, ry * 2);
+    const alpha = 1 - 0.55 * f.speed;
+    for (let b = 0; b < 5; b++) {
+      const a = f.angle + b * Math.PI * 2 / 5;
+      g.fillStyle(0x4c545c, alpha).fillPoints([pt(a - 0.32, 0.22), pt(a - 0.2, 0.97), pt(a + 0.2, 0.97), pt(a + 0.12, 0.22)], true);
+      g.lineStyle(1, 0x8a949c, alpha * 0.8).lineBetween(pt(a - 0.2, 0.97).x, pt(a - 0.2, 0.97).y, pt(a + 0.2, 0.97).x, pt(a + 0.2, 0.97).y);
+    }
+    g.fillStyle(0x30363c, 1).fillEllipse(c.x, c.y, rx * 0.42, ry * 0.42);
+    g.fillStyle(0x8a949c, 1).fillEllipse(c.x - rx * 0.04, c.y - ry * 0.06, rx * 0.16, ry * 0.16);
   }
 
   private drawPorts(protoId: string, x: number, y: number, rot: number, camX: number, camY: number, zoom: number) {
@@ -755,8 +809,10 @@ export class ProcessLayer {
       if (this.ghostImg.texture.key !== tex) this.ghostImg.setTexture(tex);
       const bottom = isoToScreen(g.x + n, g.y + n, camX, camY, zoom);
       this.ghostImg.setVisible(true).setAlpha(0.6).setPosition(bottom.x, bottom.y).setScale(n * TILE_W * zoom / this.ghostImg.width);
-      // Inline fittings are painted along the other diagonal.
-      this.ghostImg.setFlipX((g.rot % 2 === 1) !== (g.proto in INLINE)).setTint(g.ok ? 0xffffff : 0xff8080);
+      // Inline fittings are painted along the other diagonal; drills show their chute where the ore goes.
+      const drill = g.proto.endsWith('_drill') ? drillPainting(g.rot) : null;
+      if (drill?.back && this.scene.textures.exists(`ip_${g.proto}_frame_back`)) this.ghostImg.setTexture(`ip_${g.proto}_frame_back`).setScale(n * TILE_W * zoom / this.ghostImg.width);
+      this.ghostImg.setFlipX(drill ? drill.flip : (g.rot % 2 === 1) !== (g.proto in INLINE)).setTint(g.ok ? 0xffffff : 0xff8080);
     } else {
       this.ghostImg?.setVisible(false);
     }

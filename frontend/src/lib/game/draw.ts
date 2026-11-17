@@ -7,8 +7,8 @@
 import Phaser from 'phaser';
 import { TILE_H, TILE_W, isoToScreen, screenToIso } from '../phaser/isoMath';
 import { PROTO, type Snapshot } from '../process/engine';
-import { ANIMS, drawInserterFlow, hitsSprite, type Pick } from '../process/render';
-import { BELT_SPEED, DIRS, type FEntity, type Factory } from './factory';
+import { ANIMS, drawDrillOutput, drawInserterFlow, hitsSprite, type Pick } from '../process/render';
+import { BELT_SPEED, DIRS, drillOutput, type FEntity, type Factory } from './factory';
 import type { Combat } from './combat';
 import { RECIPES } from './items';
 import { popScale } from './juice';
@@ -66,10 +66,19 @@ const TURRET_PARTS: Record<string, { ring: [number, number]; head: number; pivot
   laser_turret: { ring: [0.5, 0.19], head: 0.85, pivot: 0.85, barrel: 1.6, thick: 14 },
 };
 /** Drill bits are as long as a fraction of the frame's height. */
-const DRILL_PARTS: Record<string, { hole: [number, number]; chimney?: [number, number]; bit: number; thick: number }> = {
-  burner_drill: { hole: [0.45, 0.51], chimney: [0.11, 0.28], bit: 0.42, thick: 12 },
-  electric_drill: { hole: [0.48, 0.69], bit: 0.55, thick: 16 },
+const DRILL_PARTS: Record<string, { hole: [number, number]; backHole: [number, number]; chimney?: [number, number]; backChimney?: [number, number]; bit: number; thick: number }> = {
+  burner_drill: { hole: [0.45, 0.51], backHole: [0.51, 0.56], chimney: [0.11, 0.28], backChimney: [0.87, 0.48], bit: 0.42, thick: 12 },
+  electric_drill: { hole: [0.48, 0.69], backHole: [0.5, 0.66], bit: 0.55, thick: 16 },
 };
+
+/**
+ * Which painting of a drill to show, and mirrored or not, so its ore chute points where the ore
+ * really goes: the front one's chute is painted going down to the right, the back one's up to the
+ * left.
+ */
+export function drillPainting(rot: number): { back: boolean; flip: boolean } {
+  return { back: rot === 0 || rot === 3, flip: rot === 0 || rot === 2 };
+}
 /** Furnaces: where the fire burns or the crucible sits, the chimney, and the output tray. */
 const FURNACE_PARTS: Record<string, { mouth?: [number, number, number, number]; well?: [number, number, number, number]; chimney?: [number, number]; tray?: [number, number] }> = {
   // Mouth: bottom centre, width and height. Well: centre, front rim and the crucible's width.
@@ -101,6 +110,8 @@ export class WorldRenderer {
   private sprites: Pool<Phaser.GameObjects.Sprite>;
   private nature: Pool<Phaser.GameObjects.Image>;
   private parts: Pool<Phaser.GameObjects.Image>;
+  /** Stacks lying on the ground. */
+  piles: { item: string; count: number; x: number; y: number }[] = [];
 
   constructor(private scene: Phaser.Scene) {
     this.ground = scene.add.graphics().setDepth(3);
@@ -139,12 +150,29 @@ export class WorldRenderer {
       this.ground.fillStyle(0x7ad04a, a * 0.7).fillEllipse(p.x + 4 * v.zoom, p.y - 2 * v.zoom, 10 * v.zoom, 5 * v.zoom);
     }
 
+    // Dropped stacks: a little heap of the item's icon, more of them for a bigger stack.
+    this.piles.forEach((g, k) => {
+      if (!inView(g.x - 1, g.y - 1, 2) || !this.scene.textures.exists(`ic_${g.item}`)) return;
+      const p = this.at(v, g.x, g.y);
+      this.ground.fillStyle(0x000000, 0.25).fillEllipse(p.x, p.y + 2 * v.zoom, 22 * v.zoom, 9 * v.zoom);
+      const n = g.count >= 20 ? 3 : g.count > 1 ? 2 : 1;
+      for (let j = 0; j < n; j++) {
+        const icon = this.items.get(`g${k},${j}`);
+        if (icon.texture.key !== `ic_${g.item}`) icon.setTexture(`ic_${g.item}`);
+        icon.setPosition(p.x + (j - (n - 1) / 2) * 6 * v.zoom, p.y - (4 + (j % 2) * 3) * v.zoom)
+          .setScale(TILE_W * v.zoom * 0.3 / 64).setAlpha(1).setDepth(10 + (g.x + g.y) * 0.01 + j * 0.0001);
+      }
+    });
+
     for (const e of f.entities.values()) {
       if (!inView(e.x, e.y, e.size)) continue;
       if (e.kind === 'transport_belt' || e.kind === 'underground_belt' || e.kind === 'splitter') this.drawBelt(v, e, f, time);
       else if (e.kind === 'inserter' || e.kind === 'burner_inserter') {
         this.drawInserter(v, e, time);
         if (this.flowFor === 'all' || this.flowFor === e.id) drawInserterFlow(this.overlay, e.x, e.y, e.rot, v.x, v.y, v.zoom, this.flowFor === 'all' ? 0.6 : 1);
+      }
+      if ((e.kind === 'burner_drill' || e.kind === 'electric_drill') && (this.drillsFor === 'all' || this.drillsFor === e.id)) {
+        drawDrillOutput(this.overlay, e.x, e.y, e.size, e.rot, f.outputTile(e), v.x, v.y, v.zoom, this.drillsFor === 'all' ? 0.7 : 1);
       }
       const parted = PARTED(e.kind) && this.scene.textures.exists(partBody(e.kind));
       if (parted) {
@@ -186,6 +214,11 @@ export class WorldRenderer {
         const dx = Math.cos(e.aim!) - Math.sin(e.aim!), dy = (Math.cos(e.aim!) + Math.sin(e.aim!)) / 2;
         this.overlay.fillStyle(0xffe08a, 0.9).fillCircle(c.x + dx * 26 * v.zoom, c.y - 40 * v.zoom + dy * 26 * v.zoom, 6 * v.zoom);
       }
+    }
+
+    if (this.drillGhost) {
+      const d = this.drillGhost;
+      drawDrillOutput(this.overlay, d.x, d.y, d.size, d.rot, drillOutput(d.x, d.y, d.size, d.rot), v.x, v.y, v.zoom);
     }
 
     // Trees and rocks.
@@ -242,6 +275,10 @@ export class WorldRenderer {
 
   /** Inserters whose pickup and drop tiles to mark: one by id, or all of them while placing one. */
   flowFor: number | 'all' | null = null;
+  /** Drills whose output tile to mark: one by id, or all of them while laying what they feed. */
+  drillsFor: number | 'all' | null = null;
+  /** A drill being placed: where its ore will come out. */
+  drillGhost: { x: number; y: number; size: number; rot: number } | null = null;
   /** The tree or rock being mined, which shakes: its tile as "x,y". */
   wobble: string | null = null;
   /** Alt mode: what each machine is making, shown over it. */
@@ -438,11 +475,12 @@ export class WorldRenderer {
   }
 
   /** A painted body anchored on its footprint like any building. */
-  private body(v: View, e: FEntity, flip: boolean, dx = 0) {
+  private body(v: View, e: FEntity, flip: boolean, dx = 0, tex = partBody(e.kind)) {
     const depth = 10 + (e.x + e.y + 2 * e.size) * 0.01;
     const b = this.at(v, e.x + e.size, e.y + e.size);
     const img = this.parts.get(`F${e.id}`);
-    if (img.texture.key !== partBody(e.kind)) img.setTexture(partBody(e.kind));
+    if (!this.scene.textures.exists(tex)) tex = partBody(e.kind);
+    if (img.texture.key !== tex) img.setTexture(tex);
     const s = e.size * TILE_W * v.zoom / img.width * popScale(e.id, this.scene.time.now);
     img.setOrigin(0.5, 1).setPosition(b.x + dx, b.y + TILE_H * v.zoom * 0.08).setScale(s).setFlipX(flip).setRotation(0).setDepth(depth).clearTint();
     /** A point given as fractions of the (possibly flipped) image, on screen. */
@@ -486,10 +524,11 @@ export class WorldRenderer {
    */
   private drawDrill(v: View, e: FEntity, time: number) {
     const spec = DRILL_PARTS[e.kind];
-    const flip = e.rot % 2 === 1;
+    const { back, flip } = drillPainting(e.rot);
     const shake = e.active && e.kind === 'burner_drill' ? Math.sin(time * 0.05) * 0.6 * v.zoom : 0;
-    const { img, depth, at } = this.body(v, e, flip, shake);
-    const hole = at(spec.hole[0], spec.hole[1]);
+    const { img, depth, at } = this.body(v, e, flip, shake, back ? `ip_${e.kind}_frame_back` : undefined);
+    const [hx, hy] = back ? spec.backHole : spec.hole;
+    const hole = at(hx, hy);
     const len = spec.bit * img.displayHeight;
     const bore = e.active ? 0.5 + 0.5 * Math.sin(time * 0.006 + e.id) : 0;
     // The tip sits in the hole; working, it bores a little deeper and back.
@@ -500,8 +539,9 @@ export class WorldRenderer {
     bit.setFlipY(!!e.active && Math.floor(time / 55) % 2 === 0);
     if (!e.active || !this.fx) return;
     if (Math.random() < 0.12) this.fx.chips(e.x + e.size / 2, e.y + e.size / 2);
-    if (spec.chimney && Math.random() < 0.1) {
-      const t = this.lift(v, e, at(spec.chimney[0], spec.chimney[1]));
+    const chimney = back ? spec.backChimney : spec.chimney;
+    if (chimney && Math.random() < 0.1) {
+      const t = this.lift(v, e, at(chimney[0], chimney[1]));
       this.fx.smoke(t.x, t.y, t.z);
     }
   }

@@ -136,3 +136,23 @@ button.slot:hover { border-color: #5a6a80; }
 }
 .hud-hurt.hit { animation: hud-hurt 0.45s ease-out; }
 @keyframes hud-hurt { 0% { background: radial-gradient(ellipse at center, transparent 45%, rgba(220, 20, 20, 0.45)); } 100% { background: transparent; } }
+
+/* Right-click menu, after RuneScape's: black title bar, brown body, white verbs, orange names. */
+.hud-ctx {
+  position: fixed; z-index: 60; min-width: 140px; padding: 0 0 3px; pointer-events: auto;
+  background: #5d5447; border: 1px solid #000; box-shadow: 0 3px 10px rgba(0, 0, 0, 0.6);
+  font: 600 13px/1 'Chakra Petch', system-ui, sans-serif; text-shadow: 1px 1px 0 #000;
+}
+.hud-ctx header { background: #000; color: #5d5447; padding: 4px 6px 3px; margin-bottom: 2px; text-shadow: none; }
+.hud-ctx button {
+  display: block; width: 100%; text-align: left; background: none; border: 0; padding: 3px 6px; color: #fff; cursor: pointer; font: inherit;
+}
+.hud-ctx button em { font-style: normal; color: #ff9040; }
+.hud-ctx button:hover { color: #ffff00; }
+
+/* Hover card for slots and recipes: up at once, like the world's. */
+.hud-tip {
+  position: fixed; z-index: 70; display: none; pointer-events: none; max-width: 300px; padding: 4px 8px;
+  background: rgba(16, 20, 26, 0.95); border: 1px solid #333c48; border-radius: 6px; color: #e8ecf1; font-size: 12px; line-height: 1.35;
+}
+.hud-tip small { color: #aab4c0; }

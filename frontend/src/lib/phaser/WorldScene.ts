@@ -29,7 +29,7 @@ import type { GroundScene } from './GroundScene';
 import * as engine from '../process/engine';
 import { ANIMS, CharacterSprite, ProcessLayer, rackLift } from '../process/render';
 import { ProcessUI, entityTooltip, fmt, segmentTooltip } from '../process/ui';
-import { generateWorld, loadSettings, writeSave, type SaveGame, type Settings, type WorldSettings } from '../save';
+import { generateWorld, loadSettings, writeSave, type GroundPile, type SaveGame, type Settings, type WorldSettings } from '../save';
 import { PauseMenu } from '../../ui/menu';
 import { Hud } from '../../ui/hud';
 
@@ -91,6 +91,8 @@ export class WorldScene extends Phaser.Scene {
   private hoverTY = -1;
   /** The tile of what's drawn under the pointer: a tall sprite wins over the ground behind it. */
   private aimTX = -1;
+  /** Stacks dropped on the ground. */
+  private piles: GroundPile[] = [];
   /** The gun stays raised until then [ms]. */
   private shootUntil = 0;
   private goalTimer = 0;
@@ -170,6 +172,7 @@ export class WorldScene extends Phaser.Scene {
     this.objects = scatterNature(this.map, this.seed, this.world.planet, this.natureRemoved);
     for (const n of this.combat.nests) for (let dy = 0; dy < 3; dy++) for (let dx = 0; dx < 3; dx++) this.objects.delete(tileKey(n.x + dx, n.y + dy));
     this.processHp = new Map(data.hp ?? []);
+    this.piles = data.ground ?? [];
 
     this.scene.launch('GroundScene');
     this.ground = this.scene.get('GroundScene') as GroundScene;
@@ -273,6 +276,7 @@ export class WorldScene extends Phaser.Scene {
         minimap: () => this.minimapData(),
         plantFeed: id => this.plantFeed(id),
         alert: msg => this.processUI?.alert(msg),
+        drop: (item, count) => this.drop(item, count),
         onResearch: () => {},
       });
       this.snapshot = engine.snapshot();
@@ -389,6 +393,17 @@ export class WorldScene extends Phaser.Scene {
     this.worldDraw.flowFor = this.placementType === 'inserter' || this.placementType === 'burner_inserter' ? 'all'
       : aimedKind === 'inserter' || aimedKind === 'burner_inserter' ? engine.entityAt(this.aimTX, this.aimTY)
       : this.worldDraw.altMode ? 'all' : null;
+    // Drills show where their ore comes out: the one pointed at, all of them while laying what
+    // they feed, and the one being placed.
+    const feeds = ['transport_belt', 'underground_belt', 'splitter', 'inserter', 'burner_inserter', 'stone_furnace', 'wooden_chest', 'iron_chest'];
+    this.worldDraw.drillsFor = feeds.includes(this.placementType ?? '') || this.worldDraw.altMode ? 'all'
+      : aimedKind === 'burner_drill' || aimedKind === 'electric_drill' ? engine.entityAt(this.aimTX, this.aimTY) : null;
+    const drill = this.placementType === 'burner_drill' || this.placementType === 'electric_drill' ? this.placementType : null;
+    if (drill) {
+      const o = this.originFor(drill, this.hoverTX, this.hoverTY);
+      this.worldDraw.drillGhost = { x: o.x, y: o.y, size: engine.PROTO[drill].size, rot: this.placementRot };
+    } else this.worldDraw.drillGhost = null;
+    this.worldDraw.piles = this.piles;
     this.worldDraw.draw(view, time, this.factory, this.objects, this.combat);
     this.juice.draw(view);
     const powerTool = this.placementType ? !!(engine.PROTO[this.placementType]?.power_w || engine.PROTO[this.placementType]?.wire) : false;
@@ -424,7 +439,7 @@ export class WorldScene extends Phaser.Scene {
       world: this.world, player: { x: this.player.x, y: this.player.y }, layout: engine.layout(), savedAt: Date.now(),
       mode: this.sandbox ? 'sandbox' : 'survival', peaceful: this.peaceful,
       engineer: this.eng.save(), factory: this.factory.save(), combat: this.combat.save(),
-      nature: [...this.natureRemoved], hp: [...this.processHp],
+      nature: [...this.natureRemoved], hp: [...this.processHp], ground: this.piles,
     });
   }
 
@@ -781,6 +796,8 @@ export class WorldScene extends Phaser.Scene {
     this.pickTimer -= dt;
     if (!this.keys.f.isDown || this.pickTimer > 0 || this.hud?.open || document.activeElement instanceof HTMLInputElement) return;
     this.pickTimer = 0.08;
+    const pile = this.piles.find(g => Math.hypot(g.x - this.player.x, g.y - this.player.y) < 1.6);
+    if (pile) { this.take(pile); return; }
     for (const e of this.factory.entities.values()) {
       if (!e.items?.length || Math.hypot(e.x + 0.5 - this.player.x, e.y + 0.5 - this.player.y) > 1.6) continue;
       if (this.eng.inv.room(e.items[0].item) <= 0) continue;
@@ -791,6 +808,39 @@ export class WorldScene extends Phaser.Scene {
       this.playSound('pickup', 0.12);
       return;
     }
+  }
+
+  /** Drops a stack at the engineer's feet, scattered a little so piles don't hide each other. */
+  private drop(item: string, count: number) {
+    const a = Math.random() * Math.PI * 2, r = 0.25 + Math.random() * 0.3;
+    const x = this.player.x + Math.cos(a) * r, y = this.player.y + Math.sin(a) * r;
+    this.piles.push({ item, count, x, y });
+    this.juice.dust(x, y, 0x9a8a70, 3);
+    this.playSound('place', 0.15);
+  }
+
+  /** Picks a pile up off the ground; what doesn't fit stays there. */
+  private take(pile: GroundPile) {
+    const room = Math.min(pile.count, this.eng.inv.room(pile.item));
+    if (room <= 0) { this.processUI?.alert('Your inventory is full.'); return; }
+    this.flyFrom = { x: pile.x, y: pile.y };
+    this.gain(pile.item, room);
+    this.flyFrom = null;
+    pile.count -= room;
+    if (pile.count <= 0) this.piles.splice(this.piles.indexOf(pile), 1);
+    this.playSound('pickup', 0.3);
+  }
+
+  /** The pile under a screen point, if any. */
+  private pileAt(sx: number, sy: number): GroundPile | undefined {
+    const v = this.viewInfo();
+    const iso = screenToIso(sx, sy, v.x, v.y, this.zoom);
+    let best: GroundPile | undefined, d = 0.5;
+    for (const g of this.piles) {
+      const k = Math.hypot(g.x - iso.x, g.y - iso.y);
+      if (k < d) { d = k; best = g; }
+    }
+    return best;
   }
 
   private gain(item: string, n: number) {
@@ -1009,6 +1059,9 @@ export class WorldScene extends Phaser.Scene {
     const tile = this.tileAt(p.x, p.y);
     if (this.placementType) { this.placeAt(this.placementType, tile.x, tile.y); return; }
     this.updateAim();
+    // Clicking a pile in reach takes it.
+    const pile = this.level ? undefined : this.pileAt(p.x, p.y);
+    if (pile && Math.hypot(pile.x - this.player.x, pile.y - this.player.y) <= this.eng.reach) { this.take(pile); return; }
     const id = this.idAt(this.aimTX, this.aimTY);
     if (id < 0) { this.select(null); return; }
     const me = p.event as MouseEvent;
@@ -1353,6 +1406,8 @@ export class WorldScene extends Phaser.Scene {
     const v = this.viewInfo();
     const iso = screenToIso(this.pointer.x, this.pointer.y, v.x, v.y, this.zoom);
     const alien = this.combat.aliens.find(a => Math.hypot(a.x - iso.x, a.y - iso.y) < 0.7);
+    const pile = this.pileAt(this.pointer.x, this.pointer.y);
+    if (pile) return `<b>${ITEMS[pile.item]?.name ?? pile.item}</b>${pile.count > 1 ? ` × ${pile.count}` : ''}`;
     if (alien) return `<b>Alien crawler</b> · ${Math.ceil(alien.hp)}/${alien.maxHp} HP<br><small>Hold Space to shoot</small>`;
     const nest = this.combat.nestAt(tx, ty);
     if (nest) return `<b>Alien nest</b> · ${Math.ceil(nest.hp)}/${nest.maxHp} HP<br><small>Sends attackers when pollution reaches it. Hold Space nearby to shoot.</small>`;

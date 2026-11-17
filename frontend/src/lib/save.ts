@@ -8,6 +8,9 @@ import { PlanetType, type PlanetMap } from './types';
 import type { Placed } from './process/engine';
 
 export interface WorldSettings { seed: number; planet: PlanetType; size: number; richness: number }
+/** A stack dropped on the ground, where it lies [tiles]. */
+export interface GroundPile { item: string; count: number; x: number; y: number }
+
 export interface SaveGame {
   world: WorldSettings;
   player: { x: number; y: number } | null;
@@ -23,6 +26,8 @@ export interface SaveGame {
   nature?: number[];
   /** Health of damaged process buildings. */
   hp?: [number, number][];
+  /** Things dropped on the ground. */
+  ground?: GroundPile[];
 }
 export interface Settings { volume: number; ambient: number }
 
