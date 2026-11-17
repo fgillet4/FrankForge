@@ -6,7 +6,7 @@
 import './process.css';
 import { iconUrl } from '../game/items';
 import { PumpCurvePanel } from './pumpCurve';
-import { BORES, LIMITS, hydraulics, problems, pumpSides, stats, type FlowStats, type RunFlows } from './hydraulics';
+import { BORES, LIMITS, hydraulics, nodeKey, problems, pumpSides, stats, type FlowStats, type RunFlows } from './hydraulics';
 import {
   PROTO, PROTOS, SPECIES, blackStart, setEnabled, setOpening, setPipeDiameter, setReaction, layout, placedById,
   type EntityView, type Placed, type Snapshot, type VesselView,
@@ -124,13 +124,16 @@ export class ProcessUI {
   private lastBar = '';
   onSelectProto: (id: string | null) => void = () => {};
   onCloseInspector: () => void = () => {};
+  onRotate: (id: number) => void = () => {};
+  onLevel: (level: number) => void = () => {};
   /** Whether pumps' speed can be changed (variable-frequency drives researched). */
   vfdUnlocked: () => boolean = () => true;
   private curve = new PumpCurvePanel(() => this.vfdUnlocked());
 
   constructor() {
     this.bar.append(this.tabs, this.buttons);
-    this.root.append(this.bar, this.inspector, this.gridPanel, this.tooltip, this.alerts, this.curve.root);
+    this.root.append(this.bar, this.inspector, this.gridPanel, this.tooltip, this.alerts, this.curve.root, this.altimeter);
+    this.setLevel(0);
     document.body.append(this.root);
     // The world's tooltip goes as soon as the pointer moves onto a panel or off the window.
     const hide = () => { this.tooltip.style.display = 'none'; };
@@ -152,7 +155,8 @@ export class ProcessUI {
   }
 
   private renderBar() {
-    const shown = PROTOS.filter(p => this.barState(p.id).visible);
+    // Rack pipe is the pipe tool at a height (H), not buttons of its own.
+    const shown = PROTOS.filter(p => this.barState(p.id).visible && p.id !== 'pipe_rack' && p.id !== 'pipe_rack_high');
     const cats = CATEGORY_ORDER.filter(c => shown.some(p => p.category === c));
     // Open on a tab with something in it to build.
     if (!this.lastBar) {
@@ -189,6 +193,25 @@ export class ProcessUI {
     this.onSelectProto(id);
   }
 
+  private altimeter = el('div', 'pp-altimeter');
+
+  /** The working-height gauge: a lift car on a three-stop shaft. */
+  setLevel(level: number) {
+    if (!this.altimeter.childElementCount) {
+      this.altimeter.innerHTML = `<b>Height</b><div class="pp-shaft">${['High rack', 'Low rack', 'Ground'].map((n, i) =>
+        `<span data-stop="${2 - i}">${n}</span>`).join('')}<i class="pp-car"></i></div><small><kbd>H</kbd> up · <kbd>⇧H</kbd> down · <kbd>Esc</kbd> ground</small>`;
+      this.altimeter.addEventListener('click', e => {
+        const stop = (e.target as HTMLElement).closest<HTMLElement>('[data-stop]');
+        if (stop) this.onLevel(Number(stop.dataset.stop));
+      });
+    }
+    this.altimeter.dataset.level = String(level);
+    this.altimeter.querySelectorAll<HTMLElement>('[data-stop]').forEach(s => s.classList.toggle('on', s.dataset.stop === String(level)));
+    this.altimeter.classList.remove('bump');
+    void this.altimeter.offsetWidth;
+    this.altimeter.classList.add('bump');
+  }
+
   showInspector(id: number | null) {
     this.inspectorFor = id;
     this.lastInspectorHtml = '';
@@ -221,6 +244,9 @@ export class ProcessUI {
     } else if (t.dataset.action === 'reaction' && this.inspectorFor !== null) {
       setReaction(this.inspectorFor, t.dataset.value!);
       this.lastInspectorHtml = '';
+    } else if (t.dataset.action === 'rotate' && this.inspectorFor !== null) {
+      this.onRotate(this.inspectorFor);
+      this.lastInspectorHtml = '';
     } else if (t.dataset.action === 'toggle' && this.inspectorFor !== null) {
       setEnabled(this.inspectorFor, t.dataset.on !== 'true');
       this.lastInspectorHtml = '';
@@ -238,7 +264,7 @@ export class ProcessUI {
     const e = snap.entities.find(x => x.id === this.inspectorFor);
     if (!e) {
       const pipe = placedById(this.inspectorFor);
-      if (pipe?.proto === 'pipe') this.renderPipe(pipe, snap); else this.showInspector(null);
+      if (PROTO[pipe?.proto ?? '']?.levels?.length) this.renderPipe(pipe!, snap); else this.showInspector(null);
       return;
     }
     this.renderInspector(e);
@@ -247,13 +273,16 @@ export class ProcessUI {
   /** A pipe run: what's in it, how it flows, and its bore, which can be changed. */
   private renderPipe(pipe: Placed, snap: Snapshot) {
     const h = hydraulics(snap);
-    const si = h.runAt.get(`${pipe.x},${pipe.y}`);
+    const levels = PROTO[pipe.proto]?.levels ?? [0];
+    const level = levels.length === 1 ? levels[0] : 0;
+    const key = nodeKey(level, pipe.x, pipe.y);
+    const si = h.runAt.get(key);
     if (si === undefined) { this.showInspector(null); return; }
     const run = h.runs[si], v = snap.segments[si].vessel;
-    const st = stats(run.tile.get(`${pipe.x},${pipe.y}`) ?? 0, run.fluid, run.d);
+    const st = stats(run.tile.get(key) ?? 0, run.fluid, run.d);
     const issues = problems(st, run.service, run.fluid);
     const lim = LIMITS[run.service];
-    const html = `<div class="pp-head"><img src="${iconUrl('pipe')}" alt=""><div><b>Pipe run · ${fluidName(v)}</b><small>${snap.segments[si].tiles.length} tiles · ${lim.label}</small></div><button data-action="close">✕</button></div>
+    const html = `<div class="pp-head"><img src="${iconUrl('pipe')}" alt=""><div><b>Pipe run · ${fluidName(v)}</b><small>${snap.segments[si].tiles.length + (snap.segments[si].racks?.length ?? 0)} lengths${snap.segments[si].racks?.length ? ', some on racks' : ''} · ${lim.label}</small></div><button data-action="close">✕</button></div>
       <div class="pp-section">Bore</div>
       <div class="pp-choices">${BORES.map(([d, label]) =>
         `<button data-action="bore" data-value="${d}" class="${Math.abs(d - run.d) < 1e-6 ? 'on' : ''}">${label}</button>`).join('')}</div>
@@ -310,7 +339,7 @@ export class ProcessUI {
       const extra = pp.kind.power_used ? ` · ${fmt.w(pp.kind.power_used)}` : pp.kind.power_out ? ` · ${fmt.w(pp.kind.power_out)} shaft` : '';
       return `<div class="pp-flow"><span>${pp.vapour ? 'gas' : 'liquid'}${pp.choked ? ' <b class="pp-warn">choked</b>' : ''}</span><b>${fmt.flow(pp.mdot)}</b><small>${Math.abs(pp.velocity).toFixed(1)} m/s${extra}</small></div>`;
     }).join('');
-    const html = `<div class="pp-head"><img src="assets/process/icons/b_${e.proto}.png" alt=""><div><b>${p.name}</b><small>${p.size}×${p.size} · #${e.id}</small></div><button data-action="close">✕</button></div>
+    const html = `<div class="pp-head"><img src="assets/process/icons/b_${e.proto}.png" alt=""><div><b>${p.name}</b><small>${p.size}×${p.size} · #${e.id}</small></div>${p.ports.length ? '<button data-action="rotate" class="pp-rotate" title="Rotate a quarter turn (R over it)">⟳ Rotate</button>' : ''}<button data-action="close">✕</button></div>
       <p class="pp-desc">${p.description}</p>
       ${controls}
       ${e.vessels.map((v, i) => vesselHtml(v, names[i] ?? (e.vessels.length > 1 ? `Vessel ${i + 1}` : 'Contents'))).join('')}

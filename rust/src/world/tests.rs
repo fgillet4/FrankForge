@@ -430,3 +430,53 @@ fn a_switched_off_pump_stops_the_flow() {
     w.set_enabled(2, true);
     assert!(flow(&mut w) > 1.0, "and runs again when switched back on");
 }
+
+#[test]
+fn rack_pipe_crosses_over_ground_pipe_and_joins_it_only_at_risers() {
+    let mut w = world();
+    // A line along y = 5 on the ground from x 0 to 6, and one that rises at x 3, y 2, runs over
+    // it on the low rack to y 8, and comes down again; a second crossing on the high rack.
+    let mut id = 100;
+    pipe_line(&mut w, &mut id, (0, 5), (6, 5));
+    w.place(200, "pipe_riser", 3, 2, 0).unwrap();
+    for y in 3..=7 {
+        w.place(201 + y as u32, "pipe_rack", 3, y, 0).unwrap();
+    }
+    w.place(220, "pipe_riser", 3, 8, 0).unwrap();
+    for y in 3..=7 {
+        w.place(230 + y as u32, "pipe_rack_high", 5, y, 0).unwrap();
+    }
+    // The rack's tile over the ground pipe is free on the ground, taken on the rack.
+    assert!(w.place(300, "pipe_rack", 3, 5, 0).is_err());
+    assert!(w.place(301, "pipe_rack_high", 3, 5, 0).is_ok());
+    assert!(w.place(302, "pipe_riser", 3, 5, 0).is_err(), "a riser needs the ground free");
+    assert_eq!(w.rack_at(3, 5, 1), Some(206));
+    w.advance(0.0);
+    let seg = |w: &World, n: Node| w.node_seg[&n];
+    let ground = seg(&w, (0, (3, 5)));
+    let rack = seg(&w, (1, (3, 5)));
+    assert_ne!(ground, rack, "the rack passes over without joining");
+    assert_eq!(seg(&w, (0, (3, 2))), rack, "a riser joins the ground to the rack");
+    assert_eq!(seg(&w, (0, (3, 8))), rack);
+    assert_ne!(seg(&w, (2, (5, 5))), ground, "the high rack passes over the ground line too");
+    assert_ne!(seg(&w, (2, (5, 5))), rack);
+    let s = &w.segments[rack];
+    assert_eq!(s.tiles.len(), 2, "two risers on the ground");
+    assert!(s.racks.len() >= 5 + 4, "five rack tiles and the risers' upper nodes");
+}
+
+#[test]
+fn rotating_a_building_turns_its_ports_and_keeps_its_contents() {
+    let mut w = world();
+    w.place(1, "storage_tank", 0, 0, 0).unwrap();
+    w.advance(0.0);
+    w.fill(1, "h2o", 1.0e6, 293.15);
+    w.advance(0.1);
+    let before = w.entities[&1].port_tile(0).0;
+    let mass = w.snapshot().entities.iter().find(|e| e.id == 1).unwrap().vessels[0].mass;
+    assert!(w.rotate(1));
+    w.advance(0.1);
+    assert_ne!(w.entities[&1].port_tile(0).0, before, "the port moved round");
+    let after = w.snapshot().entities.iter().find(|e| e.id == 1).unwrap().vessels[0].mass;
+    assert!((after - mass).abs() < mass * 1e-3, "{mass} → {after} kg");
+}

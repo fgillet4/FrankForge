@@ -11,7 +11,22 @@ import { TILE_W, TILE_H, isoToScreen } from '../phaser/isoMath';
 import { ITEMS, iconUrl } from '../game/items';
 import { popScale } from '../game/juice';
 import { PROTO, placedById, portTiles, type EntityView, type Snapshot, type VesselView } from './engine';
-import { LIMITS, OVER, RAMP_CSS, hydraulics, problems, ramp, stats } from './hydraulics';
+import { LIMITS, OVER, RAMP_CSS, hydraulics, nodeKey, problems, ramp, stats, type PipeNode } from './hydraulics';
+
+/**
+ * The painted rack trestles: where their beams sit and their feet stand, as fractions of the
+ * image's height. Pipes rest on the beams.
+ */
+const TRESTLE = { low: { beam: 0.27, foot: 0.87 }, high: { mid: 0.53, top: 0.2, foot: 0.89 } };
+
+/** How high a rack height is drawn above the ground [screen px]. */
+export function rackLift(level: number, zoom: number): number {
+  if (!level) return 0;
+  const lowH = TILE_H * zoom * 2.2;
+  const lift1 = (TRESTLE.low.foot - TRESTLE.low.beam) * lowH;
+  if (level === 1) return lift1 + 3 * zoom;
+  return (TRESTLE.high.foot - TRESTLE.high.top) * lift1 / (TRESTLE.high.foot - TRESTLE.high.mid) + 3 * zoom;
+}
 
 const SPRITE_TILE_PX = 128;
 
@@ -64,7 +79,7 @@ export function preloadProcessAssets(scene: Phaser.Scene) {
     for (const part of ['base', 'head', 'barrel']) scene.load.image(`ip_${kind}_${part}`, `assets/process/parts/${kind}_${part}.png`);
   }
   for (const kind of ['burner_drill', 'electric_drill', 'stone_furnace', 'electric_furnace', 'assembler']) scene.load.image(`ip_${kind}_frame`, `assets/process/parts/${kind}_frame.png`);
-  for (const part of ['drill_bit', 'electric_furnace_crucible', 'assembler_arm', 'assembler_tool', 'pipe', 'pipe_nozzle', 'pipe_joint']) {
+  for (const part of ['drill_bit', 'electric_furnace_crucible', 'assembler_arm', 'assembler_tool', 'pipe', 'pipe_nozzle', 'pipe_joint', 'rack_low', 'rack_high']) {
     scene.load.image(`ip_${part}`, `assets/process/parts/${part}.png`);
   }
   // Item icons, for things carried on belts and in hands.
@@ -226,6 +241,10 @@ export class ProcessLayer {
   private ghostImg: Phaser.GameObjects.Image | null = null;
   private wrecks: { x: number; y: number; img: Phaser.GameObjects.Image }[] = [];
   private pipeTiles = new Map<string, number>();
+  /** Pipe on racks: run by nodeKey. */
+  private rackNodes = new Map<string, number>();
+  /** The height the engineer is working at; what's above it fades. */
+  viewLevel = 0;
   /** Painted pipe pieces by tile and direction, and those drawn this frame. */
   private pipeImgs = new Map<string, Phaser.GameObjects.Image>();
   private pipeSeen = new Set<string>();
@@ -340,11 +359,24 @@ export class ProcessLayer {
     // Pipes: a segment's tiles share one colour; join each tile to its pipe neighbours and to
     // building ports that open onto it.
     this.pipeTiles.clear();
-    snap.segments.forEach((seg, si) => seg.tiles.forEach(([x, y]) => this.pipeTiles.set(`${x},${y}`, si)));
+    this.rackNodes.clear();
+    snap.segments.forEach((seg, si) => {
+      seg.tiles.forEach(([x, y]) => this.pipeTiles.set(`${x},${y}`, si));
+      (seg.racks ?? []).forEach(([l, [x, y]]) => this.rackNodes.set(nodeKey(l, x, y), si));
+    });
     const centre = (x: number, y: number) => {
       const p = isoToScreen(x + 0.5, y + 0.5, camX, camY, zoom);
       return { x: p.x, y: p.y - TILE_H * zoom * 0.18 };
     };
+    // Rack heights on screen, from the trestles: the low beam, and the high one.
+    const lowH = TILE_H * zoom * 2.2;
+    const lift1 = (TRESTLE.low.foot - TRESTLE.low.beam) * lowH;
+    const highH = lift1 / (TRESTLE.high.foot - TRESTLE.high.mid);
+    const lifts = [0, rackLift(1, zoom), rackLift(2, zoom)];
+    const nc = (l: number, x: number, y: number) => { const c = centre(x, y); return { x: c.x, y: c.y - lifts[l] }; };
+    const has = (l: number, x: number, y: number) => (l ? this.rackNodes.has(nodeKey(l, x, y)) : this.pipeTiles.has(`${x},${y}`));
+    const risers = hydraulics(snap).risers;
+    const fade = (l: number) => (l > this.viewLevel ? 0.3 : 1);
     // Where pipes meet buildings: the pipe tile outside a port, and which way the port lies.
     const portLinks: { x: number; y: number; dx: number; dy: number; si: number }[] = [];
     const opens = new Set<string>();
@@ -372,27 +404,59 @@ export class ProcessLayer {
         const lift = TILE_H * zoom * 0.18;
         this.pipeGfx.lineStyle(9 * zoom, 0x000000, 0.18).lineBetween(a.x, a.y + lift, b.x, b.y + lift);
       };
+      const trestles = new Map<string, { x: number; y: number; high: boolean; alongX: boolean; end: boolean }>();
       snap.segments.forEach(seg => {
         const tint = wash(fluidColour(seg.vessel));
         // Wider bores draw fatter.
         const fat = Math.min(1.7, Math.max(0.6, Math.pow((seg.diameter || 0.15) / 0.15, 0.6)));
-        for (const [x, y] of seg.tiles) {
-          const c = centre(x, y);
-          if (off(c)) continue;
+        const nodes: PipeNode[] = [...seg.tiles.map(([x, y]) => [0, x, y] as PipeNode), ...(seg.racks ?? []).map(([l, [x, y]]) => [l, x, y] as PipeNode)];
+        for (const [l, x, y] of nodes) {
+          const c = nc(l, x, y);
+          if (off(c) && off(centre(x, y))) continue;
+          const lift = l * 0.002;
           for (const [dx, dy] of [[1, 0], [0, 1]]) {
-            if (!this.pipeTiles.has(`${x + dx},${y + dy}`)) continue;
-            const n = centre(x + dx, y + dy);
-            shadow(c, n);
-            this.pipeSegment(`p${x},${y},${dx}`, 'ip_pipe', c, n, zoom, depthAt(x + dx, y + dy) - 0.0002, tint, 13 * fat, 0.035, 0.93);
+            if (!has(l, x + dx, y + dy)) continue;
+            const n = nc(l, x + dx, y + dy);
+            if (!l) shadow(c, n);
+            else this.pipeGfx.lineStyle(6 * zoom, 0x000000, 0.1).lineBetween(centre(x, y).x, centre(x, y).y + TILE_H * zoom * 0.18, centre(x + dx, y + dy).x, centre(x + dx, y + dy).y + TILE_H * zoom * 0.18);
+            this.pipeSegment(`p${l},${x},${y},${dx}`, 'ip_pipe', c, n, zoom, depthAt(x + dx, y + dy) - 0.0002 + lift, tint, 13 * fat, 0.035, 0.93).setAlpha(fade(l));
           }
-          const joined = DIRS4.filter(([dx, dy]) => this.pipeTiles.has(`${x + dx},${y + dy}`) || opens.has(`${x},${y},${dx},${dy}`));
-          const straight = joined.length === 2 && joined[0][0] === -joined[1][0] && joined[0][1] === -joined[1][1];
+          const riser = risers.has(`${x},${y}`);
+          const joined = DIRS4.filter(([dx, dy]) => has(l, x + dx, y + dy) || (!l && opens.has(`${x},${y},${dx},${dy}`)));
+          const straight = !riser && joined.length === 2 && joined[0][0] === -joined[1][0] && joined[0][1] === -joined[1][1];
           if (!straight) {
-            const j = this.pipePart(`j${x},${y}`, 'ip_pipe_joint');
-            j.setOrigin(0.5, 0.55).setPosition(c.x, c.y).setScale(0.42 * fat * TILE_W * zoom / j.width).setRotation(0).setDepth(depthAt(x, y)).setTint(tint);
+            const j = this.pipePart(`j${l},${x},${y}`, 'ip_pipe_joint');
+            j.setOrigin(0.5, 0.55).setPosition(c.x, c.y).setScale(0.42 * fat * TILE_W * zoom / j.width).setRotation(0).setDepth(depthAt(x, y) + lift + 0.0001).setTint(tint).setAlpha(fade(l));
+          }
+          // The riser climbs from the ground to the top of the rack.
+          if (riser && l === 0) {
+            this.pipeSegment(`r${x},${y}`, 'ip_pipe', c, nc(2, x, y), zoom, depthAt(x, y) + 0.003, tint, 15 * fat, 0.035, 0.93).setAlpha(fade(1));
+          }
+          if (l > 0) {
+            const k = `${x},${y}`;
+            const t = trestles.get(k) ?? { x, y, high: false, alongX: false, end: false };
+            t.high ||= l === 2;
+            t.alongX ||= has(l, x + 1, y) || has(l, x - 1, y);
+            t.end ||= joined.length < 2;
+            trestles.set(k, t);
           }
         }
       });
+      // A bent of the rack under every other tile, and at the ends of runs.
+      for (const t of trestles.values()) {
+        if ((t.x + t.y) % 2 && !t.end) continue;
+        const g = centre(t.x, t.y);
+        if (off(g)) continue;
+        const tex = t.high ? 'ip_rack_high' : 'ip_rack_low';
+        if (!this.scene.textures.exists(tex)) continue;
+        const img = this.pipePart(`t${t.x},${t.y}`, tex);
+        const foot = t.high ? TRESTLE.high.foot : TRESTLE.low.foot;
+        // The low bent's beam runs along x and the high one's along y as painted; turn each
+        // across its pipes.
+        const flip = t.high ? !t.alongX : t.alongX;
+        img.setOrigin(0.5, foot).setPosition(g.x, g.y + TILE_H * zoom * 0.18).setScale((t.high ? highH : lowH) / img.height)
+          .setRotation(0).setFlipX(flip).setDepth(depthAt(t.x, t.y) + 0.0008).clearTint().setAlpha(fade(t.high ? 2 : 1));
+      }
       for (const l of portLinks) {
         const tint = wash(fluidColour(snap.segments[l.si].vessel));
         const fat = Math.min(1.7, Math.max(0.6, Math.pow((snap.segments[l.si].diameter || 0.15) / 0.15, 0.6)));
@@ -431,7 +495,7 @@ export class ProcessLayer {
     }
     for (const [k, img] of this.pipeImgs) if (!this.pipeSeen.has(k)) { img.destroy(); this.pipeImgs.delete(k); }
     this.pipeSeen.clear();
-    this.drawFlow(snap, centre, zoom, time);
+    this.drawFlow(snap, centre, nc, zoom, time);
 
     // Buildings.
     for (const e of snap.entities) {
@@ -529,11 +593,12 @@ export class ProcessLayer {
     const proto = PROTO[g.proto];
     if (!proto) return;
     const n = proto.size;
-    // Footprint.
+    // Footprint, up at its height for pipe on a rack.
+    const up = rackLift(proto.levels?.length === 1 ? proto.levels[0] : 0, zoom);
     const pts = [
       isoToScreen(g.x, g.y, camX, camY, zoom), isoToScreen(g.x + n, g.y, camX, camY, zoom),
       isoToScreen(g.x + n, g.y + n, camX, camY, zoom), isoToScreen(g.x, g.y + n, camX, camY, zoom),
-    ];
+    ].map(p => ({ x: p.x, y: p.y - up }));
     this.overlayGfx.fillStyle(g.ok ? 0x44ff88 : 0xff4444, 0.22).lineStyle(2, g.ok ? 0x44ff88 : 0xff4444, 0.9);
     this.overlayGfx.fillPoints(pts, true).strokePoints(pts, true);
     // Which way it faces, for anything that has a direction.
@@ -565,7 +630,8 @@ export class ProcessLayer {
    * of its service's limit (red when over it) or by pressure, with chevrons moving along it in
    * the direction of flow, faster where it's faster.
    */
-  private drawFlow(snap: Snapshot, centre: (x: number, y: number) => { x: number; y: number }, zoom: number, time: number) {
+  private drawFlow(snap: Snapshot, centre: (x: number, y: number) => { x: number; y: number },
+    nc: (l: number, x: number, y: number) => { x: number; y: number }, zoom: number, time: number) {
     if (this.flowView === 'off') { this.showLegend(null); return; }
     const h = hydraulics(snap);
     const ps = snap.segments.map(s => s.vessel.p);
@@ -596,12 +662,10 @@ export class ProcessLayer {
       }
     };
     h.runs.forEach((run, si) => {
-      for (const [k, m] of run.edges) {
-        const [xs, ys, axis] = k.split(',');
-        const x = +xs, y = +ys;
-        const a = centre(x, y), b = axis === 'x' ? centre(x + 1, y) : centre(x, y + 1);
+      for (const e of run.edges) {
+        const a = nc(...e.a), b = nc(...e.b);
         if (off(a) && off(b)) continue;
-        line(a, b, m, si);
+        line(a, b, e.m, si);
       }
       for (const p of run.ports) {
         const a = centre(p.x, p.y);
@@ -629,12 +693,12 @@ export class ProcessLayer {
   }
 
   /** The flow at a pipe tile, for its hover card. */
-  flowAt(snap: Snapshot, x: number, y: number) {
+  flowAt(snap: Snapshot, x: number, y: number, level = 0) {
     const h = hydraulics(snap);
-    const si = h.runAt.get(`${x},${y}`);
+    const si = h.runAt.get(nodeKey(level, x, y));
     if (si === undefined) return null;
     const run = h.runs[si];
-    const st = stats(run.tile.get(`${x},${y}`) ?? 0, run.fluid, run.d);
+    const st = stats(run.tile.get(nodeKey(level, x, y)) ?? 0, run.fluid, run.d);
     return { run, stats: st, problems: problems(st, run.service, run.fluid) };
   }
 
@@ -642,6 +706,7 @@ export class ProcessLayer {
     let img = this.pipeImgs.get(key);
     if (!img) { img = this.scene.add.image(0, 0, tex); this.pipeImgs.set(key, img); }
     if (img.texture.key !== tex) img.setTexture(tex);
+    img.setAlpha(1).setFlipX(false);
     this.pipeSeen.add(key);
     return img;
   }
@@ -668,8 +733,8 @@ export class ProcessLayer {
   }
 
   /** Segment index under a tile, if it is a pipe. */
-  segmentAt(x: number, y: number): number | undefined {
-    return this.pipeTiles.get(`${x},${y}`);
+  segmentAt(x: number, y: number, level = 0): number | undefined {
+    return level ? this.rackNodes.get(nodeKey(level, x, y)) : this.pipeTiles.get(`${x},${y}`);
   }
 
   destroy() {

@@ -36,6 +36,15 @@ impl ProcessWorld {
     }
 
     /// Runs the plant forward by `seconds` of game time.
+    pub fn rotate(&mut self, id: u32) -> bool {
+        self.world.rotate(id)
+    }
+
+    /// What's on a rack at a height (1 low, 2 high) over a tile, or -1.
+    pub fn rack_at(&self, x: i32, y: i32, level: u8) -> i64 {
+        self.world.rack_at(x, y, level).map(|id| id as i64).unwrap_or(-1)
+    }
+
     pub fn advance(&mut self, seconds: f64) {
         self.world.advance(seconds);
     }

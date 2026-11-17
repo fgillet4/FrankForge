@@ -10,7 +10,12 @@
  * for runs without loops; in a loop the closing edge is shown carrying nothing.
  */
 
-import { PROTO, portTiles, type EntityView, type Snapshot, type VesselView } from './engine';
+import { PROTO, layout, portTiles, type EntityView, type Snapshot, type VesselView } from './engine';
+
+/** A pipe node: height (0 ground, 1 low rack, 2 high rack) and tile. */
+export type PipeNode = [number, number, number];
+/** Its key: "x,y" on the ground, "l:x,y" on a rack. */
+export const nodeKey = (l: number, x: number, y: number) => (l ? `${l}:${x},${y}` : `${x},${y}`);
 
 /** Standard bore (the engine's PIPE_DIAMETER) and roughness (commercial steel). */
 export const PIPE_D = 0.15;
@@ -90,18 +95,20 @@ export interface RunFlows {
   /** Bore [m]. */
   d: number;
   fluid: RunFluid;
-  /** Mass flow across each tile edge, keyed "x,y,x" or "x,y,y" for the edge to x+1 or y+1; positive toward +x / +y [kg/s]. */
-  edges: Map<string, number>;
+  /** Mass flow between neighbouring pipe nodes (beside each other, or up and down a riser), positive from a to b [kg/s]. */
+  edges: { a: PipeNode; b: PipeNode; m: number }[];
   /** Where buildings' ports open onto the run: tile, the step into the building, and flow into the run [kg/s]. */
   ports: { x: number; y: number; dx: number; dy: number; mdot: number }[];
-  /** The biggest flow at each tile [kg/s]. */
+  /** The biggest flow at each node, by nodeKey [kg/s]. */
   tile: Map<string, number>;
 }
 
 export interface Hydraulics {
   runs: RunFlows[];
-  /** Which run a tile belongs to. */
+  /** Which run a node belongs to, by nodeKey. */
   runAt: Map<string, number>;
+  /** Tiles with a riser on them, "x,y". */
+  risers: Set<string>;
 }
 
 const cache = new WeakMap<Snapshot, Hydraulics>();
@@ -111,9 +118,12 @@ export function hydraulics(snap: Snapshot): Hydraulics {
   const hit = cache.get(snap);
   if (hit) return hit;
   const runAt = new Map<string, number>();
-  snap.segments.forEach((seg, si) => seg.tiles.forEach(([x, y]) => runAt.set(`${x},${y}`, si)));
+  const nodesOf = (seg: Snapshot['segments'][number]): PipeNode[] =>
+    [...seg.tiles.map(([x, y]) => [0, x, y] as PipeNode), ...(seg.racks ?? []).map(([l, [x, y]]) => [l, x, y] as PipeNode)];
+  snap.segments.forEach((seg, si) => nodesOf(seg).forEach(([l, x, y]) => runAt.set(nodeKey(l, x, y), si)));
+  const risers = new Set(layout().filter(p => p.proto === 'pipe_riser').map(p => `${p.x},${p.y}`));
   const runs: RunFlows[] = snap.segments.map(seg => ({
-    service: 'liquid', d: seg.diameter || PIPE_D, fluid: runFluid(seg.vessel), edges: new Map(), ports: [], tile: new Map(),
+    service: 'liquid', d: seg.diameter || PIPE_D, fluid: runFluid(seg.vessel), edges: [], ports: [], tile: new Map(),
   }));
   const pumps: [number, 0 | 1][] = [];
   for (const e of snap.entities) {
@@ -137,47 +147,41 @@ export function hydraulics(snap: Snapshot): Hydraulics {
   snap.segments.forEach((seg, si) => {
     const run = runs[si];
     if (run.fluid.gas) run.service = 'gas';
-    if (!seg.tiles.length) return;
+    const nodes = nodesOf(seg);
+    if (!nodes.length) return;
     const net = new Map<string, number>();
     for (const p of run.ports) net.set(`${p.x},${p.y}`, (net.get(`${p.x},${p.y}`) ?? 0) + p.mdot);
-    // Spanning tree from the first tile; then each tile's subtree inflow crosses to its parent.
-    const key = (x: number, y: number) => `${x},${y}`;
-    const parent = new Map<string, [number, number] | null>();
-    const order: [number, number][] = [];
-    const [x0, y0] = seg.tiles[0];
-    parent.set(key(x0, y0), null);
-    const queue: [number, number][] = [[x0, y0]];
+    // Spanning tree from the first node; then each node's subtree inflow crosses to its parent.
+    const parent = new Map<string, PipeNode | null>();
+    const order: PipeNode[] = [];
+    parent.set(nodeKey(...nodes[0]), null);
+    const queue: PipeNode[] = [nodes[0]];
     while (queue.length) {
-      const [x, y] = queue.shift()!;
-      order.push([x, y]);
-      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-        const n = key(x + dx, y + dy);
-        if (runAt.get(n) === si && !parent.has(n)) { parent.set(n, [x, y]); queue.push([x + dx, y + dy]); }
+      const [l, x, y] = queue.shift()!;
+      order.push([l, x, y]);
+      const next: PipeNode[] = [[l, x + 1, y], [l, x - 1, y], [l, x, y + 1], [l, x, y - 1]];
+      if (risers.has(`${x},${y}`)) for (const m of [0, 1, 2]) if (m !== l) next.push([m, x, y]);
+      for (const n of next) {
+        const k = nodeKey(...n);
+        if (runAt.get(k) === si && !parent.has(k)) { parent.set(k, [l, x, y]); queue.push(n); }
       }
     }
     const up = new Map<string, number>();
     for (let i = order.length - 1; i >= 0; i--) {
-      const [x, y] = order[i];
-      const k = key(x, y);
+      const node = order[i];
+      const k = nodeKey(...node);
       const m = (up.get(k) ?? 0) + (net.get(k) ?? 0);
       const par = parent.get(k);
       if (!par) continue;
-      up.set(key(...par), (up.get(key(...par)) ?? 0) + m);
-      // m flows from (x, y) to its parent.
-      if (par[0] === x + 1) run.edges.set(`${x},${y},x`, m);
-      else if (par[0] === x - 1) run.edges.set(`${par[0]},${par[1]},x`, -m);
-      else if (par[1] === y + 1) run.edges.set(`${x},${y},y`, m);
-      else run.edges.set(`${par[0]},${par[1]},y`, -m);
+      up.set(nodeKey(...par), (up.get(nodeKey(...par)) ?? 0) + m);
+      // m flows from the node to its parent.
+      run.edges.push({ a: node, b: par, m });
     }
     const bump = (k: string, m: number) => run.tile.set(k, Math.max(run.tile.get(k) ?? 0, Math.abs(m)));
-    for (const [k, m] of run.edges) {
-      const [x, y, axis] = k.split(',');
-      bump(`${x},${y}`, m);
-      bump(axis === 'x' ? `${+x + 1},${y}` : `${x},${+y + 1}`, m);
-    }
+    for (const e of run.edges) { bump(nodeKey(...e.a), e.m); bump(nodeKey(...e.b), e.m); }
     for (const p of run.ports) bump(`${p.x},${p.y}`, p.mdot);
   });
-  const h = { runs, runAt };
+  const h = { runs, runAt, risers };
   cache.set(snap, h);
   return h;
 }

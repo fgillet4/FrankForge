@@ -53,6 +53,7 @@ export const ITEMS: Record<string, Item> = Object.fromEntries([
   item('science_green', 'Logistic science pack', 200),
   item('science_blue', 'Chemical science pack', 200),
   { ...item('pipe', 'Pipe'), places: 'pipe' },
+  building('pipe_rack', 'Pipe on a low rack'), building('pipe_rack_high', 'Pipe on a high rack'), building('pipe_riser', 'Pipe riser'),
   ...[
     ['transport_belt', 'Transport belt'], ['underground_belt', 'Underground belt'], ['splitter', 'Splitter'],
     ['inserter', 'Inserter'], ['burner_inserter', 'Burner inserter'], ['wooden_chest', 'Wooden chest'], ['iron_chest', 'Iron chest'],
@@ -100,6 +101,9 @@ export const RECIPES: Record<string, Recipe> = Object.fromEntries(([
   r('copper_cable', 2, { copper_plate: 1 }, 0.5),
   r('circuit', 1, { iron_plate: 1, copper_cable: 3 }, 0.5),
   r('pipe', 1, { iron_plate: 1 }, 0.5),
+  r('pipe_rack', 1, { pipe: 1, iron_plate: 1 }, 0.5),
+  r('pipe_rack_high', 1, { pipe: 1, iron_plate: 2 }, 0.5),
+  r('pipe_riser', 1, { pipe: 3 }, 0.5),
   // From the process plant: ~1 kg of product per batch of feed gas.
   { id: 'plastic', out: 'plastic', count: 1, in: {}, fluids: { c2h4: 36 }, time: 1, station: 'chem' },
   { id: 'solid_fuel', out: 'solid_fuel', count: 1, in: {}, fluids: { ch4: 60 }, time: 2, station: 'chem' },

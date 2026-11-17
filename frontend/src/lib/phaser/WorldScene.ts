@@ -27,7 +27,7 @@ import { drawPlayer } from './characterRenderer';
 import type { GroundScene } from './GroundScene';
 
 import * as engine from '../process/engine';
-import { ANIMS, CharacterSprite, ProcessLayer } from '../process/render';
+import { ANIMS, CharacterSprite, ProcessLayer, rackLift } from '../process/render';
 import { ProcessUI, entityTooltip, fmt, segmentTooltip } from '../process/ui';
 import { generateWorld, loadSettings, writeSave, type SaveGame, type Settings, type WorldSettings } from '../save';
 import { PauseMenu } from '../../ui/menu';
@@ -45,6 +45,8 @@ import { Juice, pop } from '../game/juice';
 const MIN_ZOOM = 0.3;
 const MAX_ZOOM = 4;
 const WALK_SPEED = 4.5;   // tiles per second
+/** Pipe for each working height: ground, low rack, high rack. */
+const LEVEL_PIPES = ['pipe', 'pipe_rack', 'pipe_rack_high'];
 const HAND_MINING = 1;    // seconds per ore by hand
 const SPEEDS = [0, 0.5, 1, 2, 4, 8, 16];
 
@@ -103,6 +105,12 @@ export class WorldScene extends Phaser.Scene {
   private placementType: string | null = null;
   private placementRot = 0;
   private laying: { last: { x: number; y: number } | null } | null = null;
+  /** The height the engineer works at: 0 ground, 1 low rack, 2 high rack (H to change). */
+  private level = 0;
+  private levelKey: KeyboardEvent | null = null;
+  /** How far the view has risen with it [px], easing toward the level's height. */
+  private levelCam = 0;
+  private levelVel = 0;
   /** Dragging out a row of buildings: where the last one went. */
   private stamping: { last: { x: number; y: number } } | null = null;
   private mining: MiningTarget | null = null;
@@ -207,6 +215,12 @@ export class WorldScene extends Phaser.Scene {
     kb.on('keydown-T', () => { if (!this.menu.open && !this.sandbox) this.hud?.toggle('tech'); this.processUI?.hover(null, 0, 0); });
     kb.on('keydown-P', () => { if (!this.menu.open) this.hud?.toggle('stats'); this.processUI?.hover(null, 0, 0); });
     kb.on('keydown-M', () => this.hud?.toggleBigMap());
+    kb.on('keydown-H', (e: KeyboardEvent) => {
+      // Phaser can hand the same Shift+H press over more than once; one press, one floor.
+      if (this.menu.open || e === this.levelKey) return;
+      this.levelKey = e;
+      this.changeLevel(this.level + (e.shiftKey ? -1 : 1));
+    });
     kb.on('keydown-V', () => {
       if (!this.processLayer) return;
       const views = ['off', 'velocity', 'pressure'] as const;
@@ -252,6 +266,8 @@ export class WorldScene extends Phaser.Scene {
       this.processUI.vfdUnlocked = () => this.sandbox || this.eng.research.done.has('vfd');
       this.processUI.onSelectProto = id => this.choose(id);
       this.processUI.onCloseInspector = () => this.select(null);
+      this.processUI.onRotate = id => this.rotateBuilding(id);
+      this.processUI.onLevel = l => this.changeLevel(l);
       this.hud = new Hud(this.eng, this.factory, {
         map: this.map,
         pick: item => this.choose(ITEMS[item]?.places ?? null),
@@ -482,6 +498,8 @@ export class WorldScene extends Phaser.Scene {
       this.choose(null);
     } else if (this.processLayer?.selected != null) {
       this.select(null);
+    } else if (this.level) {
+      this.changeLevel(0);
     } else {
       this.menu.show();
     }
@@ -712,7 +730,7 @@ export class WorldScene extends Phaser.Scene {
 
   /** What holding the right button over a tile would mine. */
   private mineTarget(tx: number, ty: number): MiningTarget | null {
-    const id = engine.entityAt(tx, ty);
+    const id = this.idAt(tx, ty);
     if (id >= 0) {
       const p = engine.layout().find(x => x.id === id);
       if (!p) return null;
@@ -886,11 +904,35 @@ export class WorldScene extends Phaser.Scene {
     const k = 1 - Math.pow(0.85, Math.min(100, this.game.loop.delta) / (1000 / 60));
     this.cam.x += (t.x - this.cam.x) * k;
     this.cam.y += (t.y - this.cam.y) * k;
+    // Changing height, the view rises (or sinks) with a little overshoot.
+    const delta = Math.min(100, this.game.loop.delta);
+    const lift = rackLift(this.level, this.zoom) * 0.55;
+    this.levelVel = (this.levelVel + (lift - this.levelCam) * 0.02 * (delta / 16.67)) * Math.pow(0.82, delta / 16.67);
+    this.levelCam += this.levelVel * (delta / 16.67);
   }
 
   private viewInfo(): View {
     const j = this.juice?.shake ?? { x: 0, y: 0 };
-    return { x: this.cam.x + this.pan.x + j.x, y: this.cam.y + this.pan.y + j.y, zoom: this.zoom, w: this.scale.width, h: this.scale.height };
+    return { x: this.cam.x + this.pan.x + j.x, y: this.cam.y + this.pan.y + j.y + this.levelCam, zoom: this.zoom, w: this.scale.width, h: this.scale.height };
+  }
+
+  /**
+   * Up or down a height, with a clunk of the lift: the view rises with it, what's above fades,
+   * and the pipe in hand goes to the new height.
+   */
+  private changeLevel(to: number, quiet = false) {
+    to = (to + 3) % 3;
+    if (to === this.level) return;
+    this.level = to;
+    if (this.processLayer) this.processLayer.viewLevel = to;
+    this.processUI?.setLevel(to);
+    if (!quiet) { this.playSound('lift', 0.45); this.juice.kick(2.5); }
+    if (this.placementType && LEVEL_PIPES.includes(this.placementType) && this.placementType !== LEVEL_PIPES[to]) this.choose(LEVEL_PIPES[to]);
+  }
+
+  /** What's under the cursor at the working height. */
+  private idAt(tx: number, ty: number): number {
+    return this.level ? engine.rackAt(tx, ty, this.level) : engine.entityAt(tx, ty);
   }
 
   /** Centres the view on a tile, leaving the engineer where they are. */
@@ -929,14 +971,15 @@ export class WorldScene extends Phaser.Scene {
 
   private tileAt(sx: number, sy: number) {
     const v = this.viewInfo();
-    const iso = screenToIso(sx, sy, v.x, v.y, this.zoom);
+    // Up on a rack, the cursor points at that height.
+    const iso = screenToIso(sx, sy + rackLift(this.level, this.zoom), v.x, v.y, this.zoom);
     return { x: Math.floor(iso.x), y: Math.floor(iso.y) };
   }
 
   private onDown(p: Phaser.Input.Pointer) {
     if (this.menu.open || p.rightButtonDown()) return;
     const tile = this.tileAt(p.x, p.y);
-    if (this.placementType === 'pipe' || this.placementType === 'transport_belt') {
+    if (this.placementType === 'transport_belt' || LEVEL_PIPES.includes(this.placementType ?? '')) {
       this.laying = { last: null };
       this.layTo(tile.x, tile.y);
       return;
@@ -969,7 +1012,7 @@ export class WorldScene extends Phaser.Scene {
     const tile = this.tileAt(p.x, p.y);
     if (this.placementType) { this.placeAt(this.placementType, tile.x, tile.y); return; }
     this.updateAim();
-    const id = engine.entityAt(this.aimTX, this.aimTY);
+    const id = this.idAt(this.aimTX, this.aimTY);
     if (id < 0) { this.select(null); return; }
     const me = p.event as MouseEvent;
     if ((me.ctrlKey || me.metaKey) && this.quickTransfer(id)) return;
@@ -981,7 +1024,7 @@ export class WorldScene extends Phaser.Scene {
       return;
     }
     // Buildings in the plant, and pipes, open the inspector.
-    this.select(this.snapshot?.entities.some(e => e.id === id) || engine.placedById(id)?.proto === 'pipe' ? id : null);
+    this.select(this.snapshot?.entities.some(e => e.id === id) || engine.PROTO[engine.placedById(id)?.proto ?? '']?.levels?.length ? id : null);
   }
 
   /**
@@ -1031,7 +1074,7 @@ export class WorldScene extends Phaser.Scene {
   /** Finds what's drawn under the pointer, front to back, falling back to the tile under it. */
   private updateAim() {
     this.aimTX = this.hoverTX; this.aimTY = this.hoverTY;
-    if (this.placementType || !this.processLayer) return;
+    if (this.placementType || !this.processLayer || this.level) return;
     const { hoverTX: tx, hoverTY: ty } = this;
     let depth = -Infinity;
     const p = engine.placedById(engine.entityAt(tx, ty));
@@ -1044,10 +1087,12 @@ export class WorldScene extends Phaser.Scene {
 
   private drawHoverTile(view: View) {
     this.hoverGfx.clear();
+    // Outlines sit at the working height.
+    view = { ...view, y: view.y - rackLift(this.level, this.zoom) };
     const { hoverTX: tx, hoverTY: ty } = this;
     if (this.menu.open || tx < 0 || ty < 0 || tx >= this.map.width || ty >= this.map.height) return;
     // Outside placement, outline the whole building being pointed at.
-    const aimed = this.placementType ? undefined : engine.placedById(engine.entityAt(this.aimTX, this.aimTY));
+    const aimed = this.placementType ? undefined : engine.placedById(this.idAt(this.aimTX, this.aimTY));
     if (aimed) {
       const n = engine.PROTO[aimed.proto]?.size ?? 1;
       const pts = [isoToScreen(aimed.x, aimed.y, view.x, view.y, this.zoom), isoToScreen(aimed.x + n, aimed.y, view.x, view.y, this.zoom),
@@ -1085,6 +1130,13 @@ export class WorldScene extends Phaser.Scene {
 
   /** Selects a building to place; with none in the pockets, crafts one if possible. */
   private choose(id: string | null) {
+    // Picking pipe for a height takes the engineer up to it.
+    if (id && LEVEL_PIPES.includes(id) && LEVEL_PIPES.indexOf(id) !== this.level) {
+      this.level = LEVEL_PIPES.indexOf(id);
+      if (this.processLayer) this.processLayer.viewLevel = this.level;
+      this.processUI?.setLevel(this.level);
+      this.playSound('lift', 0.45);
+    }
     if (id && !this.sandbox && !this.eng.inv.count(id)) {
       if (!this.eng.queue.some(j => RECIPES[j.recipe]?.out === id) && !this.eng.craft(id, 1)) {
         const r = RECIPES[id];
@@ -1101,14 +1153,23 @@ export class WorldScene extends Phaser.Scene {
 
   private rotate() {
     if (this.placementType) { this.placementRot = (this.placementRot + 1) % 4; return; }
-    // Turn the belt, inserter or drill under the cursor.
-    const f = this.factory.entities.get(engine.entityAt(this.aimTX, this.aimTY));
-    if (f && f.kind !== 'splitter' && f.kind !== 'underground_belt') f.rot = (f.rot + 1) % 4;
+    this.rotateBuilding(this.idAt(this.aimTX, this.aimTY));
+  }
+
+  /** Turns a placed building a quarter turn, with a little bounce; paired belts stay put. */
+  private rotateBuilding(id: number) {
+    const p = engine.placedById(id);
+    if (!p || p.proto === 'splitter' || p.proto === 'underground_belt' || engine.PROTO[p.proto]?.levels?.length) return;
+    const f = this.factory.entities.get(id);
+    if (f) f.rot = (f.rot + 1) % 4;
+    engine.rotate(id);
+    pop(id, this.time.now);
+    this.playSound('place', 0.2);
   }
 
   /** Q: pick the kind of building under the cursor to place more. */
   private pipette() {
-    const id = engine.entityAt(this.aimTX, this.aimTY);
+    const id = this.idAt(this.aimTX, this.aimTY);
     const p = engine.placedById(id);
     if (!p) { this.choose(null); return; }
     this.placementRot = this.factory.entities.get(id)?.rot ?? p.rot;
@@ -1156,7 +1217,10 @@ export class WorldScene extends Phaser.Scene {
     for (const [tx, ty] of tiles) {
       const t = this.map.tiles[ty]?.[tx];
       if (!t) return 'Off the map.';
-      if (engine.entityAt(tx, ty) >= 0) return 'Something is in the way.';
+      const levels = p.levels ?? [];
+      const onGround = !levels.length || levels.includes(0);
+      if (onGround && engine.entityAt(tx, ty) >= 0) return 'Something is in the way.';
+      for (const l of levels) if (l > 0 && engine.rackAt(tx, ty, l) >= 0) return l === 1 ? 'The low rack is taken here.' : 'The high rack is taken here.';
       if (this.combat.nestAt(tx, ty)) return 'An alien nest is in the way.';
       const water = t.terrain === TerrainType.DEEP_WATER || (t.terrain === TerrainType.SHALLOW_WATER && p.needs !== 'water');
       if (water || t.terrain === TerrainType.LAVA || t.terrain === TerrainType.MOUNTAINS) return "You can't build there.";
@@ -1271,7 +1335,7 @@ export class WorldScene extends Phaser.Scene {
       this.placementRot = rot;
     }
     for (const t of steps) {
-      if (engine.entityAt(t.x, t.y) >= 0) continue;
+      if (this.idAt(t.x, t.y) >= 0) continue;
       if (this.placementError(proto, t.x, t.y, t.rot)) continue;
       this.build(proto, t.x, t.y, proto === 'pipe' ? 0 : t.rot);
     }
@@ -1306,6 +1370,10 @@ export class WorldScene extends Phaser.Scene {
     const nest = this.combat.nestAt(tx, ty);
     if (nest) return `<b>Alien nest</b> · ${Math.ceil(nest.hp)}/${nest.maxHp} HP<br><small>Sends attackers when pollution reaches it. Hold Space nearby to shoot.</small>`;
     const port = this.portAt(tx, ty);
+    if (this.level && this.snapshot) {
+      const si = this.processLayer?.segmentAt(tx, ty, this.level);
+      return si === undefined ? null : segmentTooltip(this.snapshot.segments[si].vessel, this.processLayer?.flowAt(this.snapshot, tx, ty, this.level));
+    }
     const id = engine.entityAt(tx, ty);
     const f = id >= 0 ? this.factory.entities.get(id) : undefined;
     const snapE = id >= 0 ? this.snapshot?.entities.find(x => x.id === id) : undefined;
@@ -1384,7 +1452,7 @@ export class WorldScene extends Phaser.Scene {
     const v = this.viewInfo();
     const hoveredId = engine.entityAt(this.aimTX, this.aimTY);
     this.processLayer.draw(this.snapshot, v.x, v.y, this.zoom, ghost, time, {
-      all: this.placementType === 'pipe' || !!(this.placementType && engine.PROTO[this.placementType]?.ports.length),
+      all: LEVEL_PIPES.includes(this.placementType ?? '') || this.placementType === 'pipe_riser' || !!(this.placementType && engine.PROTO[this.placementType]?.ports.length),
       hovered: hoveredId >= 0 ? hoveredId : null,
     }, id => this.factory.entities.get(id)?.active);
   }

@@ -107,6 +107,9 @@ pub struct Proto {
     /// A generator driven from outside the process network (burning solid fuel): it delivers
     /// its rating times its demand fraction, which the frontend sets while it has fuel.
     pub fueled: bool,
+    /// Pipes: the heights it carries a line at (0 ground, 1 low rack, 2 high rack). A riser
+    /// carries one at every height and joins them.
+    pub levels: &'static [u8],
 }
 
 const fn port(dx: i32, dy: i32, vessel: usize, at: At, label: &'static str) -> PortDef {
@@ -116,7 +119,7 @@ const fn port(dx: i32, dy: i32, vessel: usize, at: At, label: &'static str) -> P
 const BASE: Proto = Proto {
     id: "", name: "", category: "", description: "", size: 1, vessels: &[], ports: &[], thermal: &[], link: None,
     source: None, power_w: 0.0, generator_w: 0.0, battery_j: 0.0, heater: false, electrolyser: false, fans: false, needs: None,
-    wire: 0.0, supply: 0.0, burns: false, agitated: false, selectable: false, fueled: false,
+    wire: 0.0, supply: 0.0, burns: false, agitated: false, selectable: false, fueled: false, levels: &[],
 };
 
 use At::*;
@@ -125,6 +128,25 @@ pub const PROTOS: &[Proto] = &[
     Proto {
         id: "pipe", name: "Pipe", category: "Logistics",
         description: "150 mm steel pipe. Connected pipes form one segment; every connection to it is a real length of pipe with friction.",
+        levels: &[0],
+        ..BASE
+    },
+    Proto {
+        id: "pipe_rack", name: "Pipe on a low rack", category: "Logistics",
+        description: "Pipe carried on a steel trestle over everything else. It joins only other low-rack pipe and risers, so belts, roads and ground pipe pass underneath.",
+        levels: &[1],
+        ..BASE
+    },
+    Proto {
+        id: "pipe_rack_high", name: "Pipe on a high rack", category: "Logistics",
+        description: "Pipe on the upper tier of a rack, over the low rack: lines can cross lines.",
+        levels: &[2],
+        ..BASE
+    },
+    Proto {
+        id: "pipe_riser", name: "Pipe riser", category: "Logistics",
+        description: "A vertical pipe that joins the ground and both rack heights on its tile.",
+        levels: &[0, 1, 2],
         ..BASE
     },
     Proto {

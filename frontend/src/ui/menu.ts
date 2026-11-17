@@ -39,6 +39,7 @@ export const HOW_TO_PLAY = `
     <kbd>P</kbd><span>Production graphs</span>
     <kbd>M</kbd><span>Enlarge the minimap; click it to look somewhere</span>
     <kbd>V</kbd><span>Flow view: pipes by velocity, then by pressure, then off</span>
+    <kbd>H / Shift-H</kbd><span>Work a height up or down: ground, low pipe rack, high pipe rack. Pipe goes on the rack you're at; risers join them. Esc or a click on the height gauge brings you back</span>
     <kbd>Click</kbd><span>Pick a building in the bar, then click the map to place it</span>
     <kbd>Drag</kbd><span>While placing, lay a line of pipe or belt, or a row of buildings (poles space themselves)</span>
     <kbd>R</kbd><span>Rotate what you're placing, or the belt or inserter under the cursor</span>

@@ -31,6 +31,8 @@ export interface Proto {
   selectable: boolean;
   /** Burner generators: driven by fuel the frontend burns. */
   fueled: boolean;
+  /** Pipes: the heights it carries a line at (0 ground, 1 low rack, 2 high rack). */
+  levels: number[];
 }
 
 export interface SpeciesInfo { id: string; name: string; formula: string; mw: number }
@@ -75,7 +77,7 @@ export interface GridView {
 export interface Snapshot {
   time: number; daylight: number; ambient: number;
   entities: EntityView[];
-  segments: { tiles: [number, number][]; vessel: VesselView; diameter: number }[];
+  segments: { tiles: [number, number][]; vessel: VesselView; diameter: number; racks: [number, [number, number]][] }[];
   /** The biggest network, and all of them. */
   grid: GridView;
   main_grid: number | null;
@@ -156,6 +158,18 @@ export function place(proto: string, x: number, y: number, rot: number, id = nex
 export function remove(id: number): boolean {
   placed.delete(id);
   return world?.remove(id) ?? false;
+}
+
+/** Turns a placed building a quarter turn clockwise, keeping what's in it. */
+export function rotate(id: number) {
+  if (!world?.rotate(id)) return;
+  const p = placed.get(id);
+  if (p) p.rot = (p.rot + 1) % 4;
+}
+
+/** What's on a rack at a height (1 low, 2 high) over a tile, or −1. */
+export function rackAt(x: number, y: number, level: number): number {
+  return world ? Number(world.rack_at(x, y, level)) : -1;
 }
 
 export function entityAt(x: number, y: number): number {

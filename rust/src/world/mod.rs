@@ -95,11 +95,18 @@ pub struct Segment {
     pub vessel: usize,
     /// Bore of the run [m]: its narrowest tile's.
     pub diameter: f64,
+    /// Where it runs above the ground, on racks: (height, tile).
+    pub racks: Vec<Node>,
 }
+
+/// A place a pipe can be: height (0 ground, 1 low rack, 2 high rack) and tile.
+pub type Node = (u8, Tile);
 
 pub struct World {
     pub entities: BTreeMap<u32, Entity>,
     occupied: HashMap<Tile, u32>,
+    /// Pipe on racks, by height and tile (risers stand in these too).
+    racks: HashMap<Node, u32>,
     pub net: Network,
     /// One grid per power network: poles wired together and the buildings they reach.
     pub grids: Vec<Grid>,
@@ -107,6 +114,8 @@ pub struct World {
     pub wires: Vec<(u32, u32)>,
     pub segments: Vec<Segment>,
     segment_of: HashMap<Tile, usize>,
+    /// Every pipe node's segment, at any height.
+    node_seg: HashMap<Node, usize>,
     pub time: f64,
     accumulator: f64,
     dirty: bool,
@@ -114,7 +123,7 @@ pub struct World {
     /// Totals vented to the atmosphere [mol], by species.
     pub emitted: Comp,
     /// Pipe contents per tile, saved when the network is about to be rebuilt.
-    pending_shares: Option<HashMap<Tile, TileShare>>,
+    pending_shares: Option<HashMap<Node, TileShare>>,
 }
 
 fn air() -> Comp {
@@ -156,8 +165,8 @@ fn port_height(at: At, v: &Vessel) -> f64 {
 impl World {
     pub fn new(ambient_t: f64) -> Self {
         World {
-            entities: BTreeMap::new(), occupied: HashMap::new(), net: Network::new(ambient_t), grids: vec![], wires: vec![],
-            segments: vec![], segment_of: HashMap::new(), time: DAY * 0.3, accumulator: 0.0, dirty: true, events: vec![],
+            entities: BTreeMap::new(), occupied: HashMap::new(), racks: HashMap::new(), net: Network::new(ambient_t), grids: vec![], wires: vec![],
+            segments: vec![], segment_of: HashMap::new(), node_seg: HashMap::new(), time: DAY * 0.3, accumulator: 0.0, dirty: true, events: vec![],
             emitted: [0.0; NS], pending_shares: None,
         }
     }
@@ -190,24 +199,37 @@ impl World {
             net_vessels: vec![], net_pipes: vec![], net_links: vec![], load: None, generator: None, battery: None,
         };
         let tiles: Vec<Tile> = e.tiles().collect();
-        if let Some(t) = tiles.iter().find(|t| self.occupied.contains_key(t)) {
-            return Err(format!("tile {t:?} is taken"));
+        // Everything but rack pipe stands on the ground; rack pipe and risers take their heights.
+        let levels = p.levels;
+        let on_ground = levels.is_empty() || levels.contains(&0);
+        if on_ground {
+            if let Some(t) = tiles.iter().find(|t| self.occupied.contains_key(t)) {
+                return Err(format!("tile {t:?} is taken"));
+            }
+        }
+        for &l in levels.iter().filter(|&&l| l > 0) {
+            if tiles.iter().any(|&t| self.racks.contains_key(&(l, t))) {
+                return Err(if l == 1 { "the low rack is taken here".into() } else { "the high rack is taken here".into() });
+            }
         }
         self.sync_back();
         // A pipe laid on to a run takes the run's bore.
         let mut e = e;
-        if e.proto().id == "pipe" {
-            let next = [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().find_map(|d| {
-                let id = self.occupied.get(&(e.x + d.0, e.y + d.1))?;
-                let n = &self.entities[id];
-                (n.proto().id == "pipe").then_some(n.diameter)
+        if !levels.is_empty() {
+            let next = levels.iter().find_map(|&l| {
+                [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().find_map(|d| self.pipe_at(l, (e.x + d.0, e.y + d.1)).map(|n| self.entities[&n].diameter))
             });
             if let Some(d) = next {
                 e.diameter = d;
             }
         }
         for t in tiles {
-            self.occupied.insert(t, id);
+            if on_ground {
+                self.occupied.insert(t, id);
+            }
+            for &l in levels.iter().filter(|&&l| l > 0) {
+                self.racks.insert((l, t), id);
+            }
         }
         self.entities.insert(id, e);
         self.dirty = true;
@@ -218,7 +240,14 @@ impl World {
         self.sync_back();
         let Some(e) = self.entities.remove(&id) else { return false };
         for t in e.tiles() {
-            self.occupied.remove(&t);
+            if self.occupied.get(&t) == Some(&id) {
+                self.occupied.remove(&t);
+            }
+            for l in 1..=2 {
+                if self.racks.get(&(l, t)) == Some(&id) {
+                    self.racks.remove(&(l, t));
+                }
+            }
         }
         self.dirty = true;
         true
@@ -226,6 +255,26 @@ impl World {
 
     pub fn entity_at(&self, x: i32, y: i32) -> Option<u32> {
         self.occupied.get(&(x, y)).copied()
+    }
+
+    /// Turns a placed building a quarter turn clockwise, contents and all.
+    pub fn rotate(&mut self, id: u32) -> bool {
+        self.sync_back();
+        let Some(e) = self.entities.get_mut(&id) else { return false };
+        e.rot = (e.rot + 1) % 4;
+        self.dirty = true;
+        true
+    }
+
+    /// What's on a rack at a height (1 low, 2 high) over a tile.
+    pub fn rack_at(&self, x: i32, y: i32, level: u8) -> Option<u32> {
+        self.racks.get(&(level, (x, y))).copied()
+    }
+
+    /// The pipe carrying a line at a height over a tile, if there is one.
+    fn pipe_at(&self, level: u8, t: Tile) -> Option<u32> {
+        let id = if level == 0 { *self.occupied.get(&t)? } else { *self.racks.get(&(level, t))? };
+        self.entities[&id].proto().levels.contains(&level).then_some(id)
     }
 
     /// Fills a building's first vessel with `mol` of a species at temperature `t` (a starting
@@ -250,11 +299,11 @@ impl World {
     pub fn set_pipe_diameter(&mut self, id: u32, diameter: f64) {
         self.rebuild_if_dirty();
         let Some(e) = self.entities.get(&id) else { return };
-        let Some(&si) = self.segment_of.get(&(e.x, e.y)) else { return };
-        let tiles: std::collections::HashSet<Tile> = self.segments[si].tiles.iter().copied().collect();
+        let Some(&si) = e.proto().levels.iter().find_map(|&l| self.node_seg.get(&(l, (e.x, e.y)))) else { return };
         let d = diameter.clamp(0.025, 0.6);
+        let node_seg = &self.node_seg;
         for e in self.entities.values_mut() {
-            if e.proto().id == "pipe" && tiles.contains(&(e.x, e.y)) {
+            if e.proto().levels.iter().any(|&l| node_seg.get(&(l, (e.x, e.y))) == Some(&si)) {
                 e.diameter = d;
             }
         }
@@ -354,9 +403,10 @@ impl World {
         }
         for s in &self.segments {
             let v = &self.net.vessels[s.vessel];
-            let k = s.tiles.len() as f64;
-            for &t in &s.tiles {
-                shares.insert(t, TileShare { n: v.n.map(|x| x / k), u: v.u / k, t: v.t(), p: v.p() });
+            let nodes: Vec<Node> = s.tiles.iter().map(|&t| (0, t)).chain(s.racks.iter().copied()).collect();
+            let k = nodes.len() as f64;
+            for nd in nodes {
+                shares.insert(nd, TileShare { n: v.n.map(|x| x / k), u: v.u / k, t: v.t(), p: v.p() });
             }
         }
         self.pending_shares = Some(shares);
@@ -391,31 +441,50 @@ impl World {
         self.segments.clear();
         self.segment_of.clear();
 
-        // Pipe segments: connected components of pipe tiles.
-        let pipe_proto = protos::proto("pipe").unwrap();
-        let pipe_tiles: Vec<Tile> = self.entities.values().filter(|e| e.proto == pipe_proto).map(|e| (e.x, e.y)).collect();
-        let bore: HashMap<Tile, f64> = self.entities.values().filter(|e| e.proto == pipe_proto).map(|e| ((e.x, e.y), e.diameter)).collect();
-        let is_pipe: std::collections::HashSet<Tile> = pipe_tiles.iter().copied().collect();
-        for &start in &pipe_tiles {
-            if self.segment_of.contains_key(&start) {
+        // Pipe segments: connected components of pipe nodes. Pipe joins pipe beside it at the
+        // same height; a riser joins every height on its tile.
+        self.node_seg.clear();
+        let mut bore: HashMap<Node, f64> = HashMap::new();
+        let mut risers: std::collections::HashSet<Tile> = std::collections::HashSet::new();
+        for e in self.entities.values() {
+            let levels = e.proto().levels;
+            for &l in levels {
+                bore.insert((l, (e.x, e.y)), e.diameter);
+            }
+            if levels.len() > 1 {
+                risers.insert((e.x, e.y));
+            }
+        }
+        let mut starts: Vec<Node> = bore.keys().copied().collect();
+        starts.sort();
+        for &start in &starts {
+            if self.node_seg.contains_key(&start) {
                 continue;
             }
             let si = self.segments.len();
-            let mut tiles = vec![];
+            let mut nodes = vec![];
             let mut queue = VecDeque::from([start]);
-            self.segment_of.insert(start, si);
-            while let Some(t) = queue.pop_front() {
-                tiles.push(t);
-                for d in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
-                    let nb = (t.0 + d.0, t.1 + d.1);
-                    if is_pipe.contains(&nb) && !self.segment_of.contains_key(&nb) {
-                        self.segment_of.insert(nb, si);
+            self.node_seg.insert(start, si);
+            while let Some((l, t)) = queue.pop_front() {
+                nodes.push((l, t));
+                let mut next: Vec<Node> = [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().map(|d| (l, (t.0 + d.0, t.1 + d.1))).collect();
+                if risers.contains(&t) {
+                    next.extend((0..=2).filter(|&m| m != l).map(|m| (m, t)));
+                }
+                for nb in next {
+                    if bore.contains_key(&nb) && !self.node_seg.contains_key(&nb) {
+                        self.node_seg.insert(nb, si);
                         queue.push_back(nb);
                     }
                 }
             }
-            let k = tiles.len() as f64;
-            let diameter = tiles.iter().map(|t| bore[t]).fold(f64::INFINITY, f64::min);
+            let tiles: Vec<Tile> = nodes.iter().filter(|n| n.0 == 0).map(|n| n.1).collect();
+            let racks: Vec<Node> = nodes.iter().filter(|n| n.0 > 0).copied().collect();
+            for &t in &tiles {
+                self.segment_of.insert(t, si);
+            }
+            let k = nodes.len() as f64;
+            let diameter = nodes.iter().map(|n| bore[n]).fold(f64::INFINITY, f64::min);
             let area = std::f64::consts::PI * diameter * diameter / 4.0;
             // Fittings, headers and the run into each machine add hold-up beyond the straight pipe;
             // it also keeps a segment's contents larger than one step's throughput.
@@ -425,8 +494,8 @@ impl World {
             // Contents: the old tiles' shares, and fresh tiles purged with nitrogen at 1 atm.
             let fresh = Vessel::new(v.volume / k, diameter, ambient);
             let (mut n, mut u, mut t_guess, mut p_guess, mut known) = ([0.0; NS], 0.0, 0.0, 0.0, 0.0);
-            for t in &tiles {
-                if let Some(s) = shares.get(t) {
+            for nd in &nodes {
+                if let Some(s) = shares.get(nd) {
                     for i in 0..NS {
                         n[i] += s.n[i];
                     }
@@ -451,7 +520,7 @@ impl World {
                 v.state = Flash { ..fresh.state };
             }
             let vi = self.net.add_vessel(v);
-            self.segments.push(Segment { tiles, vessel: vi, diameter });
+            self.segments.push(Segment { tiles, vessel: vi, diameter, racks });
         }
 
         // Buildings: their vessels, reservoirs, power hookups.
@@ -510,7 +579,7 @@ impl World {
         let mut direct: Vec<(u32, usize, u32, usize)> = vec![];
         for id in &ids {
             let e = &self.entities[id];
-            if e.proto == pipe_proto {
+            if !e.proto().levels.is_empty() {
                 continue;
             }
             for k in 0..e.proto().ports.len() {
@@ -550,19 +619,24 @@ impl World {
                     da.partial_cmp(&db).unwrap()
                 })
                 .unwrap();
-            let mut dist: HashMap<Tile, i32> = HashMap::from([(hub, 0)]);
-            let mut queue = VecDeque::from([hub]);
-            while let Some(t) = queue.pop_front() {
-                for d in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
-                    let nb = (t.0 + d.0, t.1 + d.1);
-                    if self.segment_of.get(&nb) == Some(&si) && !dist.contains_key(&nb) {
-                        dist.insert(nb, dist[&t] + 1);
+            // Walking the run, up and over racks included.
+            let mut dist: HashMap<Node, i32> = HashMap::from([((0, hub), 0)]);
+            let mut queue = VecDeque::from([(0u8, hub)]);
+            while let Some((l, t)) = queue.pop_front() {
+                let mut next: Vec<Node> = [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().map(|d| (l, (t.0 + d.0, t.1 + d.1))).collect();
+                if risers.contains(&t) {
+                    next.extend((0..=2).filter(|&m| m != l).map(|m| (m, t)));
+                }
+                for nb in next {
+                    if self.node_seg.get(&nb) == Some(&si) && !dist.contains_key(&nb) {
+                        // Climbing a riser is a few metres of pipe.
+                        dist.insert(nb, dist[&(l, t)] + if nb.0 != l { 4 } else { 1 });
                         queue.push_back(nb);
                     }
                 }
             }
             for a in ports {
-                lengths.insert((a.id, a.port), 1.0 + *dist.get(&tile_of(a)).unwrap_or(&0) as f64);
+                lengths.insert((a.id, a.port), 1.0 + *dist.get(&(0, tile_of(a))).unwrap_or(&0) as f64);
             }
         }
 
@@ -573,7 +647,7 @@ impl World {
                 (e.proto, e.proto().ports.len())
             };
             let p = &PROTOS[proto];
-            if proto == pipe_proto {
+            if !PROTOS[proto].levels.is_empty() {
                 continue;
             }
             let mut pipes: Vec<usize> = vec![];
@@ -993,6 +1067,7 @@ pub struct SegmentView {
     pub tiles: Vec<Tile>,
     pub vessel: VesselView,
     pub diameter: f64,
+    pub racks: Vec<Node>,
 }
 
 #[derive(Serialize)]
@@ -1062,7 +1137,7 @@ impl World {
         let entities = self
             .entities
             .values()
-            .filter(|e| e.proto().id != "pipe" && !e.proto().plain())
+            .filter(|e| e.proto().levels.is_empty() && !e.proto().plain())
             .map(|e| (e, e.network.map(|n| &self.grids[n])))
             .map(|(e, grid)| EntityView {
                 id: e.id, proto: e.proto().id, x: e.x, y: e.y, rot: e.rot, opening: e.opening, enabled: e.enabled,
@@ -1083,7 +1158,7 @@ impl World {
                 served: grid.and_then(|g| e.load.map(|l| g.loads[l].served)).unwrap_or(0.0),
             })
             .collect();
-        let segments = self.segments.iter().map(|s| SegmentView { tiles: s.tiles.clone(), vessel: vessel_view(&self.net.vessels[s.vessel]), diameter: s.diameter }).collect();
+        let segments = self.segments.iter().map(|s| SegmentView { tiles: s.tiles.clone(), vessel: vessel_view(&self.net.vessels[s.vessel]), diameter: s.diameter, racks: s.racks.clone() }).collect();
         let view = |g: &Grid| GridView {
             frequency: g.frequency, nominal: F_NOMINAL, generation_w: g.generation_w, load_w: g.load_w,
             shed_fraction: g.shed_fraction, blackout: g.blackout, capacity_w: capacity(g),
