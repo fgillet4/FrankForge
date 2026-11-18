@@ -110,7 +110,8 @@
     SULFUR = 7,
     URANIUM = 8,
     RARE_METALS = 9,
-    XENOCRYSTALS = 10
+    XENOCRYSTALS = 10,
+    COAL = 11
   }
   
   // Map tile interface
@@ -126,6 +127,8 @@
     traversable: boolean;
     decorations: number[]; // IDs of decorative elements
     discovered?: boolean; // Whether this tile has been seen by the player
+    /** Rivers: which way the water runs and how fast [m/s along x and y]. */
+    flow?: [number, number];
   }
   
   // Point of Interest for exploration

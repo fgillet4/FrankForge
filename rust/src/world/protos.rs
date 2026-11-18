@@ -242,6 +242,11 @@ pub const PROTOS: &[Proto] = &[
         ports: &[port(1, -1, 0, Top, "steam"), port(1, 3, 0, Bottom, "condensate")], power_w: 150e3, fans: true, ..BASE
     },
     Proto {
+        id: "water_wheel", name: "Water wheel", category: "Power",
+        description: "A paddle wheel turned by a river, driving a dynamo through a gearbox. Up to 100 kW where the current runs fast, less where the river is wide and slow. Stand it mostly in a river.",
+        size: 2, generator_w: 100e3, fueled: true, needs: Some("river"), ..BASE
+    },
+    Proto {
         id: "solar_array", name: "Solar array", category: "Power",
         description: "150 kW peak, following the day.",
         size: 2, generator_w: 150e3, ..BASE
@@ -353,9 +358,14 @@ pub const PROTOS: &[Proto] = &[
     Proto { id: "inserter", name: "Inserter", category: "Belts", description: "Moves items from the tile behind it to the tile in front. 13 kW.", power_w: 13e3, ..BASE },
     Proto { id: "wooden_chest", name: "Wooden chest", category: "Belts", description: "16 slots of storage.", ..BASE },
     Proto { id: "iron_chest", name: "Iron chest", category: "Belts", description: "32 slots of storage.", ..BASE },
-    Proto { id: "burner_drill", name: "Burner mining drill", category: "Production", description: "Mines ore under it, burning wood or solid fuel. 0.25 ore/s.", size: 2, ..BASE },
+    Proto { id: "burner_drill", name: "Burner mining drill", category: "Production", description: "Mines ore under it, burning wood, coal, charcoal or solid fuel. 0.25 ore/s.", size: 2, ..BASE },
     Proto { id: "electric_drill", name: "Electric mining drill", category: "Production", description: "Mines ore under it. 0.5 ore/s, 90 kW.", size: 3, power_w: 90e3, ..BASE },
-    Proto { id: "stone_furnace", name: "Stone furnace", category: "Production", description: "Smelts ore into plates, burning wood or solid fuel.", size: 2, ..BASE },
+    Proto { id: "stone_furnace", name: "Stone furnace", category: "Production", description: "Smelts ore into plates, burning wood, coal, charcoal or solid fuel.", size: 2, ..BASE },
+    Proto {
+        id: "charcoal_kiln", name: "Charcoal kiln", category: "Production",
+        description: "A kolmila: a turf-covered stack of logs that smoulders without air, charring 4 wood into 1 charcoal. Needs no fuel; part of each charge burns to char the rest.",
+        size: 3, ..BASE
+    },
     Proto { id: "electric_furnace", name: "Electric furnace", category: "Production", description: "Smelts ore into plates twice as fast as stone. 180 kW.", size: 3, power_w: 180e3, ..BASE },
     Proto { id: "assembler", name: "Assembling machine", category: "Production", description: "Crafts a chosen recipe from the items inserted into it. 150 kW.", size: 3, power_w: 150e3, ..BASE },
     Proto {

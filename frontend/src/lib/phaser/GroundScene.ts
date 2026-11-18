@@ -64,9 +64,11 @@ export class GroundScene extends Phaser.Scene {
         bob.tint = (c << 16) | (c << 8) | c;
         const deposit = tile.resource !== ResourceType.NONE ? RESOURCE_NAMES[tile.resource] : undefined;
         // A decal centred on each deposit tile, so you can see exactly which tiles hold it.
-        if (deposit && this.deposits && dFrames.has(deposit)) {
+        const h = Math.imul(variant ^ (variant >>> 15), 0x2c1b3c6d) >>> 0;
+        // Groundwater is underground: only the odd spring shows where it is.
+        const shows = tile.resource !== ResourceType.WATER || (h >>> 4) % 4 === 0;
+        if (deposit && shows && this.deposits && dFrames.has(deposit)) {
           const f = this.textures.getFrame('deposits', deposit);
-          const h = Math.imul(variant ^ (variant >>> 15), 0x2c1b3c6d) >>> 0;
           // Nudged a little within its own tile; richer tiles show stronger.
           const jx = ((h >>> 8) % 17) - 8, jy = ((h >>> 16) % 9) - 4;
           const d = this.deposits.create(lx - f.width / 2 + jx, ly + 32 - f.height / 2 + jy, deposit).setFlipX(h % 2 === 1);

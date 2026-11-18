@@ -197,6 +197,15 @@
   "oy": 0.9959,
   "w": 60
  },
+ "charcoal_kiln": {
+  "fps": 8,
+  "frames": 24,
+  "h": 415,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.9956,
+  "w": 388
+ },
  "chemical_plant": {
   "fps": 8,
   "frames": 24,
@@ -511,6 +520,15 @@
   "ox": 0.5,
   "oy": 1.0,
   "w": 256
+ },
+ "water_wheel": {
+  "fps": 8,
+  "frames": 24,
+  "h": 273,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 1.0,
+  "w": 259
  },
  "wreck": {
   "fps": 8,

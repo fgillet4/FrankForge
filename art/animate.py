@@ -181,6 +181,11 @@ def key_frame(px, key, edge, strong=False):
     return np.dstack([rgb, a * edge * 255]).astype(np.uint8)
 
 
+# Loops whose effect builds up from nothing and never dies back to the still (smoke seeping from a
+# kiln): the loop is cut from the settled part of the video and crossfaded across its seam.
+SETTLE = {"charcoal_kiln"}
+
+
 def sheet(name, plume, mode):
     vid = VID / f"{name}.mp4"
     if not vid.exists():
@@ -192,12 +197,25 @@ def sheet(name, plume, mode):
     subprocess.run(["ffmpeg", "-v", "error", "-i", str(vid), "-fps_mode", "passthrough", str(fdir / "%04d.png")], check=True)
     files = sorted(fdir.glob("*.png"))
     count = 24
-    idx = np.unique(np.round(np.linspace(0, len(files) - 1, count + (1 if mode == "loop" else 0))).astype(int))
-    if mode == "loop":
-        idx = idx[:-1]  # the last frame repeats the first
+    blend = 6 if name in SETTLE else 0
+    if blend:
+        # Every other source frame from the settled second half, plus a few more to fade over the seam.
+        start = len(files) - 2 * (count + blend)
+        idx = np.arange(start, len(files), 2)[:count + blend]
+    else:
+        idx = np.unique(np.round(np.linspace(0, len(files) - 1, count + (1 if mode == "loop" else 0))).astype(int))
+        if mode == "loop":
+            idx = idx[:-1]  # the last frame repeats the first
+    first = np.asarray(Image.open(files[0]).convert("RGB"), dtype=np.float32)
     raw = [np.asarray(Image.open(files[i]).convert("RGB"), dtype=np.float32) for i in idx]
+    if blend:
+        # The first frames fade in from the frames that follow the loop's end, so it wraps smoothly.
+        for i in range(blend):
+            w = (i + 0.5) / blend
+            raw[i] = raw[i] * w + raw[count + i] * (1 - w)
+        raw = raw[:count]
     # The screen colour comes from the first frame: later ones may be full of smoke to the edges.
-    key = screen_colour(raw[0])
+    key = screen_colour(first)
     vw = raw[0].shape[1]
     # Fade out near the video's edges so anything the frame clipped doesn't end in a hard line.
     ramp = np.clip(np.minimum(np.arange(vw), np.arange(vw)[::-1]) / 140.0, 0, 1)
@@ -210,7 +228,7 @@ def sheet(name, plume, mode):
             fade = np.clip((n - 1 - i) / (0.3 * n), 0, 1)
             fr[..., 3] = (fr[..., 3] * fade).astype(np.uint8)
     # Where the subject sits, measured on the first frame (the video model may reframe a little).
-    ys, xs = np.nonzero(frames[0][..., 3] > 128)
+    ys, xs = np.nonzero(key_frame(first, key, edge, name in STRONG_DESPILL)[..., 3] > 128)
     bx0, by0, bx1, by1 = xs.min(), ys.min(), xs.max() + 1, ys.max() + 1
     cx = (bx0 + bx1) / 2
     # Keep what moves within reach of the machine: a window around it, tall if it has a plume.

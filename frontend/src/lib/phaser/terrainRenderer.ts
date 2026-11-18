@@ -47,6 +47,7 @@ export const RESOURCE_COLORS: Record<number, number> = {
   [ResourceType.URANIUM]:      0x44ff44,
   [ResourceType.RARE_METALS]:  0xdd44cc,
   [ResourceType.XENOCRYSTALS]: 0xff44ff,
+  [ResourceType.COAL]:         0x2a2a2e,
 };
 
 export const RESOURCE_NAMES: Partial<Record<number, string>> = {
@@ -60,6 +61,7 @@ export const RESOURCE_NAMES: Partial<Record<number, string>> = {
   [ResourceType.URANIUM]:      'uranium',
   [ResourceType.RARE_METALS]:  'rare_metals',
   [ResourceType.XENOCRYSTALS]: 'xenocrystals',
+  [ResourceType.COAL]:         'coal',
 };
 
 /** Draw one isometric ground tile at grid position (ix, iy). */

@@ -38,6 +38,7 @@ export const BUILDING_SPRITES = [
   'ammonia_converter', 'methanol_reactor', 'cracker_furnace', 'electrolyser', 'power_pole', 'wreck',
   'burner_drill', 'electric_drill', 'stone_furnace', 'electric_furnace', 'assembler', 'lab', 'chemical_plant',
   'wooden_chest', 'iron_chest', 'inserter', 'gun_turret', 'laser_turret', 'substation', 'cstr', 'burner_generator',
+  'charcoal_kiln', 'water_wheel',
 ];
 
 /** Colour of a fluid by what dominates it. */
@@ -173,6 +174,8 @@ function isRunning(e: EntityView, snap: Snapshot): boolean {
   if (!e.enabled) return false;
   // Flares keep a pilot flame.
   if (e.proto === 'flare_stack') return true;
+  // The river turns a wheel whether or not anything draws on it.
+  if (e.proto === 'water_wheel') return true;
   if (e.proto === 'power_pole') return !snap.grid.blackout && Math.abs(snap.grid.frequency - snap.grid.nominal) > 0.5;
   if (e.battery) return !snap.grid.blackout && snap.grid.generation_w > 0;
   return e.generation_w > 1 || e.power_w > 1

@@ -31,6 +31,8 @@ export const ITEMS: Record<string, Item> = Object.fromEntries([
   item('copper_ore', 'Copper ore', 50),
   item('silicon_ore', 'Silica sand', 50),
   item('sulfur', 'Sulfur', 50),
+  item('coal', 'Coal', 50, { fuel: 25e6 }),
+  item('charcoal', 'Charcoal', 50, { fuel: 30e6 }),
   item('iron_plate', 'Iron plate'),
   item('copper_plate', 'Copper plate'),
   item('steel_plate', 'Steel plate'),
@@ -58,9 +60,9 @@ export const ITEMS: Record<string, Item> = Object.fromEntries([
     ['transport_belt', 'Transport belt'], ['underground_belt', 'Underground belt'], ['splitter', 'Splitter'],
     ['inserter', 'Inserter'], ['burner_inserter', 'Burner inserter'], ['wooden_chest', 'Wooden chest'], ['iron_chest', 'Iron chest'],
     ['burner_drill', 'Burner mining drill'], ['electric_drill', 'Electric mining drill'],
-    ['stone_furnace', 'Stone furnace'], ['electric_furnace', 'Electric furnace'], ['assembler', 'Assembling machine'],
+    ['stone_furnace', 'Stone furnace'], ['charcoal_kiln', 'Charcoal kiln'], ['electric_furnace', 'Electric furnace'], ['assembler', 'Assembling machine'],
     ['chemical_plant', 'Chemical plant'], ['lab', 'Lab'], ['gun_turret', 'Gun turret'], ['laser_turret', 'Laser turret'],
-    ['power_pole', 'Power pole'], ['substation', 'Substation'], ['burner_generator', 'Burner generator'],
+    ['power_pole', 'Power pole'], ['substation', 'Substation'], ['burner_generator', 'Burner generator'], ['water_wheel', 'Water wheel'],
     ['valve', 'Gate valve'], ['check_valve', 'Check valve'], ['relief_valve', 'Relief valve'], ['pump', 'Centrifugal pump'], ['compressor', 'Gas compressor'],
     ['storage_tank', 'Storage tank'], ['gas_sphere', 'Pressure sphere'], ['water_well', 'Water well'], ['gas_well', 'Gas well'],
     ['air_intake', 'Air blower'], ['vent', 'Atmospheric vent'], ['flare_stack', 'Flare stack'], ['fired_boiler', 'Fired boiler'],
@@ -73,7 +75,7 @@ export const ITEMS: Record<string, Item> = Object.fromEntries([
 ].map(i => [i.id, ['transport_belt', 'underground_belt', 'splitter'].includes(i.id) ? { ...i, icon: `item_${i.id}` } : i]));
 
 /** Where a recipe can be made. Hand recipes can also be made in an assembler. */
-export type Station = 'hand' | 'smelt' | 'chem';
+export type Station = 'hand' | 'smelt' | 'chem' | 'kiln';
 
 export interface Recipe {
   id: string;
@@ -96,6 +98,8 @@ export const RECIPES: Record<string, Recipe> = Object.fromEntries(([
   r('stone_brick', 1, { stone: 2 }, 3.2, 'smelt'),
   r('steel_plate', 1, { iron_plate: 5 }, 16, 'smelt'),
   r('silicon', 1, { silicon_ore: 2 }, 6.4, 'smelt'),
+  // Charring: about a quarter of the wood's mass comes out as charcoal, half its heat.
+  r('charcoal', 1, { wood: 4 }, 12, 'kiln'),
   // Intermediates.
   r('iron_gear', 1, { iron_plate: 2 }, 0.5),
   r('copper_cable', 2, { copper_plate: 1 }, 0.5),
@@ -133,6 +137,7 @@ export const RECIPES: Record<string, Recipe> = Object.fromEntries(([
   r('burner_drill', 1, { iron_gear: 3, stone_furnace: 1, iron_plate: 3 }, 2),
   r('electric_drill', 1, { circuit: 3, iron_gear: 5, iron_plate: 10 }, 2),
   r('stone_furnace', 1, { stone: 5 }, 0.5),
+  r('charcoal_kiln', 1, { wood: 10, stone: 10 }, 2),
   r('electric_furnace', 1, { steel_plate: 10, circuit: 5, stone_brick: 10 }, 5),
   r('assembler', 1, { circuit: 3, iron_gear: 5, iron_plate: 9 }, 0.5),
   r('chemical_plant', 1, { steel_plate: 5, iron_gear: 5, circuit: 5, pipe: 5 }, 5),
@@ -142,6 +147,7 @@ export const RECIPES: Record<string, Recipe> = Object.fromEntries(([
   // Power.
   r('power_pole', 2, { wood: 1, copper_cable: 2 }, 0.5),
   r('burner_generator', 1, { iron_gear: 5, stone_furnace: 1, copper_cable: 10, pipe: 2 }, 3),
+  r('water_wheel', 1, { wood: 20, stone: 10, iron_gear: 5, copper_cable: 10 }, 3),
   r('substation', 1, { steel_plate: 5, circuit: 5, copper_plate: 5 }, 5),
   r('solar_array', 1, { steel_plate: 5, circuit: 15, copper_plate: 5, silicon: 5 }, 10),
   r('battery_bank', 1, { circuit: 5, copper_plate: 10, sulfur: 10, iron_plate: 10 }, 5),

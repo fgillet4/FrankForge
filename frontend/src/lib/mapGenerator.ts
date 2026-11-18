@@ -362,7 +362,7 @@ function createAlienRuins(map: PlanetMap, centerX: number, centerY: number): voi
 // Place ore patches using seeded RNG
 /**
  * Factorio-style resource patches: compact, single-resource fields with ragged edges, richest at
- * the centre. A starter set of iron, copper, gas and water sits near the landing site; the rest,
+ * the centre. A starter set of iron, coal, copper, gas and water sits near the landing site; the rest,
  * bigger the further out they are, are spread over the map. Counts scale with map area and the
  * richness setting.
  */
@@ -383,6 +383,8 @@ function placeOrePatches(map: PlanetMap, seed: number): void {
         if (!tile || !tile.traversable || tile.resource !== ResourceType.NONE) continue;
         const d = Math.hypot(dx, dy) / radius + edge(tx * 0.25, ty * 0.25) * 0.3;
         if (d > 1) continue;
+        // Groundwater comes in small pockets; rivers and lakes are the big water.
+        if (resource === ResourceType.WATER && d > 0.5) continue;
         tile.resource = resource;
         tile.resourceDensity = Math.min(1, 0.35 + (1 - d) * 0.75);
       }
@@ -421,6 +423,153 @@ function placeOrePatches(map: PlanetMap, seed: number): void {
       const far = Math.hypot(s[0] - cx, s[1] - cy) / span;
       patch(res, s[0], s[1], 3 + far * 4 + rng() * 2);
     }
+  }
+  // Coal last, from its own stream, so the patches above land where they always have: one close
+  // to the landing site, as plentiful as iron further out.
+  const crng = seedrandom(`${seed}:coal`);
+  const coalSpot = (minD: number, maxD: number): [number, number] | null => {
+    for (let k = 0; k < 60; k++) {
+      const a = crng() * Math.PI * 2, d = minD + crng() * (maxD - minD);
+      const x = cx + Math.cos(a) * d, y = cy + Math.sin(a) * d;
+      const t = map.tiles[Math.round(y)]?.[Math.round(x)];
+      if (t?.traversable && t.resource === ResourceType.NONE) return [x, y];
+    }
+    return null;
+  };
+  const first = coalSpot(7, Math.min(14, span * 0.8));
+  if (first) patch(ResourceType.COAL, first[0], first[1], 4.5);
+  for (let k = 0; k < Math.round(6 * scale); k++) {
+    const s = coalSpot(span * 0.3, span * 0.95);
+    if (!s) continue;
+    const far = Math.hypot(s[0] - cx, s[1] - cy) / span;
+    patch(ResourceType.COAL, s[0], s[1], 3 + far * 4 + crng() * 2);
+  }
+}
+
+/**
+ * Lakes and rivers, after the ore so the patches stay where they always were. Each is the best of
+ * a few tries: the one drowning the fewest deposits. One river runs past the landing site; rivers
+ * meander from the map edge to the sea or a lake, widening and slowing as they go.
+ */
+function carveWater(map: PlanetMap, seed: number): void {
+  const rng = seedrandom(`${seed}:water`);
+  const wander = createNoise2D(seedrandom(`${seed}:meander`));
+  const edge = createNoise2D(seedrandom(`${seed}:shores`));
+  const cx = map.width / 2, cy = map.height / 2;
+  const span = Math.min(map.width, map.height) / 2;
+  const area = map.width * map.height;
+  const tileAt = (x: number, y: number) => map.tiles[Math.round(y)]?.[Math.round(x)];
+  const wet = (t: MapTile) => t.terrain === TerrainType.SHALLOW_WATER || t.terrain === TerrainType.DEEP_WATER;
+  /** Deposits a set of tiles would drown, and whether it crowds the landing site. */
+  const cost = (tiles: Iterable<[number, number]>) => {
+    let c = 0;
+    for (const [x, y] of tiles) {
+      const t = map.tiles[y]?.[x];
+      if (t && t.resource !== ResourceType.NONE) c++;
+      if (Math.hypot(x - cx, y - cy) < 7) c += 50;
+    }
+    return c;
+  };
+  const drown = (t: MapTile, deep: boolean) => {
+    t.terrain = deep ? TerrainType.DEEP_WATER : TerrainType.SHALLOW_WATER;
+    t.traversable = !deep;
+    t.resource = ResourceType.NONE;
+    t.resourceDensity = 0;
+    t.decorations = [];
+  };
+
+  // Lakes: a deep middle you can't wade into, shallows round the edge.
+  const lakeTiles = (lx: number, ly: number, r: number) => {
+    const out: [number, number, boolean][] = [];
+    const R = Math.ceil(r * 1.4);
+    for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
+      const x = Math.round(lx + dx), y = Math.round(ly + dy);
+      if (!map.tiles[y]?.[x]) continue;
+      const d = Math.hypot(dx, dy) / r + edge(x * 0.2, y * 0.2) * 0.3;
+      if (d <= 1) out.push([x, y, d < 0.55]);
+    }
+    return out;
+  };
+  const lakes: [number, number][] = [];
+  for (let n = 0; n < Math.max(1, Math.round(area / 9000)); n++) {
+    let best: { tiles: [number, number, boolean][]; c: number; at: [number, number] } | null = null;
+    for (let k = 0; k < 8; k++) {
+      const a = rng() * Math.PI * 2, d = 16 + rng() * (span * 0.85 - 16);
+      const lx = cx + Math.cos(a) * d, ly = cy + Math.sin(a) * d;
+      const tiles = lakeTiles(lx, ly, 3.5 + rng() * 3);
+      const c = cost(tiles.map(([x, y]) => [x, y] as [number, number]));
+      if (!best || c < best.c) best = { tiles, c, at: [lx, ly] };
+    }
+    if (!best) continue;
+    for (const [x, y, deep] of best.tiles) drown(map.tiles[y][x], deep);
+    lakes.push(best.at);
+  }
+
+  /** A meandering course through waypoints, as points every half tile with their heading. */
+  const course = (pts: [number, number][], phase: number) => {
+    const out: { x: number; y: number; a: number }[] = [];
+    let [x, y] = pts[0];
+    for (let i = 1; i < pts.length; i++) {
+      const [gx, gy] = pts[i];
+      for (let s = 0; s < 2000 && Math.hypot(gx - x, gy - y) > 1; s++) {
+        const near = Math.min(1, Math.hypot(gx - x, gy - y) / 8);
+        const a = Math.atan2(gy - y, gx - x) + wander(out.length * 0.025, phase) * 1.1 * near;
+        x += Math.cos(a) * 0.5; y += Math.sin(a) * 0.5;
+        out.push({ x, y, a });
+        const t = tileAt(x, y);
+        if (!t) return out;
+        // A river ends where it reaches standing water.
+        if (i === pts.length - 1 && wet(t) && !t.flow && Math.hypot(gx - x, gy - y) < span) return out;
+      }
+    }
+    return out;
+  };
+  /** Where a course from (x, y) heading away from (tx, ty) meets the map edge. */
+  const toEdge = (x: number, y: number, tx: number, ty: number): [number, number] => {
+    const a = Math.atan2(y - ty, x - tx);
+    let px = x, py = y;
+    while (map.tiles[Math.round(py + Math.sin(a))]?.[Math.round(px + Math.cos(a))]) { px += Math.cos(a); py += Math.sin(a); }
+    return [px, py];
+  };
+  /** The nearest standing water to a point, away from the landing site. */
+  const sea = (x: number, y: number): [number, number] | null => {
+    let best: [number, number] | null = null, bd = Infinity;
+    for (let ty = 0; ty < map.height; ty += 2) for (let tx = 0; tx < map.width; tx += 2) {
+      const t = map.tiles[ty][tx];
+      if (!wet(t) || t.flow || Math.hypot(tx - cx, ty - cy) < 12) continue;
+      const d = Math.hypot(tx - x, ty - y);
+      if (d < bd) { bd = d; best = [tx, ty]; }
+    }
+    return best;
+  };
+
+  for (let n = 0; n < Math.max(1, Math.round(area / 10000)); n++) {
+    let best: { pts: { x: number; y: number; a: number }[]; c: number } | null = null;
+    for (let k = 0; k < 6; k++) {
+      // The first river passes close to the landing site, for an early water wheel.
+      const a = rng() * Math.PI * 2, d = n === 0 ? 10 + rng() * 8 : span * (0.3 + rng() * 0.5);
+      const via: [number, number] = [cx + Math.cos(a) * d, cy + Math.sin(a) * d];
+      const mouth = sea(via[0], via[1]) ?? toEdge(via[0], via[1], cx, cy);
+      const source = toEdge(via[0], via[1], mouth[0], mouth[1]);
+      const pts = course([source, via, mouth], n * 7.3 + k * 1.7);
+      const tiles = new Set<number>();
+      pts.forEach((p, i) => { const w = 1 + 0.6 * i / pts.length; for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) if (Math.hypot(dx, dy) <= w) tiles.add(Math.round(p.y + dy) * 100000 + Math.round(p.x + dx)); });
+      const c = cost([...tiles].map(key => [key % 100000, Math.floor(key / 100000)] as [number, number]));
+      if (pts.length > 20 && (!best || c < best.c)) best = { pts, c };
+    }
+    if (!best) continue;
+    best.pts.forEach((p, i) => {
+      // Narrow and quick at the source, wider and slower toward the mouth.
+      const w = 1 + 0.6 * i / best!.pts.length;
+      const speed = 2.2 / w;
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+        if (Math.hypot(dx, dy) > w) continue;
+        const t = tileAt(p.x + dx, p.y + dy);
+        if (!t || (wet(t) && !t.flow)) continue;
+        drown(t, false);
+        t.flow = [Math.cos(p.a) * speed, Math.sin(p.a) * speed];
+      }
+    });
   }
 }
 
@@ -559,6 +708,7 @@ export function generatePlanetMap(params: MapGeneratorParams): PlanetMap {
 
   // Place ore patches (after tile generation, before special features)
   placeOrePatches(map, seed);
+  if ([PlanetType.EARTH_LIKE, PlanetType.OCEAN, PlanetType.ALIEN].includes(planetType as PlanetType)) carveWater(map, seed);
 
   // Add special features and points of interest
   addSpecialFeatures(map, specialFeatureCount);

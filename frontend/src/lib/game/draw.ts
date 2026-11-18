@@ -13,6 +13,7 @@ import type { Combat } from './combat';
 import { RECIPES } from './items';
 import { popScale } from './juice';
 import type { NatureObject } from './nature';
+import type { PlanetMap } from '../types';
 
 const SPRITE_TILE_PX = 128;
 
@@ -47,10 +48,11 @@ class Pool<T extends Phaser.GameObjects.GameObject> {
 }
 
 /** Buildings the process layer doesn't draw (they're not in the engine's snapshot). */
-const SPRITED = new Set(['wooden_chest', 'iron_chest', 'burner_drill', 'stone_furnace', 'gun_turret']);
+const SPRITED = new Set(['wooden_chest', 'iron_chest', 'burner_drill', 'stone_furnace', 'gun_turret', 'charcoal_kiln']);
 /** Problems worth a badge over the building, Factorio-style: colour and the item to show. */
 const ALERTS: Record<string, [number, (e: FEntity) => string | null]> = {
   'Out of fuel': [0xff5a4f, () => 'wood'],
+  'No wood': [0xffc23a, () => 'wood'],
   'No ore left': [0xff5a4f, () => 'iron_ore'],
   'Output full': [0xffc23a, e => e.output?.first() ?? null],
   'Output blocked': [0xffc23a, e => e.held ?? null],
@@ -110,6 +112,8 @@ export class WorldRenderer {
   private sprites: Pool<Phaser.GameObjects.Sprite>;
   private nature: Pool<Phaser.GameObjects.Image>;
   private parts: Pool<Phaser.GameObjects.Image>;
+  /** The ground, for its rivers. */
+  map: PlanetMap | null = null;
   /** Stacks lying on the ground. */
   piles: { item: string; count: number; x: number; y: number }[] = [];
 
@@ -140,6 +144,28 @@ export class WorldRenderer {
     const box = visibleTiles(v);
     const inView = (x: number, y: number, n = 1) => x + n >= box.x0 && x <= box.x1 && y + n >= box.y0 && y <= box.y1;
     const scale = (TILE_W * v.zoom) / SPRITE_TILE_PX;
+
+    // Rivers run: pale glints drift downstream, quicker where the water is.
+    if (this.map) {
+      const g = this.ground;
+      for (let y = Math.max(0, box.y0); y <= Math.min(this.map.height - 1, box.y1); y++) {
+        for (let x = Math.max(0, box.x0); x <= Math.min(this.map.width - 1, box.x1); x++) {
+          const fl = this.map.tiles[y][x].flow;
+          if (!fl) continue;
+          const speed = Math.hypot(fl[0], fl[1]);
+          const ux = fl[0] / speed, uy = fl[1] / speed;
+          for (let k = 0; k < 2; k++) {
+            const h = ((x * 73856093) ^ (y * 19349663) ^ (k * 83492791)) >>> 0;
+            const ph = (time * 0.00045 * speed + (h % 1000) / 1000) % 1;
+            // Across the flow, each glint keeps its own lane.
+            const off = ((h >>> 10) % 100) / 100 - 0.5;
+            const sx = x + 0.5 + ux * (ph - 0.5) - uy * off * 0.8, sy = y + 0.5 + uy * (ph - 0.5) + ux * off * 0.8;
+            const a = this.at(v, sx, sy), b = this.at(v, sx + ux * 0.28, sy + uy * 0.28);
+            g.lineStyle(1.6 * v.zoom, 0xd8f0ff, 0.32 * Math.sin(ph * Math.PI)).lineBetween(a.x, a.y, b.x, b.y);
+          }
+        }
+      }
+    }
 
     // Alien remains, on the ground.
     for (const s of combat.splats) {
@@ -198,6 +224,12 @@ export class WorldRenderer {
         const shake = e.active && e.kind === 'burner_drill' ? Math.sin(time * 0.05) * v.zoom : 0;
         s.setPosition(b.x + shake, b.y + TILE_H * v.zoom * 0.08).setScale(scale * popScale(e.id, time)).setDepth(10 + (e.x + e.y + 2 * e.size) * 0.01);
         s.setFlipX(e.kind === 'gun_turret' ? Math.cos(e.aim ?? 0) - Math.sin(e.aim ?? 0) < 0 : e.rot % 2 === 1);
+        // A smouldering kiln seeps smoke from vents all over its mound.
+        if (e.active && e.kind === 'charcoal_kiln' && this.fx && Math.random() < 0.18) {
+          const a = Math.random() * Math.PI * 2, r = 0.45 + Math.random() * 0.5;
+          const h = s.displayHeight / v.zoom * (0.75 - r * 0.45);
+          this.fx.smoke(e.x + e.size / 2 + Math.cos(a) * r, e.y + e.size / 2 + Math.sin(a) * r, h);
+        }
       }
       // Fire glow in working burner machines.
       if (e.active && BURNING.has(e.kind) && !parted) {

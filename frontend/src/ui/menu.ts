@@ -59,6 +59,9 @@ export const HOW_TO_PLAY = `
     <li>The goal under the minimap always shows a next step.</li>
     <li>Chop trees for wood and break rocks for stone. Five stone make a furnace; fuel it with wood and drop in ore.</li>
     <li>A burner drill on an ore deposit mines by itself. Point its output at a furnace or a belt.</li>
+    <li>Coal (the black deposits) burns longer than wood: a lump of coal gives about 1⅔ times the heat of a log, and charcoal twice. A charcoal kiln (a kolmila) smoulders four logs down to one lump of charcoal, losing half the heat but packing the rest densely.</li>
+    <li>Rivers flow: a water wheel standing mostly in one makes up to 100 kW, more where the current runs fast (hover the water to see). Enough for an air blower before you have a boiler.</li>
+    <li>Lakes and the shallows along rivers take a water well for boiler feed; deep water you can't wade into or build on.</li>
     <li>Craft red science packs and a lab, choose a research (T), and the lab will unlock new buildings.</li>
     <li>Electric buildings need a power pole whose blue area covers them; poles wire to each other within reach.</li>
     <li>Wells, drills and other extraction buildings must stand mostly on their deposit; it lights up green while you place one.</li>

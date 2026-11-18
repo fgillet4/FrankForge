@@ -170,5 +170,13 @@
  "relief_valve": {
   "w": 128,
   "h": 131
+ },
+ "charcoal_kiln": {
+  "w": 384,
+  "h": 410
+ },
+ "water_wheel": {
+  "w": 256,
+  "h": 274
  }
 }

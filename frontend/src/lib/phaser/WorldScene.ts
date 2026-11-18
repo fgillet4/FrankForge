@@ -187,6 +187,7 @@ export class WorldScene extends Phaser.Scene {
     this.scene.moveBelow('WorldScene', 'GroundScene');
 
     this.worldDraw = new WorldRenderer(this);
+    this.worldDraw.map = this.map;
     this.juice = new Juice(this);
     this.worldDraw.fx = {
       chips: (x, y) => this.juice.burst(x + (Math.random() - 0.5) * 0.3, y + (Math.random() - 0.5) * 0.3, 2,
@@ -322,6 +323,7 @@ export class WorldScene extends Phaser.Scene {
       this.eng.tickCrafting(dt);
       this.factory.tick(dt, this.factoryCtx());
       for (const e of this.factory.entities.values()) if (isElectricMachine(e.kind)) engine.setDemand(e.id, this.factory.demand(e));
+      for (const p of engine.layout()) if (p.proto === 'water_wheel') engine.setDemand(p.id, this.current(p.x, p.y, 2));
       this.combat.update(dt, this.arena(), time);
       for (const s of this.combat.sounds.splice(0)) {
         const [vol, gap] = { gunshot: [0.25, 70], laser: [0.3, 90], alien_hit: [0.3, 90], alien_die: [0.45, 120] }[s.kind];
@@ -795,7 +797,7 @@ export class WorldScene extends Phaser.Scene {
     }
     const [tx, ty] = key.slice(1).split(',').map(Number);
     const ore = MINED_ITEM[this.map.tiles[ty]?.[tx]?.resource];
-    return ore === 'copper_ore' ? [0xc8703a, 0x8a5a3a] : ore === 'stone' ? [0x8a8680, 0xa8a49c] : [0x6a7a88, 0x8a6a5a, 0x4a4f57];
+    return ore === 'copper_ore' ? [0xc8703a, 0x8a5a3a] : ore === 'coal' ? [0x1c1c20, 0x3a3a40, 0x2a2622] : ore === 'stone' ? [0x8a8680, 0xa8a49c] : [0x6a7a88, 0x8a6a5a, 0x4a4f57];
   }
 
   /** Holding F picks items off belts within reach of the engineer's feet. */
@@ -1231,6 +1233,16 @@ export class WorldScene extends Phaser.Scene {
     return { x: tx - off, y: ty - off };
   }
 
+  /** How hard a river drives a wheel standing on it: its mean current over the full 2.2 m/s. */
+  private current(x: number, y: number, size: number) {
+    let sum = 0;
+    for (let dy = 0; dy < size; dy++) for (let dx = 0; dx < size; dx++) {
+      const f = this.map.tiles[y + dy]?.[x + dx]?.flow;
+      if (f) sum += Math.hypot(f[0], f[1]);
+    }
+    return Math.min(1, sum / (size * size) / 2.2);
+  }
+
   /** What resource a building must stand on. */
   private needOf(proto: string): string | null {
     if (proto.endsWith('_drill')) return 'ore';
@@ -1240,6 +1252,7 @@ export class WorldScene extends Phaser.Scene {
   private tileHas(need: string, x: number, y: number) {
     const t = this.map.tiles[y]?.[x];
     if (!t) return false;
+    if (need === 'river') return !!t.flow;
     if (need === 'water') return t.resource === ResourceType.WATER || t.terrain === TerrainType.SHALLOW_WATER || t.terrain === TerrainType.ICE;
     if (need === 'methane') return t.resource === ResourceType.METHANE || t.terrain === TerrainType.METHANE_LAKE;
     if (need === 'ore') return !!MINED_ITEM[t.resource] && this.factory.oreLeft(this.map, x, y) > 0;
@@ -1271,14 +1284,14 @@ export class WorldScene extends Phaser.Scene {
       if (onGround && engine.entityAt(tx, ty) >= 0) return 'Something is in the way.';
       for (const l of levels) if (l > 0 && engine.rackAt(tx, ty, l) >= 0) return l === 1 ? 'The low rack is taken here.' : 'The high rack is taken here.';
       if (this.combat.nestAt(tx, ty)) return 'An alien nest is in the way.';
-      const water = t.terrain === TerrainType.DEEP_WATER || (t.terrain === TerrainType.SHALLOW_WATER && p.needs !== 'water');
+      const water = t.terrain === TerrainType.DEEP_WATER || (t.terrain === TerrainType.SHALLOW_WATER && p.needs !== 'water' && p.needs !== 'river');
       if (water || t.terrain === TerrainType.LAVA || t.terrain === TerrainType.MOUNTAINS) return "You can't build there.";
     }
     const need = this.needOf(proto);
     if (need) {
       const on = tiles.filter(([tx, ty]) => this.tileHas(need, tx, ty)).length;
       if (on < Math.ceil(tiles.length / 2)) {
-        const what = need === 'ore' ? 'an ore deposit' : need === 'water' ? 'water' : 'a methane deposit';
+        const what = need === 'ore' ? 'an ore deposit' : need === 'water' ? 'water' : need === 'river' ? 'a river' : 'a methane deposit';
         return `${p.name} must stand mostly on ${what} (${on} of ${tiles.length} tiles are).`;
       }
     }
@@ -1475,7 +1488,10 @@ export class WorldScene extends Phaser.Scene {
     }
     if (!main) {
       const t = this.map.tiles[ty]?.[tx];
-      if (t && t.resource !== ResourceType.NONE) {
+      if (t?.flow) main = `<b>River</b> · ${Math.hypot(...t.flow).toFixed(1)} m/s<br><small>A water wheel or a water well goes here</small>`;
+      else if (t?.terrain === TerrainType.SHALLOW_WATER) main = '<b>Shallows</b><br><small>A water well goes here</small>';
+      else if (t?.terrain === TerrainType.DEEP_WATER) main = '<b>Deep water</b>';
+      else if (t && t.resource !== ResourceType.NONE) {
         const ore = MINED_ITEM[t.resource];
         const name = RESOURCE_NAMES[t.resource] ?? 'deposit';
         main = ore

@@ -26,12 +26,13 @@ export const MINED_ITEM: Partial<Record<ResourceType, string>> = {
   [ResourceType.COPPER]: 'copper_ore',
   [ResourceType.SILICON]: 'silicon_ore',
   [ResourceType.SULFUR]: 'sulfur',
+  [ResourceType.COAL]: 'coal',
 };
 
 export const FACTORY_KINDS = new Set([
   'transport_belt', 'underground_belt', 'splitter', 'inserter', 'burner_inserter', 'wooden_chest', 'iron_chest', 'burner_drill',
   'electric_drill', 'stone_furnace', 'electric_furnace', 'assembler', 'chemical_plant', 'lab', 'gun_turret', 'laser_turret',
-  'burner_generator',
+  'burner_generator', 'charcoal_kiln',
 ]);
 
 const BELTLIKE = new Set(['transport_belt', 'underground_belt', 'splitter']);
@@ -132,7 +133,7 @@ export class Factory {
     if (kind === 'wooden_chest') e.inv = new Inventory(16);
     if (kind === 'iron_chest') e.inv = new Inventory(32);
     if (kind in BURNER) { e.fuel = new Inventory(1); e.burn = 0; }
-    if (kind.endsWith('_furnace') || kind === 'assembler' || kind === 'chemical_plant') {
+    if (kind.endsWith('_furnace') || kind === 'assembler' || kind === 'chemical_plant' || kind === 'charcoal_kiln') {
       e.input = new Inventory(kind === 'assembler' ? 6 : 1);
       e.output = new Inventory(1);
       e.progress = 0;
@@ -211,6 +212,10 @@ export class Factory {
     if (BELTLIKE.has(e.kind)) return this.beltRoom(e, 0.5);
     if (e.inv && (e.kind.endsWith('_chest'))) return e.inv.room(item) > 0;
     if (e.fuel && ITEMS[item]?.fuel && e.fuel.count(item) < 10 && e.fuel.room(item) > 0) return true;
+    if (e.kind === 'charcoal_kiln') {
+      const r = kilnRecipe(item, ctx);
+      return !!r && e.input!.room(item) > 0 && e.input!.count(item) < r.in[item] * 5;
+    }
     if (e.kind.endsWith('_furnace')) {
       const r = smeltRecipe(item, ctx);
       return !!r && e.input!.room(item) > 0 && e.input!.count(item) < Math.max(10, r.in[item] * 2) && (e.input!.isEmpty() || e.input!.count(item) > 0);
@@ -233,6 +238,7 @@ export class Factory {
     if (e.kind === 'lab') return item.startsWith('science_') ? e.inv : undefined;
     if (e.kind === 'gun_turret') return ITEMS[item]?.gear === 'ammo' ? e.inv : undefined;
     if (e.kind.endsWith('_furnace') && smeltable(item)) return e.input;
+    if (e.kind === 'charcoal_kiln') return Object.values(RECIPES).some(r => r.station === 'kiln' && item in r.in) ? e.input : undefined;
     if (e.fuel && ITEMS[item]?.fuel) return e.fuel;
     if (e.kind === 'assembler' && e.recipe && RECIPES[e.recipe]?.in[item]) return e.input;
     return undefined;
@@ -242,7 +248,7 @@ export class Factory {
   give(e: FEntity, item: string, ctx: FactoryContext, beltPos = 0.5) {
     if (BELTLIKE.has(e.kind)) { this.insertOnBelt(e, item, beltPos); return; }
     if (e.fuel && ITEMS[item]?.fuel && !(e.kind.endsWith('_furnace') && smeltRecipe(item, ctx))) { e.fuel.add(item, 1); return; }
-    if (e.input && (e.kind.endsWith('_furnace') || e.kind === 'assembler')) { e.input.add(item, 1); return; }
+    if (e.input && (e.kind.endsWith('_furnace') || e.kind === 'assembler' || e.kind === 'charcoal_kiln')) { e.input.add(item, 1); return; }
     e.inv?.add(item, 1);
   }
 
@@ -308,7 +314,7 @@ export class Factory {
       switch (e.kind) {
         case 'inserter': case 'burner_inserter': this.tickInserter(e, dt, ctx); break;
         case 'burner_drill': case 'electric_drill': this.tickDrill(e, dt, ctx); break;
-        case 'stone_furnace': case 'electric_furnace': case 'assembler': case 'chemical_plant': this.tickCrafter(e, dt, ctx); break;
+        case 'stone_furnace': case 'electric_furnace': case 'assembler': case 'chemical_plant': case 'charcoal_kiln': this.tickCrafter(e, dt, ctx); break;
         case 'lab': this.tickLab(e, dt, ctx); break;
         case 'burner_generator': this.tickGenerator(e, dt, ctx); break;
       }
@@ -475,14 +481,14 @@ export class Factory {
   }
 
   private tickCrafter(e: FEntity, dt: number, ctx: FactoryContext) {
-    // Furnaces work out their recipe from what's in them.
-    if (e.kind.endsWith('_furnace')) {
+    // Furnaces and kilns work out their recipe from what's in them.
+    if (e.kind.endsWith('_furnace') || e.kind === 'charcoal_kiln') {
       const item = e.input!.first();
-      const r = item ? smeltRecipe(item, ctx) : undefined;
+      const r = !item ? undefined : e.kind === 'charcoal_kiln' ? kilnRecipe(item, ctx) : smeltRecipe(item, ctx);
       if (r?.id !== e.recipe) { e.recipe = r?.id ?? null; e.progress = 0; }
     }
     const r = e.recipe ? RECIPES[e.recipe] : undefined;
-    if (!r) { e.status = e.kind === 'assembler' || e.kind === 'chemical_plant' ? 'No recipe set' : 'No ore'; return; }
+    if (!r) { e.status = e.kind === 'assembler' || e.kind === 'chemical_plant' ? 'No recipe set' : e.kind === 'charcoal_kiln' ? 'No wood' : 'No ore'; return; }
     if (e.output!.room(r.out) < r.count) { e.status = 'Output full'; return; }
     if (!e.input!.has(r.in)) { e.status = 'Missing ingredients'; return; }
     if (r.fluids) {
@@ -492,7 +498,9 @@ export class Factory {
       }
       if (Object.entries(r.fluids).some(([sp, mol]) => (e.fluid![sp] ?? 0) < mol - 1e-9)) { e.status = 'Waiting for feed'; return; }
     }
-    const run = e.kind in BURNER ? this.burnFuel(e, BURNER[e.kind], dt, ctx) : ctx.served(e.id);
+    // A kiln needs no fuel: part of each charge burns to char the rest, which is why so little
+    // comes out.
+    const run = e.kind === 'charcoal_kiln' ? 1 : e.kind in BURNER ? this.burnFuel(e, BURNER[e.kind], dt, ctx) : ctx.served(e.id);
     if (run <= 0) { e.status = e.kind in BURNER ? 'Out of fuel' : 'No power'; return; }
     e.status = undefined;
     e.active = true;
@@ -568,6 +576,11 @@ export class Factory {
       this.entities.set(e.id, e);
     }
   }
+}
+
+/** The charring recipe for what's put in a charcoal kiln, if it's unlocked. */
+export function kilnRecipe(item: string, ctx: FactoryContext): Recipe | undefined {
+  return Object.values(RECIPES).find(r => r.station === 'kiln' && item in r.in && ctx.unlocked(r.id));
 }
 
 /** The smelting recipe for an input item, if it's unlocked. */
