@@ -106,7 +106,9 @@ export class WorldScene extends Phaser.Scene {
 
   private placementType: string | null = null;
   private placementRot = 0;
-  private laying: { last: { x: number; y: number } | null } | null = null;
+  private laying: { last: { x: number; y: number } | null; prev?: { x: number; y: number; id: number } | null } | null = null;
+  /** Whether pipe being laid joins every pipe beside it, or only the run it's laid in. */
+  private pipeSnap = (() => { try { return localStorage.getItem('ff_pipeSnap') !== '0'; } catch { return true; } })();
   /** The height the engineer works at: 0 ground, 1 low rack, 2 high rack (H to change). */
   private level = 0;
   private levelKey: KeyboardEvent | null = null;
@@ -269,6 +271,10 @@ export class WorldScene extends Phaser.Scene {
       this.processUI.onCloseInspector = () => this.select(null);
       this.processUI.onRotate = id => this.rotateBuilding(id);
       this.processUI.onLevel = l => this.changeLevel(l);
+      this.processUI.onPipeSnap = on => {
+        this.pipeSnap = on;
+        try { localStorage.setItem('ff_pipeSnap', on ? '1' : '0'); } catch { /* not remembered */ }
+      };
       this.hud = new Hud(this.eng, this.factory, {
         map: this.map,
         pick: item => this.choose(ITEMS[item]?.places ?? null),
@@ -404,6 +410,7 @@ export class WorldScene extends Phaser.Scene {
       this.worldDraw.drillGhost = { x: o.x, y: o.y, size: engine.PROTO[drill].size, rot: this.placementRot };
     } else this.worldDraw.drillGhost = null;
     this.worldDraw.piles = this.piles;
+    this.processUI?.showPipeSnap(LEVEL_PIPES.includes(this.placementType ?? ''), this.pipeSnap);
     this.worldDraw.draw(view, time, this.factory, this.objects, this.combat);
     this.juice.draw(view);
     const powerTool = this.placementType ? !!(engine.PROTO[this.placementType]?.power_w || engine.PROTO[this.placementType]?.wire) : false;
@@ -863,8 +870,9 @@ export class WorldScene extends Phaser.Scene {
       if (!target.key.startsWith('b')) this.playSound(tree ? 'chop' : 'rock', 0.35);
     }
     this.engineer?.face(target.x - this.player.x, target.y - this.player.y);
-    // A pickaxe for trees, rocks and ore; the wrench for taking buildings apart.
-    if (this.engineer) this.engineer.action = target.key.startsWith('b') || !ANIMS.char_mine_se ? 'build' : 'mine';
+    // An axe for trees, a pickaxe for rocks and ore, the wrench for taking buildings apart.
+    const felling = target.key.startsWith('n') && /tree|fungus|cactus/.test(this.objects.get(tileKey(Math.floor(target.x), Math.floor(target.y)))?.kind ?? '');
+    if (this.engineer) this.engineer.action = target.key.startsWith('b') || !ANIMS.char_mine_se ? 'build' : felling && ANIMS.char_chop_se ? 'chop' : 'mine';
     this.miningProgress += dt;
     const colours = this.chipColours(target.key);
     this.worldDraw.wobble = target.key.startsWith('n') ? target.key.slice(1) : null;
@@ -1375,12 +1383,43 @@ export class WorldScene extends Phaser.Scene {
       steps.push({ ...from, rot });
       this.placementRot = rot;
     }
+    const piping = LEVEL_PIPES.includes(proto);
     for (const t of steps) {
-      if (this.idAt(t.x, t.y) >= 0) continue;
+      const there = this.idAt(t.x, t.y);
+      if (there >= 0) {
+        // Laying on from the end of a pipe carries its run on; crossing one mid-drag doesn't join it.
+        if (piping) this.laying.prev = !this.laying.last && engine.PROTO[engine.placedById(there)?.proto ?? '']?.levels?.length ? { ...t, id: there } : null;
+        continue;
+      }
       if (this.placementError(proto, t.x, t.y, t.rot)) continue;
-      this.build(proto, t.x, t.y, proto === 'pipe' ? 0 : t.rot);
+      if (!this.build(proto, t.x, t.y, piping ? 0 : t.rot)) continue;
+      if (piping) this.joinPipe(t.x, t.y);
     }
     this.laying.last = { x: tx, y: ty };
+  }
+
+  /**
+   * Joins pipe just laid: snapped, to every pipe beside it; otherwise only to the one laid before
+   * it in the same drag, so runs can lie side by side apart.
+   */
+  private joinPipe(x: number, y: number) {
+    const id = this.idAt(x, y);
+    if (id < 0 || !this.laying) return;
+    const bit = (dx: number, dy: number) => engine.JOIN_BIT[`${dx},${dy}`];
+    if (this.pipeSnap) {
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nb = this.idAt(x + dx, y + dy);
+        if (nb >= 0 && engine.PROTO[engine.placedById(nb)?.proto ?? '']?.levels?.length) engine.setPipeJoins(nb, engine.pipeJoins(nb) | bit(-dx, -dy));
+      }
+    } else {
+      const p = this.laying.prev;
+      const dx = p ? p.x - x : 0, dy = p ? p.y - y : 0;
+      if (p && Math.abs(dx) + Math.abs(dy) === 1) {
+        engine.setPipeJoins(id, bit(dx, dy));
+        engine.setPipeJoins(p.id, engine.pipeJoins(p.id) | bit(-dx, -dy));
+      } else engine.setPipeJoins(id, 0);
+    }
+    this.laying.prev = { x, y, id };
   }
 
   private select(id: number | null) {

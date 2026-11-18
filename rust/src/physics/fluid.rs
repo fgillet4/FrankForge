@@ -165,8 +165,10 @@ pub enum PipeKind {
     /// Turbine: flow coefficient (Stodola), isentropic efficiency, admission valve opening, rated
     /// power [W] and power produced [W].
     Turbine { flow_coeff: f64, eff: f64, opening: f64, rated_w: f64, power_out: f64 },
-    /// Relief valve that lifts when the inlet passes `set_p`.
-    Relief { set_p: f64 },
+    /// Spring-loaded relief valve: shut until the inlet reaches `set_p` [Pa], then it lifts, wide
+    /// open by 10% over; lifted, it stays open until the inlet falls 7% below set (blowdown), so it
+    /// doesn't chatter. `lift` 0..1 is how far the disc is off its seat. One way only.
+    Relief { set_p: f64, lift: f64 },
 }
 
 #[derive(Clone, Debug)]
@@ -392,27 +394,29 @@ impl Network {
             let mut k = (f * p.length / p.diameter + p.k_minor) / (2.0 * d.rho * area * area);
             let lam = 32.0 * d.mu * p.length / (d.rho * area * p.diameter * p.diameter) + pump_slope;
             let mut blocked = false;
-            match &p.kind {
+            match &mut p.kind {
                 PipeKind::Valve { opening } => {
                     if *opening <= 0.001 {
                         blocked = true;
                     } else {
                         // Equal-percentage trim (rangeability 10⁴): each step of opening multiplies
                         // the flow coefficient by the same factor, so control is usable at any flow.
-                        k += 2.0 * 1e8_f64.powf(1.0 - opening) / (2.0 * d.rho * area * area);
+                        k += 2.0 * 1e8_f64.powf(1.0 - *opening) / (2.0 * d.rho * area * area);
                     }
                 }
                 // A stopped pump or compressor: switched off or without power, the check valve on
                 // its discharge holds and nothing passes, either way.
                 PipeKind::Pump { n, .. } if *n < 0.02 => blocked = true,
                 PipeKind::Compressor { power_avail, .. } if *power_avail <= 0.0 => blocked = true,
-                PipeKind::Relief { set_p } => {
-                    let over = (pa - *set_p) / (0.1 * *set_p);
-                    if over <= 0.0 {
+                PipeKind::Relief { set_p, lift } => {
+                    let reseat = 0.93 * *set_p;
+                    let lifting = pa >= *set_p || (*lift > 0.0 && pa > reseat);
+                    // It pops part-way open at set and rides up with the pressure.
+                    *lift = if lifting { ((pa - reseat) / (1.1 * *set_p - reseat)).clamp(0.05, 1.0) } else { 0.0 };
+                    if *lift <= 0.0 {
                         blocked = true;
                     } else {
-                        let opening = over.min(1.0);
-                        k += 2.0 / (opening * opening) / (2.0 * d.rho * area * area);
+                        k += 2.0 / (*lift * *lift) / (2.0 * d.rho * area * area);
                     }
                 }
                 _ => {}
@@ -529,7 +533,7 @@ impl Network {
             let d = l.d.unwrap();
             let area = p.area();
             p.mdot = est[j];
-            if matches!(p.kind, PipeKind::Check) && p.mdot < 0.0 {
+            if matches!(p.kind, PipeKind::Check | PipeKind::Relief { .. }) && p.mdot < 0.0 {
                 p.mdot = 0.0;
             }
             // A gas cannot leave faster than sound.

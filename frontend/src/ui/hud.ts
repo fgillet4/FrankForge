@@ -28,7 +28,8 @@ const GROUPS: [string, (r: Recipe) => boolean][] = [
   ['Logistics', r => ['Belts'].includes(PROTO[r.out]?.category ?? '')],
   ['Production', r => ['Production', 'Science'].includes(PROTO[r.out]?.category ?? '')],
   ['Power', r => PROTO[r.out]?.category === 'Power'],
-  ['Fluids', r => ['Logistics', 'Extraction', 'Storage', 'Processing', 'Utilities'].includes(PROTO[r.out]?.category ?? '') && r.out !== 'pipe'],
+  // Pipe is an ingredient too, so it shows with the intermediates as well as first among the fluids.
+  ['Fluids', r => ['Logistics', 'Extraction', 'Storage', 'Processing', 'Utilities'].includes(PROTO[r.out]?.category ?? '')],
   ['Reactors', r => PROTO[r.out]?.category === 'Reactors'],
   ['Combat', r => !!ITEMS[r.out]?.gear || r.out === 'repair_pack' || PROTO[r.out]?.category === 'Defense'],
 ];
@@ -231,7 +232,7 @@ export class Hud {
     const unlocked = e.unlocked;
     const recipes = Object.values(RECIPES).filter(r => r.station === 'hand' && unlocked.has(r.id));
     const group = GROUPS.find(g => g[0] === this.craftTab)!;
-    const shown = recipes.filter(group[1]);
+    const shown = recipes.filter(group[1]).sort((a, b) => Number(b.out === 'pipe') - Number(a.out === 'pipe'));
     const crafts = shown.map(r => {
       const n = e.sandbox ? 99 : e.craftable(r.id);
       const needs = Object.entries(r.in).map(([id, k]) => `${k} × ${name(id)} (${e.inv.count(id)})`).join('\n');

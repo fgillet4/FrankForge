@@ -55,6 +55,8 @@ export interface PipeView {
     /** Pumps: rated curve, settings and operating point (see the engine's PipeKind::Pump). */
     dp_max?: number; q_max?: number; eff?: number; trim?: number; speed?: number;
     q?: number; dp?: number; eff_now?: number; n?: number; rho?: number;
+    /** Relief valves: set pressure [Pa] and how far the disc has lifted (0..1). */
+    set_p?: number; lift?: number;
     /** Pumps: NPSH available and required [m], how hard it's cavitating (0..1), impeller wear (0..1). */
     npsha?: number; npshr?: number; cavitation?: number; wear?: number;
   };
@@ -96,6 +98,10 @@ export interface Placed {
   wear?: number;
   /** Pipes: bore [m], when not the standard one. */
   diameter?: number;
+  /** Pipes: which sides join the pipe beside them (bits +x, -x, +y, -y), when not all four. */
+  joins?: number;
+  /** Relief valves: set pressure [bar]. */
+  relief?: number;
 }
 
 let world: ProcessWorld | null = null;
@@ -182,6 +188,13 @@ export function setOpening(id: number, v: number) {
   if (p) p.opening = v;
 }
 
+/** A relief valve's set pressure [bar]. */
+export function setRelief(id: number, bar: number) {
+  world?.set_relief(id, bar);
+  const p = placed.get(id);
+  if (p) p.relief = bar;
+}
+
 export function setEnabled(id: number, on: boolean) {
   world?.set_enabled(id, on);
   const p = placed.get(id);
@@ -247,6 +260,20 @@ export function setPipeDiameter(id: number, diameter: number) {
   world?.set_pipe_diameter(id, diameter);
 }
 
+/** The side bits of a pipe's joins, in the order of DIRS4: +x, +y, -x, -y map to 0, 2, 1, 3. */
+export const JOIN_BIT: Record<string, number> = { '1,0': 1, '-1,0': 2, '0,1': 4, '0,-1': 8 };
+
+/** Which sides of a pipe join the pipe beside it. */
+export function pipeJoins(id: number): number {
+  return placed.get(id)?.joins ?? 0b1111;
+}
+
+export function setPipeJoins(id: number, joins: number) {
+  world?.set_pipe_joins(id, joins);
+  const p = placed.get(id);
+  if (p) p.joins = joins === 0b1111 ? undefined : joins;
+}
+
 /** Sets how worn a pump's impeller is (0..1). */
 export function setPumpWear(id: number, wear: number) {
   world?.set_pump_wear(id, wear);
@@ -272,5 +299,7 @@ export function restore(list: Placed[]) {
     if (p.trim !== undefined || p.speed !== undefined) setPump(p.id, p.trim ?? 1, p.speed ?? 1);
     if (p.wear) setPumpWear(p.id, p.wear);
     if (p.diameter && p.proto === 'pipe') setPipeDiameter(p.id, p.diameter);
+    if (p.joins !== undefined) setPipeJoins(p.id, p.joins);
+    if (p.relief !== undefined) setRelief(p.id, p.relief);
   }
 }

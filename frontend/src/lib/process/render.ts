@@ -11,7 +11,7 @@ import { TILE_W, TILE_H, isoToScreen } from '../phaser/isoMath';
 import { ITEMS, iconUrl } from '../game/items';
 import { popScale } from '../game/juice';
 import { drillPainting } from '../game/draw';
-import { PROTO, placedById, portTiles, type EntityView, type Snapshot, type VesselView } from './engine';
+import { JOIN_BIT, PROTO, layout, placedById, portTiles, type EntityView, type Snapshot, type VesselView } from './engine';
 import { LIMITS, OVER, RAMP_CSS, hydraulics, nodeKey, problems, ramp, stats, type PipeNode } from './hydraulics';
 
 /**
@@ -32,7 +32,7 @@ export function rackLift(level: number, zoom: number): number {
 const SPRITE_TILE_PX = 128;
 
 export const BUILDING_SPRITES = [
-  'valve', 'check_valve', 'pump', 'compressor', 'storage_tank', 'gas_sphere', 'water_well', 'gas_well',
+  'valve', 'check_valve', 'relief_valve', 'pump', 'compressor', 'storage_tank', 'gas_sphere', 'water_well', 'gas_well',
   'air_intake', 'vent', 'flare_stack', 'fired_boiler', 'steam_turbine', 'condenser', 'solar_array',
   'battery_bank', 'heat_exchanger', 'electric_heater', 'flash_drum', 'smr_reformer', 'shift_reactor',
   'ammonia_converter', 'methanol_reactor', 'cracker_furnace', 'electrolyser', 'power_pole', 'wreck',
@@ -115,6 +115,7 @@ export function createAnims(scene: Phaser.Scene) {
 const INLINE: Record<string, [[number, number], [number, number]]> = {
   valve: [[6, 106], [120, 70]],
   check_valve: [[6, 64], [122, 36]],
+  relief_valve: [[6, 112], [117, 64]],
 };
 const INLINE_REACH = 0.62;
 
@@ -390,6 +391,15 @@ export class ProcessLayer {
           if (f) this.held.set(`toxic${e.id}`, f);
         }
       }
+      // A relief valve lifting roars as it vents.
+      const relief = e.pipes.find(p => p.kind.kind === 'Relief')?.kind.lift ?? 0;
+      if (relief > 0.02) {
+        held.add(`relief${e.id}`);
+        if (!this.held.has(`relief${e.id}`)) {
+          const f = this.spawn('fx_leak', e.x + 0.5, e.y + 0.2, 0.5 + relief * 0.6);
+          if (f) this.held.set(`relief${e.id}`, f);
+        }
+      }
       // Hissing at the seams as a vessel nears its burst pressure.
       if (!ruptured && e.vessels.some(v => v.p > 0.85 * v.design_p && v.design_p > 0)) {
         held.add(`leak${e.id}`);
@@ -461,6 +471,12 @@ export class ProcessLayer {
     const lifts = [0, rackLift(1, zoom), rackLift(2, zoom)];
     const nc = (l: number, x: number, y: number) => { const c = centre(x, y); return { x: c.x, y: c.y - lifts[l] }; };
     const has = (l: number, x: number, y: number) => (l ? this.rackNodes.has(nodeKey(l, x, y)) : this.pipeTiles.has(`${x},${y}`));
+    // Pipe beside pipe joins only where both allow it; runs laid apart pass side by side.
+    const joinsAt = new Map<string, number>();
+    for (const p of layout()) for (const l of PROTO[p.proto]?.levels ?? []) joinsAt.set(nodeKey(l, p.x, p.y), p.joins ?? 0b1111);
+    const linked = (l: number, x: number, y: number, dx: number, dy: number) => has(l, x + dx, y + dy)
+      && ((joinsAt.get(nodeKey(l, x, y)) ?? 15) & JOIN_BIT[`${dx},${dy}`]) !== 0
+      && ((joinsAt.get(nodeKey(l, x + dx, y + dy)) ?? 15) & JOIN_BIT[`${-dx},${-dy}`]) !== 0;
     const risers = hydraulics(snap).risers;
     const fade = (l: number) => (l > this.viewLevel ? 0.3 : 1);
     // Where pipes meet buildings: the pipe tile outside a port, and which way the port lies.
@@ -501,14 +517,14 @@ export class ProcessLayer {
           if (off(c) && off(centre(x, y))) continue;
           const lift = l * 0.002;
           for (const [dx, dy] of [[1, 0], [0, 1]]) {
-            if (!has(l, x + dx, y + dy)) continue;
+            if (!linked(l, x, y, dx, dy)) continue;
             const n = nc(l, x + dx, y + dy);
             if (!l) shadow(c, n);
             else this.pipeGfx.lineStyle(6 * zoom, 0x000000, 0.1).lineBetween(centre(x, y).x, centre(x, y).y + TILE_H * zoom * 0.18, centre(x + dx, y + dy).x, centre(x + dx, y + dy).y + TILE_H * zoom * 0.18);
             this.pipeSegment(`p${l},${x},${y},${dx}`, 'ip_pipe', c, n, zoom, depthAt(x + dx, y + dy) - 0.0002 + lift, tint, 13 * fat, 0.035, 0.93).setAlpha(fade(l));
           }
           const riser = risers.has(`${x},${y}`);
-          const joined = DIRS4.filter(([dx, dy]) => has(l, x + dx, y + dy) || (!l && opens.has(`${x},${y},${dx},${dy}`)));
+          const joined = DIRS4.filter(([dx, dy]) => linked(l, x, y, dx, dy) || (!l && opens.has(`${x},${y},${dx},${dy}`)));
           const straight = !riser && joined.length === 2 && joined[0][0] === -joined[1][0] && joined[0][1] === -joined[1][1];
           if (joined.length === 1 && !riser) {
             // A dead end: the pipe stops at a blind flange.

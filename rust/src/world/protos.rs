@@ -54,6 +54,8 @@ const fn firebox(volume: f64, height: f64) -> VesselDef {
 pub enum LinkDef {
     Valve,
     Check,
+    /// Spring relief valve, its set pressure on the building.
+    Relief,
     Pump { dp_bar: f64, q_max: f64 },
     Compressor { ratio_max: f64 },
     Turbine { flow_coeff: f64 },
@@ -153,6 +155,11 @@ pub const PROTOS: &[Proto] = &[
         id: "valve", name: "Gate valve", category: "Logistics",
         description: "Throttles or shuts a line. The loss coefficient climbs steeply as it closes.",
         ports: &[port(-1, 0, 0, Middle, "A"), port(1, 0, 1, Middle, "B")], link: Some(LinkDef::Valve), ..BASE
+    },
+    Proto {
+        id: "relief_valve", name: "Relief valve", category: "Logistics",
+        description: "A spring holds it shut until the inlet reaches its set pressure; then it lifts and vents to the outlet, wide open by 10% over, and reseats once the inlet falls 7% below set. One way only (in → out). Pipe its outlet to a vent or flare.",
+        ports: &[port(-1, 0, 0, Middle, "in"), port(1, 0, 1, Middle, "out")], link: Some(LinkDef::Relief), ..BASE
     },
     Proto {
         id: "check_valve", name: "Check valve", category: "Logistics",

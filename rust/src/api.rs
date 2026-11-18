@@ -53,6 +53,10 @@ impl ProcessWorld {
         self.world.set_opening(id, opening);
     }
 
+    pub fn set_relief(&mut self, id: u32, bar: f64) {
+        self.world.set_relief(id, bar);
+    }
+
     pub fn set_enabled(&mut self, id: u32, on: bool) {
         self.world.set_enabled(id, on);
     }
@@ -67,6 +71,10 @@ impl ProcessWorld {
 
     pub fn set_pipe_diameter(&mut self, id: u32, diameter: f64) {
         self.world.set_pipe_diameter(id, diameter);
+    }
+
+    pub fn set_pipe_joins(&mut self, id: u32, joins: u8) {
+        self.world.set_pipe_joins(id, joins);
     }
 
     pub fn set_pump_wear(&mut self, id: u32, wear: f64) {

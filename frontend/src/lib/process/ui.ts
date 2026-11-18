@@ -9,7 +9,7 @@ import { PumpCurvePanel } from './pumpCurve';
 import { wind } from './render';
 import { BORES, LIMITS, hydraulics, nodeKey, problems, pumpSides, stats, type FlowStats, type RunFlows } from './hydraulics';
 import {
-  PROTO, PROTOS, SPECIES, blackStart, setEnabled, setOpening, setPipeDiameter, setReaction, layout, placedById,
+  PROTO, PROTOS, SPECIES, blackStart, setEnabled, setOpening, setRelief, setPipeDiameter, setReaction, layout, placedById,
   type EntityView, type Placed, type Snapshot, type VesselView,
 } from './engine';
 
@@ -136,12 +136,15 @@ export class ProcessUI {
   onCloseInspector: () => void = () => {};
   onRotate: (id: number) => void = () => {};
   onLevel: (level: number) => void = () => {};
+  onPipeSnap: (on: boolean) => void = () => {};
   /** Whether pumps' speed can be changed (variable-frequency drives researched). */
   vfdUnlocked: () => boolean = () => true;
   private curve = new PumpCurvePanel(() => this.vfdUnlocked());
 
   constructor() {
-    this.root.append(this.inspector, this.gridPanel, this.tooltip, this.alerts, this.curve.root, this.altimeter);
+    this.root.append(this.inspector, this.gridPanel, this.tooltip, this.alerts, this.curve.root, this.altimeter, this.snap);
+    this.snap.innerHTML = '<label><input type="checkbox" checked> Snap pipes</label>';
+    this.snap.querySelector('input')!.addEventListener('change', e => this.onPipeSnap((e.target as HTMLInputElement).checked));
     this.setLevel(0);
     document.body.append(this.root);
     // The world's tooltip goes as soon as the pointer moves onto a panel or off the window.
@@ -157,6 +160,14 @@ export class ProcessUI {
   }
 
   private altimeter = el('div', 'pp-altimeter');
+  private snap = el('div', 'pp-snap');
+
+  /** The snap box, shown while holding pipe: whether new pipe joins everything beside it. */
+  showPipeSnap(visible: boolean, on: boolean) {
+    this.snap.style.display = visible ? 'block' : 'none';
+    const box = this.snap.querySelector('input')!;
+    if (box.checked !== on) box.checked = on;
+  }
 
   /** The working-height gauge: a lift car on a three-stop shaft. */
   setLevel(level: number) {
@@ -187,6 +198,11 @@ export class ProcessUI {
       setOpening(this.inspectorFor, Number(t.value) / 100);
       const label = this.inspector.querySelector('[data-label=opening]');
       if (label) label.textContent = `${t.value}%`;
+    }
+    if (t.dataset.action === 'relief' && this.inspectorFor !== null) {
+      setRelief(this.inspectorFor, Number(t.value));
+      const label = this.inspector.querySelector('[data-label=relief]');
+      if (label) label.textContent = `${Number(t.value).toFixed(1)} bar`;
     }
   }
 
@@ -271,9 +287,15 @@ export class ProcessUI {
     const kind = e.pipes[0]?.kind?.kind;
     const hasOpening = kind === 'Valve' || kind === 'Turbine';
     // Keep the slider alive while it is being dragged: only its read-out changes then.
-    const slider = this.inspector.querySelector('input[data-action=opening]') as HTMLInputElement | null;
+    const slider = this.inspector.querySelector('input[data-action=opening], input[data-action=relief]') as HTMLInputElement | null;
     const dragging = slider && document.activeElement === slider;
+    const relief = kind === 'Relief' ? e.pipes[0].kind : null;
     const controls = [
+      relief ? `<label class="pp-control">Set pressure
+        <input type="range" min="1.2" max="60" step="0.1" value="${((relief.set_p ?? 5e5) / 1e5).toFixed(1)}" data-action="relief">
+        <b data-label="relief">${((relief.set_p ?? 5e5) / 1e5).toFixed(1)} bar</b></label>
+        <div class="pp-grid"><span>Disc</span><b class="${(relief.lift ?? 0) > 0 ? 'pp-warn' : ''}">${(relief.lift ?? 0) > 0 ? `lifted ${Math.round((relief.lift ?? 0) * 100)}% · venting` : 'seated'}</b>
+        <span>Reseats at</span><b>${((relief.set_p ?? 5e5) * 0.93 / 1e5).toFixed(2)} bar</b></div>` : '',
       hasOpening ? `<label class="pp-control">${kind === 'Turbine' ? 'Admission limit' : 'Opening'}
         <input type="range" min="0" max="100" step="1" value="${Math.round(e.opening * 100)}" data-action="opening">
         <b data-label="opening">${Math.round(e.opening * 100)}%</b></label>` : '',

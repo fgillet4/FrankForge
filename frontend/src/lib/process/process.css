@@ -131,7 +131,7 @@
 
 /* Flow view legend. */
 .pp-flow-legend {
-  position: fixed; left: 12px; top: 90px; z-index: 15; display: flex; align-items: center; gap: 6px;
+  position: fixed; left: 12px; top: 108px; z-index: 15; display: flex; align-items: center; gap: 6px;
   color: #c9d3df; font: 11px/14px 'Chakra Petch', system-ui, sans-serif; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9); pointer-events: none;
 }
 .pp-flow-legend b { font-weight: 600; color: #e8ecf1; }
@@ -198,3 +198,11 @@
   border: 1px solid #3a4250; background: #1d232c; cursor: pointer;
 }
 .pp-head .pp-rotate:hover { border-color: #f0a63a; color: #ffcf70; }
+
+/* Snap box under the height gauge while holding pipe. */
+.pp-snap {
+  position: fixed; left: 12px; top: 86px; z-index: 14; display: none;
+  color: #c9d3df; font: 11px/14px 'Chakra Petch', system-ui, sans-serif; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+.pp-snap label { display: flex; align-items: center; gap: 5px; cursor: pointer; }
+.pp-snap input { margin: 0; accent-color: #f0a63a; cursor: pointer; }

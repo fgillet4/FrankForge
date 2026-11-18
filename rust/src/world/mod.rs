@@ -51,6 +51,11 @@ pub struct Entity {
     pub wear: f64,
     /// Pipes: inner diameter [m].
     pub diameter: f64,
+    /// Relief valves: set pressure [bar].
+    pub relief_bar: f64,
+    /// Pipes: which sides join the pipe beside them, as bits for +x, -x, +y, -y. All four unless
+    /// laid apart from its neighbours.
+    pub joins: u8,
     /// The power network it is wired into, if any.
     pub network: Option<usize>,
     // Where this entity's parts live in the current network and grid.
@@ -126,6 +131,15 @@ pub struct World {
     pending_shares: Option<HashMap<Node, TileShare>>,
 }
 
+/// The four sides of a tile, in the order of a pipe's join bits.
+const PIPE_SIDES: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
+
+/// Whether two pipe nodes side by side (b on side k of a) are joined: both must allow it.
+fn joined(joins: &HashMap<Node, u8>, a: Node, k: usize, b: Node) -> bool {
+    let back = k ^ 1;
+    joins.get(&a).is_some_and(|m| m & (1 << k) != 0) && joins.get(&b).is_some_and(|m| m & (1 << back) != 0)
+}
+
 fn air() -> Comp {
     let mut z = [0.0; NS];
     z[index_of("n2").unwrap()] = 0.7808;
@@ -195,7 +209,7 @@ impl World {
             })
             .collect();
         let e = Entity {
-            id, proto, x, y, rot: rot % 4, vessels, opening: 1.0, enabled: true, battery_charge: p.battery_j * 0.5, demand: 1.0, trim: 1.0, speed: 1.0, wear: 0.0, diameter: PIPE_DIAMETER, network: None,
+            id, proto, x, y, rot: rot % 4, vessels, opening: 1.0, enabled: true, battery_charge: p.battery_j * 0.5, demand: 1.0, trim: 1.0, speed: 1.0, wear: 0.0, diameter: PIPE_DIAMETER, relief_bar: 5.0, joins: 0b1111, network: None,
             net_vessels: vec![], net_pipes: vec![], net_links: vec![], load: None, generator: None, battery: None,
         };
         let tiles: Vec<Tile> = e.tiles().collect();
@@ -295,6 +309,13 @@ impl World {
         }
     }
 
+    /// A relief valve's set pressure [bar].
+    pub fn set_relief(&mut self, id: u32, bar: f64) {
+        if let Some(e) = self.entities.get_mut(&id) {
+            e.relief_bar = bar.clamp(1.1, 200.0);
+        }
+    }
+
     /// Re-bores the whole pipe run a pipe belongs to [m].
     pub fn set_pipe_diameter(&mut self, id: u32, diameter: f64) {
         self.rebuild_if_dirty();
@@ -307,6 +328,17 @@ impl World {
                 e.diameter = d;
             }
         }
+        self.dirty = true;
+    }
+
+    /// Sets which sides of a pipe join the pipe beside them (bits for +x, -x, +y, -y).
+    pub fn set_pipe_joins(&mut self, id: u32, joins: u8) {
+        let Some(e) = self.entities.get_mut(&id) else { return };
+        if e.proto().levels.is_empty() || e.joins == joins & 0b1111 {
+            return;
+        }
+        e.joins = joins & 0b1111;
+        self.sync_back();
         self.dirty = true;
     }
 
@@ -445,11 +477,13 @@ impl World {
         // same height; a riser joins every height on its tile.
         self.node_seg.clear();
         let mut bore: HashMap<Node, f64> = HashMap::new();
+        let mut joins: HashMap<Node, u8> = HashMap::new();
         let mut risers: std::collections::HashSet<Tile> = std::collections::HashSet::new();
         for e in self.entities.values() {
             let levels = e.proto().levels;
             for &l in levels {
                 bore.insert((l, (e.x, e.y)), e.diameter);
+                joins.insert((l, (e.x, e.y)), e.joins);
             }
             if levels.len() > 1 {
                 risers.insert((e.x, e.y));
@@ -467,7 +501,12 @@ impl World {
             self.node_seg.insert(start, si);
             while let Some((l, t)) = queue.pop_front() {
                 nodes.push((l, t));
-                let mut next: Vec<Node> = [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().map(|d| (l, (t.0 + d.0, t.1 + d.1))).collect();
+                let mut next: Vec<Node> = PIPE_SIDES
+                    .iter()
+                    .enumerate()
+                    .filter(|&(k, d)| joined(&joins, (l, t), k, (l, (t.0 + d.0, t.1 + d.1))))
+                    .map(|(_, d)| (l, (t.0 + d.0, t.1 + d.1)))
+                    .collect();
                 if risers.contains(&t) {
                     next.extend((0..=2).filter(|&m| m != l).map(|m| (m, t)));
                 }
@@ -623,7 +662,12 @@ impl World {
             let mut dist: HashMap<Node, i32> = HashMap::from([((0, hub), 0)]);
             let mut queue = VecDeque::from([(0u8, hub)]);
             while let Some((l, t)) = queue.pop_front() {
-                let mut next: Vec<Node> = [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().map(|d| (l, (t.0 + d.0, t.1 + d.1))).collect();
+                let mut next: Vec<Node> = PIPE_SIDES
+                    .iter()
+                    .enumerate()
+                    .filter(|&(k, d)| joined(&joins, (l, t), k, (l, (t.0 + d.0, t.1 + d.1))))
+                    .map(|(_, d)| (l, (t.0 + d.0, t.1 + d.1)))
+                    .collect();
                 if risers.contains(&t) {
                     next.extend((0..=2).filter(|&m| m != l).map(|m| (m, t)));
                 }
@@ -667,6 +711,7 @@ impl World {
                         let kind = match link {
                             LinkDef::Valve => PipeKind::Valve { opening: e.opening },
                             LinkDef::Check => PipeKind::Check,
+                            LinkDef::Relief => PipeKind::Relief { set_p: e.relief_bar * 1e5, lift: 0.0 },
                             LinkDef::Pump { dp_bar, q_max } => PipeKind::Pump {
                                 dp_max: dp_bar * 1e5, q_max, eff: 0.75, rated_w: p.power_w, power_avail: 0.0, power_used: 0.0,
                                 trim: e.trim, speed: e.speed, q: 0.0, dp: 0.0, eff_now: 0.0, n: 0.0, rho: 1000.0,
@@ -775,8 +820,10 @@ impl World {
                 }
             }
             for &pi in &e.net_pipes {
-                if let PipeKind::Valve { opening } = &mut self.net.pipes[pi].kind {
-                    *opening = e.opening;
+                match &mut self.net.pipes[pi].kind {
+                    PipeKind::Valve { opening } => *opening = e.opening,
+                    PipeKind::Relief { set_p, .. } => *set_p = e.relief_bar * 1e5,
+                    _ => {}
                 }
             }
         }

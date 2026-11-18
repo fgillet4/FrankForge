@@ -61,7 +61,7 @@ export const ITEMS: Record<string, Item> = Object.fromEntries([
     ['stone_furnace', 'Stone furnace'], ['electric_furnace', 'Electric furnace'], ['assembler', 'Assembling machine'],
     ['chemical_plant', 'Chemical plant'], ['lab', 'Lab'], ['gun_turret', 'Gun turret'], ['laser_turret', 'Laser turret'],
     ['power_pole', 'Power pole'], ['substation', 'Substation'], ['burner_generator', 'Burner generator'],
-    ['valve', 'Gate valve'], ['check_valve', 'Check valve'], ['pump', 'Centrifugal pump'], ['compressor', 'Gas compressor'],
+    ['valve', 'Gate valve'], ['check_valve', 'Check valve'], ['relief_valve', 'Relief valve'], ['pump', 'Centrifugal pump'], ['compressor', 'Gas compressor'],
     ['storage_tank', 'Storage tank'], ['gas_sphere', 'Pressure sphere'], ['water_well', 'Water well'], ['gas_well', 'Gas well'],
     ['air_intake', 'Air blower'], ['vent', 'Atmospheric vent'], ['flare_stack', 'Flare stack'], ['fired_boiler', 'Fired boiler'],
     ['steam_turbine', 'Steam turbine'], ['condenser', 'Air-cooled condenser'], ['solar_array', 'Solar array'],
@@ -152,6 +152,7 @@ export const RECIPES: Record<string, Recipe> = Object.fromEntries(([
   // Fluids.
   r('valve', 1, { pipe: 2, iron_gear: 1 }, 0.5),
   r('check_valve', 1, { pipe: 2, iron_gear: 1 }, 0.5),
+  r('relief_valve', 1, { pipe: 2, iron_gear: 2, iron_plate: 2 }, 1),
   r('pump', 1, { pipe: 2, iron_gear: 2, circuit: 1 }, 2),
   r('compressor', 1, { iron_gear: 10, steel_plate: 5, circuit: 5 }, 5),
   r('water_well', 1, { iron_gear: 10, pipe: 5, circuit: 2 }, 3),

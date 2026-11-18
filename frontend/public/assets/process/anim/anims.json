@@ -107,6 +107,24 @@
   "oy": 0.9953,
   "w": 94
  },
+ "char_chop_ne": {
+  "fps": 8,
+  "frames": 24,
+  "h": 121,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 1.0,
+  "w": 136
+ },
+ "char_chop_se": {
+  "fps": 8,
+  "frames": 24,
+  "h": 120,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 1.0,
+  "w": 176
+ },
  "char_idle_ne": {
   "fps": 8,
   "frames": 24,

@@ -68,7 +68,7 @@ const TURRET_PARTS: Record<string, { ring: [number, number]; head: number; pivot
 /** Drill bits are as long as a fraction of the frame's height. */
 const DRILL_PARTS: Record<string, { hole: [number, number]; backHole: [number, number]; chimney?: [number, number]; backChimney?: [number, number]; bit: number; thick: number }> = {
   burner_drill: { hole: [0.45, 0.51], backHole: [0.51, 0.56], chimney: [0.11, 0.28], backChimney: [0.87, 0.48], bit: 0.42, thick: 12 },
-  electric_drill: { hole: [0.48, 0.69], backHole: [0.5, 0.66], bit: 0.55, thick: 16 },
+  electric_drill: { hole: [0.48, 0.69], backHole: [0.567, 0.643], bit: 0.55, thick: 16 },
 };
 
 /**

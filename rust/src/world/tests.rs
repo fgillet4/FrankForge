@@ -480,3 +480,60 @@ fn rotating_a_building_turns_its_ports_and_keeps_its_contents() {
     let after = w.snapshot().entities.iter().find(|e| e.id == 1).unwrap().vessels[0].mass;
     assert!((after - mass).abs() < mass * 1e-3, "{mass} → {after} kg");
 }
+
+#[test]
+fn pipes_laid_apart_run_side_by_side_without_joining() {
+    let mut w = world();
+    // Two lines along x at y 5 and y 6, each joined only along its own length.
+    let mut id = 100;
+    pipe_line(&mut w, &mut id, (0, 5), (5, 5));
+    pipe_line(&mut w, &mut id, (0, 6), (5, 6));
+    let along_x = 0b0011;
+    for i in 100..id {
+        w.set_pipe_joins(i, along_x);
+    }
+    w.advance(0.0);
+    let seg = |w: &World, x: i32, y: i32| w.node_seg[&(0, (x, y))];
+    assert_ne!(seg(&w, 2, 5), seg(&w, 2, 6), "side by side but apart");
+    assert_eq!(seg(&w, 0, 5), seg(&w, 5, 5), "each line still runs its length");
+    // Snapped again at one tile of each, the two lines join there.
+    let a = w.pipe_at(0, (3, 5)).unwrap();
+    let b = w.pipe_at(0, (3, 6)).unwrap();
+    w.set_pipe_joins(a, 0b1111);
+    w.set_pipe_joins(b, 0b1111);
+    w.advance(0.0);
+    assert_eq!(seg(&w, 2, 5), seg(&w, 2, 6));
+}
+
+#[test]
+fn a_relief_valve_blows_down_to_its_reseat_pressure_and_holds() {
+    let mut w = world();
+    let mut id = 100;
+    w.place(1, "storage_tank", 0, 0, 0).unwrap();
+    pipe_line(&mut w, &mut id, (3, 1), (4, 1));
+    w.place(2, "relief_valve", 5, 1, 0).unwrap();
+    pipe_line(&mut w, &mut id, (6, 1), (8, 1));
+    // Its outlet to the atmosphere.
+    w.place(3, "vent", 8, 0, 0).unwrap();
+    w.set_relief(2, 2.0);
+    w.advance(0.0);
+    // Nitrogen on top of the air takes a tank rated for 3 bar to about 2.8; the valve is set at 2.
+    let v = w.entities[&1].net_vessels[0];
+    let vol = w.net.vessels[v].volume;
+    w.fill(1, "n2", 1.8e5 * vol / (8.314 * 293.15), 293.15);
+    let p1 = |w: &World| w.net.vessels[w.entities[&1].net_vessels[0]].state.p;
+    let lift = |w: &World| match w.net.pipes[w.entities[&2].net_pipes[0]].kind { PipeKind::Relief { lift, .. } => lift, _ => -1.0 };
+    w.advance(0.5);
+    assert!(lift(&w) > 0.3, "pops open well over set: lift {}", lift(&w));
+    for _ in 0..600 {
+        w.advance(0.5);
+    }
+    let p = p1(&w);
+    assert!(p > 0.93 * 2e5 - 0.05e5 && p < 2.0e5, "blown down to between reseat and set: {:.3} bar", p / 1e5);
+    assert_eq!(lift(&w), 0.0, "and shut again");
+    // Shut, it holds: the tank keeps its pressure instead of draining to the atmosphere.
+    for _ in 0..100 {
+        w.advance(0.5);
+    }
+    assert!((p1(&w) - p).abs() < 0.01e5, "holds: {:.3} → {:.3} bar", p / 1e5, p1(&w) / 1e5);
+}
