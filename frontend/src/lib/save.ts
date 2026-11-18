@@ -28,6 +28,8 @@ export interface SaveGame {
   hp?: [number, number][];
   /** Things dropped on the ground. */
   ground?: GroundPile[];
+  /** Pollution over each chunk of the map. */
+  pollution?: { level?: number[]; total?: number };
 }
 export interface Settings { volume: number; ambient: number }
 

@@ -444,6 +444,18 @@ function placeOrePatches(map: PlanetMap, seed: number): void {
     const far = Math.hypot(s[0] - cx, s[1] - cy) / span;
     patch(ResourceType.COAL, s[0], s[1], 3 + far * 4 + crng() * 2);
   }
+  // Oil fields, the step after coal: none near the landing site, the nearest a walk away.
+  const orng = seedrandom(`${seed}:oil`);
+  for (let k = 0; k < Math.max(2, Math.round(4 * scale)); k++) {
+    for (let tries = 0; tries < 60; tries++) {
+      const a = orng() * Math.PI * 2, d = (k === 0 ? 20 : span * 0.35) + orng() * span * (k === 0 ? 0.15 : 0.55);
+      const x = cx + Math.cos(a) * d, y = cy + Math.sin(a) * d;
+      const t = map.tiles[Math.round(y)]?.[Math.round(x)];
+      if (!t?.traversable || t.resource !== ResourceType.NONE || t.terrain === TerrainType.SHALLOW_WATER) continue;
+      patch(ResourceType.OIL, x, y, 2.5 + orng() * 1.5);
+      break;
+    }
+  }
 }
 
 /**

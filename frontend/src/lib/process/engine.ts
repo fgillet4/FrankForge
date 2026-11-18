@@ -69,6 +69,8 @@ export interface EntityView {
   power_w: number; generation_w: number; battery: [number, number] | null;
   /** The power network it's wired into, and how much of its demand that grid serves. */
   network: number | null; served: number;
+  /** Gas it has vented or burnt off to the sky so far [kg]. */
+  emitted_kg: number;
 }
 
 export interface GridView {

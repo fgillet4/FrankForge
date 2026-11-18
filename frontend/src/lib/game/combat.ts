@@ -1,8 +1,9 @@
 /**
  * Aliens, their nests, and everything that shoots them.
  *
- * Nests sit away from the landing site and send attack groups whose size and frequency grow
- * with pollution: gas vented to the sky and smoke from burners. Groups go for the nearest
+ * Nests sit away from the landing site. Each breathes in the pollution that drifts over it (gas
+ * vented to the sky, smoke from burners) and spends what it takes in on attack groups, bigger as
+ * the aliens evolve; a nest the pollution hasn't reached stays quiet. Groups go for the nearest
  * buildings or the engineer, and chew through whatever is in their way. Nearby aliens defend
  * their nest from anyone who comes close.
  */
@@ -10,6 +11,7 @@
 import seedrandom from 'seedrandom';
 import type { PlanetMap } from '../types';
 import type { FEntity } from './factory';
+import type { Pollution } from './pollution';
 
 export interface Alien {
   id: number;
@@ -38,7 +40,15 @@ export interface Alien {
 const SIGHT = 10;
 const LOSE = 16;
 
-export interface Nest { id: number; x: number; y: number; hp: number; maxHp: number; spawnTimer: number }
+export interface Nest {
+  id: number; x: number; y: number; hp: number; maxHp: number; spawnTimer: number;
+  /** Pollution breathed in toward the next attack [kg]. */
+  absorbed?: number;
+}
+
+/** How fast a nest breathes in the pollution over it [kg/s], and what each attacker costs [kg]. */
+const NEST_INTAKE = 0.5;
+export const ALIEN_COST = 4;
 
 export interface Shot { x0: number; y0: number; x1: number; y1: number; until: number; laser: boolean }
 
@@ -51,8 +61,8 @@ export interface Arena {
   entityAt(x: number, y: number): number;
   damageBuilding(id: number, dmg: number): void;
   damagePlayer(dmg: number): void;
-  /** Pollution so far [kg-equivalent], drives attacks. */
-  pollution: number;
+  /** Pollution on the ground: nests breathe it in and attack with it. */
+  smog: Pollution;
   peaceful: boolean;
 }
 
@@ -74,7 +84,6 @@ export class Combat {
   /** Corpses and bursts to draw: position and when they fade. */
   splats: { x: number; y: number; until: number }[] = [];
   private nextId = 1;
-  private attackTimer = 240;
   /** Evolution 0..1: tougher aliens over time and with pollution. */
   evolution = 0;
   kills = 0;
@@ -91,6 +100,11 @@ export class Combat {
       this.nests.push({ id: this.nextId++, x, y, hp: 600, maxHp: 600, spawnTimer: 0 });
       k++;
     }
+  }
+
+  /** How many aliens a nest sends at once. */
+  groupSize() {
+    return 3 + Math.round(this.evolution * 12);
   }
 
   private clear(map: PlanetMap, x: number, y: number, n: number) {
@@ -116,19 +130,18 @@ export class Combat {
     this.shots = this.shots.filter(s => s.until > time);
     this.splats = this.splats.filter(s => s.until > time);
     if (a.peaceful) return;
-    this.evolution = Math.min(1, this.evolution + dt * (1 / 7200 + a.pollution * 1e-9));
+    this.evolution = Math.min(1, this.evolution + dt * (1 / 7200 + a.smog.total * 1e-9));
 
-    // Attack waves start once pollution reaches the nests, then come sooner and bigger as it builds.
+    // Each nest breathes in the pollution over it, and once it has taken in enough for a group,
+    // sends one at the base.
+    const size = this.groupSize();
     const buildings = a.buildings();
-    if (a.pollution > 40) this.attackTimer -= dt * (1 + Math.min(4, a.pollution / 2000));
-    if (this.attackTimer <= 0 && this.nests.length && buildings.length) {
-      this.attackTimer = 300 - 120 * this.evolution;
-      const nest = this.nests.reduce((best, n) => {
-        const d = (m: Nest) => Math.min(...buildings.map(b => Math.hypot(b.x - m.x, b.y - m.y)));
-        return d(n) < d(best) ? n : best;
-      });
-      const size = 3 + Math.round(this.evolution * 12 + Math.min(10, a.pollution / 3000));
-      for (let k = 0; k < size && this.aliens.length < 120; k++) this.spawn(nest, null);
+    for (const n of this.nests) {
+      n.absorbed = (n.absorbed ?? 0) + a.smog.take(n.x + 1.5, n.y + 1.5, NEST_INTAKE * dt);
+      if (n.absorbed >= size * ALIEN_COST && buildings.length && this.aliens.length < 120) {
+        n.absorbed -= size * ALIEN_COST;
+        for (let k = 0; k < size; k++) this.spawn(n, null);
+      }
     }
     // Nests defend themselves.
     for (const n of this.nests) {
@@ -307,14 +320,13 @@ export class Combat {
   }
 
   save() {
-    return { aliens: this.aliens, nests: this.nests, evolution: this.evolution, attackTimer: this.attackTimer, nextId: this.nextId, kills: this.kills };
+    return { aliens: this.aliens, nests: this.nests, evolution: this.evolution, nextId: this.nextId, kills: this.kills };
   }
 
   load(d: ReturnType<Combat['save']>) {
     this.aliens = d.aliens ?? [];
     this.nests = d.nests ?? [];
     this.evolution = d.evolution ?? 0;
-    this.attackTimer = d.attackTimer ?? 240;
     this.nextId = d.nextId ?? 1;
     this.kills = d.kills ?? 0;
   }

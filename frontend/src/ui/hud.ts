@@ -11,6 +11,7 @@ import { Inventory } from '../lib/game/inventory';
 import { MAX_HEALTH, type Engineer, type Series } from '../lib/game/game';
 import { isBurner, type FEntity, type Factory } from '../lib/game/factory';
 import { UNTIL_LABEL, voyageText, type Stop } from '../lib/game/ships';
+import { CHUNK, type Pollution } from '../lib/game/pollution';
 import { ROUNDS_PER_MAGAZINE } from '../lib/game/combat';
 import { PROTO } from '../lib/process/engine';
 import { TERRAIN_COLORS, RESOURCE_COLORS } from '../lib/phaser/terrainRenderer';
@@ -48,8 +49,10 @@ export interface HudHost {
     player: { x: number; y: number };
     view: { x: number; y: number }[];
     buildings: { x: number; y: number; size: number; kind: string }[];
-    nests: { x: number; y: number }[];
+    /** Nests, whether pollution has reached them, and how near their next attack is (0..1). */
+    nests: { x: number; y: number; stirred: boolean; anger: number }[];
     aliens: { x: number; y: number }[];
+    smog: Pollution;
   };
   /** Feed composition of a chemical plant, for its panel. */
   plantFeed(id: number): string;
@@ -73,12 +76,24 @@ export class Hud {
   private vignette = el('div', 'hud-hurt');
   private lastGoal = '';
   private miniCanvas = el('canvas');
+  private miniLabel = el('small', undefined, 'M: big map');
+  /** The big map's pollution overlay, Factorio-style. */
+  private smogBtn = el('button', 'hud-smog', 'Pollution');
+  private showSmog = (() => { try { return localStorage.getItem('ff_smog') === '1'; } catch { return false; } })();
   private terrainImage: ImageData | null = null;
   private lastStatus = '';
   private lastWin = '';
 
   constructor(private eng: Engineer, private factory: Factory, private host: HudHost) {
-    this.mini.append(this.miniCanvas, el('small', undefined, 'M: big map'));
+    this.mini.append(this.miniCanvas, this.miniLabel, this.smogBtn);
+    this.smogBtn.classList.toggle('on', this.showSmog);
+    this.smogBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      this.showSmog = !this.showSmog;
+      this.smogBtn.classList.toggle('on', this.showSmog);
+      try { localStorage.setItem('ff_smog', this.showSmog ? '1' : '0'); } catch { /* storage unavailable */ }
+      this.drawMinimap();
+    });
     this.root.append(this.vignette, this.status, this.mini, this.goalBox);
     document.body.append(this.root);
     this.root.addEventListener('click', e => this.onClick(e as MouseEvent));
@@ -597,8 +612,39 @@ export class Hud {
       ctx.fillStyle = b.kind === 'pipe' ? '#8fa0b4' : b.kind.includes('belt') || b.kind === 'splitter' ? '#d8b04a' : '#f0f0f0';
       ctx.fillRect(b.x, b.y, b.size, b.size);
     }
-    ctx.fillStyle = '#ff3b30';
-    for (const n of d.nests) ctx.fillRect(n.x, n.y, 3, 3);
+    const smog = this.showSmog && this.mini.classList.contains('big');
+    if (smog) {
+      // The ground dims so the cloud stands out; each chunk is tinted by the pollution over it,
+      // faint where it's thin and deep red where it's thick.
+      ctx.fillStyle = 'rgba(8, 10, 14, 0.5)';
+      ctx.fillRect(0, 0, this.host.map.width, this.host.map.height);
+      const s = d.smog;
+      for (let cy = 0; cy < s.h; cy++) {
+        for (let cx = 0; cx < s.w; cx++) {
+          const l = s.level[cy * s.w + cx];
+          if (l < 0.05) continue;
+          const a = Math.min(0.8, 0.15 + 0.25 * Math.log10(1 + l));
+          ctx.fillStyle = `rgba(255, ${Math.round(Math.max(20, 70 - 25 * Math.log10(1 + l)))}, 30, ${a})`;
+          ctx.fillRect(cx * CHUNK, cy * CHUNK, CHUNK, CHUNK);
+        }
+      }
+    }
+    const pulse = 0.5 + 0.5 * Math.sin(Date.now() / 250);
+    for (const n of d.nests) {
+      ctx.fillStyle = '#ff3b30';
+      ctx.fillRect(n.x, n.y, 3, 3);
+      if (!smog || !n.stirred) continue;
+      // Nests the pollution has reached: a pulsing ring, and how near their next attack is.
+      ctx.strokeStyle = `rgba(255, 220, 60, ${0.5 + 0.5 * pulse})`;
+      ctx.lineWidth = 0.8;
+      ctx.strokeRect(n.x - 1.5, n.y - 1.5, 6, 6);
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+      ctx.fillRect(n.x - 1.5, n.y - 3.6, 6, 1.4);
+      ctx.fillStyle = '#ffd23c';
+      ctx.fillRect(n.x - 1.5, n.y - 3.6, 6 * Math.min(1, n.anger), 1.4);
+    }
+    const label = smog ? `${Math.round(d.smog.level.reduce((a, b) => a + b, 0))} kg in the air · ${d.nests.filter(n => n.stirred).length} of ${d.nests.length} nests stirring` : 'M: big map';
+    if (this.miniLabel.textContent !== label) this.miniLabel.textContent = label;
     for (const a of d.aliens) ctx.fillRect(a.x - 0.5, a.y - 0.5, 1.5, 1.5);
     // The view, as the diamond-ish quad of screen corners in tile space.
     ctx.strokeStyle = 'rgba(255,255,255,0.7)';

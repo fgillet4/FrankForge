@@ -111,7 +111,8 @@
     URANIUM = 8,
     RARE_METALS = 9,
     XENOCRYSTALS = 10,
-    COAL = 11
+    COAL = 11,
+    OIL = 12
   }
   
   // Map tile interface

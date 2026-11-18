@@ -533,8 +533,11 @@ mod rr_tests {
     use super::*;
     #[test]
     fn rachford_rice_with_extreme_k() {
-        let k = [12369399.8429, 10055472.0131, 151704718.088, 133841341.9288, 172612662.3017, 149420.5501, 0.0269, 8.6037, 55.7248, 5986273005.2748, 0.1798];
-        let z = [0.0, 0.00093, 0.91022, 0.04293, 0.0, 0.01472, 0.02807, 0.0, 0.0, 0.00313, 0.0];
+        // The first eleven species as recorded; the oil cuts are absent (and nearly involatile).
+        let mut k = [1e-6; NS];
+        let mut z = [0.0; NS];
+        k[..11].copy_from_slice(&[12369399.8429, 10055472.0131, 151704718.088, 133841341.9288, 172612662.3017, 149420.5501, 0.0269, 8.6037, 55.7248, 5986273005.2748, 0.1798]);
+        z[..11].copy_from_slice(&[0.0, 0.00093, 0.91022, 0.04293, 0.0, 0.01472, 0.02807, 0.0, 0.0, 0.00313, 0.0]);
         // Gases dissolve so little in water that their K reach 10⁸; water's is 0.027.
         let b = rachford_rice(&z, &k);
         assert!((b - 0.9988).abs() < 1e-3);

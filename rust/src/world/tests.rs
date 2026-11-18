@@ -537,3 +537,29 @@ fn a_relief_valve_blows_down_to_its_reseat_pressure_and_holds() {
     }
     assert!((p1(&w) - p).abs() < 0.01e5, "holds: {:.3} → {:.3} bar", p / 1e5, p1(&w) / 1e5);
 }
+
+#[test]
+fn a_pumpjack_lifts_crude_that_settles_as_oil_with_its_gas_flashing_off() {
+    let mut w = world();
+    let mut id = 100;
+    w.place(1, "solar_array", -3, 0, 0).unwrap();
+    w.place(2, "pumpjack", 0, 0, 0).unwrap(); // port at (3, 1)
+    pipe_line(&mut w, &mut id, (3, 1), (6, 1));
+    w.place(3, "storage_tank", 7, 0, 0).unwrap(); // west port lands on (6, 1)
+    w.place(4, "power_pole", -1, 2, 0).unwrap();
+    w.advance(0.0);
+    for _ in 0..300 {
+        w.advance(0.1);
+    }
+    let tank = vessel_of(&w, 3);
+    let heavy: f64 = ["c6h14", "c10h22", "c16h34", "c20h42"].iter().map(|s| tank.n[index_of(s).unwrap()] * SPECIES[index_of(s).unwrap()].mw * 1e-3).sum();
+    assert!(heavy > 20.0, "{heavy} kg of oil");
+    assert!(tank.level() > 0.0, "the oil should lie as a liquid");
+    // The methane comes out of solution into the vapour space (over the tank's nitrogen purge);
+    // naphtha is volatile enough to fill much of the vapour space, but kerosene and heavier stay liquid.
+    let fl = &tank.state;
+    let in_liquid = |id: &str| { let i = index_of(id).unwrap(); (1.0 - fl.beta) * tank.moles() * fl.x[i] / tank.n[i] };
+    assert!(in_liquid("ch4") < 0.2, "methane {}", in_liquid("ch4"));
+    assert!(in_liquid("c10h22") > 0.9, "kerosene {}", in_liquid("c10h22"));
+    assert!(in_liquid("c20h42") > 0.999, "heavy oil {}", in_liquid("c20h42"));
+}

@@ -53,6 +53,8 @@ pub struct Entity {
     pub diameter: f64,
     /// Relief valves: set pressure [bar].
     pub relief_bar: f64,
+    /// What it has let into the sky so far [kg], for where pollution comes from.
+    pub emitted_kg: f64,
     /// Pipes: which sides join the pipe beside them, as bits for +x, -x, +y, -y. All four unless
     /// laid apart from its neighbours.
     pub joins: u8,
@@ -165,6 +167,14 @@ fn source_reservoir(s: Source, ambient: f64) -> Reservoir {
             z[index_of("n2").unwrap()] = 0.03;
             Reservoir { z, t: 310.15, p: 60e5 }
         }
+        Source::CrudeOil => {
+            // By mass about 2 % gas, 25 % naphtha, 15 % kerosene, 25 % diesel and 33 % heavy oil.
+            let mut z = [0.0; NS];
+            for (id, x) in [("ch4", 0.167), ("c6h14", 0.388), ("c10h22", 0.142), ("c16h34", 0.147), ("c20h42", 0.156)] {
+                z[index_of(id).unwrap()] = x;
+            }
+            Reservoir { z, t: 323.15, p: 15e5 }
+        }
     }
 }
 
@@ -209,7 +219,7 @@ impl World {
             })
             .collect();
         let e = Entity {
-            id, proto, x, y, rot: rot % 4, vessels, opening: 1.0, enabled: true, battery_charge: p.battery_j * 0.5, demand: 1.0, trim: 1.0, speed: 1.0, wear: 0.0, diameter: PIPE_DIAMETER, relief_bar: 5.0, joins: 0b1111, network: None,
+            id, proto, x, y, rot: rot % 4, vessels, opening: 1.0, enabled: true, battery_charge: p.battery_j * 0.5, demand: 1.0, trim: 1.0, speed: 1.0, wear: 0.0, diameter: PIPE_DIAMETER, relief_bar: 5.0, emitted_kg: 0.0, joins: 0b1111, network: None,
             net_vessels: vec![], net_pipes: vec![], net_links: vec![], load: None, generator: None, battery: None,
         };
         let tiles: Vec<Tile> = e.tiles().collect();
@@ -859,7 +869,7 @@ impl World {
             }
         }
         // Gas leaving through vents and stacks counts as emissions.
-        for e in self.entities.values() {
+        for e in self.entities.values_mut() {
             if matches!(e.proto().link, Some(LinkDef::Open { .. })) {
                 if let Some(&pi) = e.net_pipes.first() {
                     let pipe = &self.net.pipes[pi];
@@ -873,6 +883,7 @@ impl World {
                         }
                         for i in 0..NS {
                             self.emitted[i] += out[i];
+                            e.emitted_kg += out[i] * SPECIES[i].mw * 1e-3;
                         }
                     }
                 }
@@ -1107,6 +1118,8 @@ pub struct EntityView {
     pub network: Option<usize>,
     /// Fraction of its demand the grid is serving (0 when unwired).
     pub served: f64,
+    /// Gas it has vented or burnt off to the sky so far [kg].
+    pub emitted_kg: f64,
 }
 
 #[derive(Serialize)]
@@ -1203,6 +1216,7 @@ impl World {
                 battery: grid.and_then(|g| e.battery.map(|b| (g.batteries[b].charge_j, g.batteries[b].capacity_j))),
                 network: e.network,
                 served: grid.and_then(|g| e.load.map(|l| g.loads[l].served)).unwrap_or(0.0),
+                emitted_kg: e.emitted_kg,
             })
             .collect();
         let segments = self.segments.iter().map(|s| SegmentView { tiles: s.tiles.clone(), vessel: vessel_view(&self.net.vessels[s.vessel]), diameter: s.diameter, racks: s.racks.clone() }).collect();

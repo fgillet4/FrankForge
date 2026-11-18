@@ -71,6 +71,8 @@ pub enum Source {
     Groundwater,
     /// Natural gas at 37 °C, 60 bar.
     NaturalGas,
+    /// A medium crude at 50 °C, 15 bar: a little dissolved gas, then naphtha to heavy oil.
+    CrudeOil,
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -196,6 +198,12 @@ pub const PROTOS: &[Proto] = &[
         description: "Pumps groundwater (15 °C, 3 bar aquifer) with a 5 bar well pump. Place on water. 75 kW.",
         size: 2, ports: &[port(2, 0, 1, Middle, "out")], link: Some(LinkDef::Pump { dp_bar: 5.0, q_max: 0.03 }),
         source: Some(Source::Groundwater), power_w: 75e3, needs: Some("water"), ..BASE
+    },
+    Proto {
+        id: "pumpjack", name: "Pumpjack", category: "Extraction",
+        description: "A nodding donkey: the walking beam strokes a rod pump at the bottom of the well, lifting crude (dissolved gas, naphtha, kerosene, diesel and heavy oil) from a 15 bar reservoir. Place on oil. 45 kW.",
+        size: 3, ports: &[port(3, 1, 1, Middle, "out")], link: Some(LinkDef::Pump { dp_bar: 8.0, q_max: 0.006 }),
+        source: Some(Source::CrudeOil), power_w: 45e3, needs: Some("oil"), ..BASE
     },
     Proto {
         id: "gas_well", name: "Gas well", category: "Extraction",

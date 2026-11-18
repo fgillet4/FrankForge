@@ -10,6 +10,7 @@ import { ResourceType, type PlanetMap } from '../types';
 import { Inventory, type Stack } from './inventory';
 import { ITEMS, RECIPES, TECH, type Recipe } from './items';
 import { SHIP_POWER, tickShip, type Stop } from './ships';
+import { FUEL_SMOKE } from './pollution';
 
 /** Rotation 0..3 faces north, east, south, west (−y, +x, +y, −x). */
 export const DIRS: [number, number][] = [[0, -1], [1, 0], [0, 1], [-1, 0]];
@@ -119,6 +120,8 @@ export interface FactoryContext {
   /** A resource tile has run out. */
   depleted(x: number, y: number): void;
   consumed(item: string, n: number): void;
+  /** Smoke from a burner, where it burns [kg]. */
+  polluted(x: number, y: number, kg: number): void;
 }
 
 function maxHp(kind: string, size: number) {
@@ -446,6 +449,7 @@ export class Factory {
         e.fuel!.remove(f, 1);
         ctx.consumed(f, 1);
         e.burn! += ITEMS[f].fuel!;
+        ctx.polluted(e.x + e.size / 2, e.y + e.size / 2, ITEMS[f].fuel! * (FUEL_SMOKE[f] ?? 3e-7));
       }
     }
     const used = Math.min(need, e.burn!);

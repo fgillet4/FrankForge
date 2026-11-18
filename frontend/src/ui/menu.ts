@@ -70,7 +70,8 @@ export const HOW_TO_PLAY = `
     turbine exhausts into a condenser. Connect them with pipes from port to port.</li>
     <li>Watch the pressure bar in the inspector. A vessel bursts at 1.5× its rated pressure, and whatever
     it held comes out.</li>
-    <li>Pollution — vented gas and smoke — makes the aliens attack. Turrets keep them off.</li>
+    <li>Pollution — vented gas and smoke — drifts out from where it's made and the ground soaks it up, forests best. A nest it reaches breathes it in and sends attackers once it has taken in enough. Open the map (M) and turn on Pollution to see the cloud and which nests it has stirred. Coal smokes most, charcoal least. Turrets keep them off.</li>
+    <li>Oil extraction (after fluid handling): a pumpjack on an oil field lifts crude — a little dissolved gas, then naphtha, kerosene, diesel and heavy oil. The light ends flash off in a tank, so give it somewhere to vent.</li>
     <li>Keep the grid near its nominal frequency. Too little generation and it blacks out; use
     <em>Black start</em> in the grid panel to bring it back.</li>
   </ul>`;

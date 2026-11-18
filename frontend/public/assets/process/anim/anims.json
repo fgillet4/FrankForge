@@ -449,6 +449,15 @@
   "oy": 0.9968,
   "w": 129
  },
+ "pumpjack": {
+  "fps": 8,
+  "frames": 24,
+  "h": 391,
+  "loop": true,
+  "ox": 0.5,
+  "oy": 0.9971,
+  "w": 386
+ },
  "shift_reactor": {
   "fps": 8,
   "frames": 24,

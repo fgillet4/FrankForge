@@ -36,12 +36,13 @@ import { Hud } from '../../ui/hud';
 import { ITEMS, RECIPES, TECH } from '../game/items';
 import { Engineer, MAX_HEALTH } from '../game/game';
 import { DIRS, FACTORY_KINDS, Factory, MINED_ITEM, isElectricMachine, type FactoryContext } from '../game/factory';
-import { AMMO_DAMAGE, Combat, WEAPONS, type Arena } from '../game/combat';
+import { ALIEN_COST, AMMO_DAMAGE, Combat, WEAPONS, type Arena } from '../game/combat';
 import { NATURE, scatterNature, tileKey, type NatureObject } from '../game/nature';
 import { WorldRenderer, type View } from '../game/draw';
 import { GOALS, type GoalWorld } from '../game/goals';
 import { Juice, pop } from '../game/juice';
 import { navigable, newShip, voyageText } from '../game/ships';
+import { Pollution } from '../game/pollution';
 
 const MIN_ZOOM = 0.3;
 const MAX_ZOOM = 4;
@@ -72,6 +73,9 @@ export class WorldScene extends Phaser.Scene {
   private natureRemoved = new Set<number>();
   /** Health of process buildings (the factory keeps its own). */
   private processHp = new Map<number, number>();
+  /** Pollution over the map, and what each vent had let out when last looked at [kg]. */
+  private smog!: Pollution;
+  private vented = new Map<number, number>();
 
   private playerGfx!: Phaser.GameObjects.Graphics;
   private hoverGfx!: Phaser.GameObjects.Graphics;
@@ -168,6 +172,8 @@ export class WorldScene extends Phaser.Scene {
     else if (!this.sandbox) this.eng.startingKit();
     this.factory = new Factory();
     this.factory.load(data.factory as never);
+    this.smog = new Pollution(this.map);
+    this.smog.load(data.pollution);
     this.combat = new Combat();
     if (data.combat) this.combat.load(data.combat as never);
     else if (!this.peaceful) this.combat.placeNests(this.map, this.seed, this.spawn);
@@ -325,6 +331,13 @@ export class WorldScene extends Phaser.Scene {
       this.factory.tick(dt, this.factoryCtx());
       for (const e of this.factory.entities.values()) if (isElectricMachine(e.kind)) engine.setDemand(e.id, this.factory.demand(e));
       for (const p of engine.layout()) if (p.proto === 'water_wheel') engine.setDemand(p.id, this.current(p.x, p.y, 2));
+      // Gas the plant lets into the sky hangs over the vent or stack it came out of.
+      for (const e of this.snapshot?.entities ?? []) {
+        const was = this.vented.get(e.id) ?? e.emitted_kg;
+        if (e.emitted_kg > was) this.smog.emit(e.x + 0.5, e.y + 0.5, e.emitted_kg - was);
+        this.vented.set(e.id, e.emitted_kg);
+      }
+      this.smog.step(dt);
       this.combat.update(dt, this.arena(), time);
       for (const s of this.combat.sounds.splice(0)) {
         const [vol, gap] = { gunshot: [0.25, 70], laser: [0.3, 90], alien_hit: [0.3, 90], alien_die: [0.45, 120] }[s.kind];
@@ -449,7 +462,7 @@ export class WorldScene extends Phaser.Scene {
       world: this.world, player: { x: this.player.x, y: this.player.y }, layout: engine.layout(), savedAt: Date.now(),
       mode: this.sandbox ? 'sandbox' : 'survival', peaceful: this.peaceful,
       engineer: this.eng.save(), factory: this.factory.save(), combat: this.combat.save(),
-      nature: [...this.natureRemoved], hp: [...this.processHp], ground: this.piles,
+      nature: [...this.natureRemoved], hp: [...this.processHp], ground: this.piles, pollution: this.smog.save(),
     });
   }
 
@@ -549,12 +562,11 @@ export class WorldScene extends Phaser.Scene {
       produced: (item, n) => eng.stats.produce(item, n),
       depleted: (x, y) => this.ground.hideDeposit(x, y),
       consumed: (item, n) => eng.stats.consume(item, n),
+      polluted: (x, y, kg) => this.smog.emit(x, y, kg),
     };
   }
 
   private arena(): Arena {
-    const emitted = this.snapshot ? Object.values(this.snapshot.emitted_kg).reduce((a, b) => a + b, 0) : 0;
-    const burnt = (this.eng.stats.consumed.get('wood')?.data.reduce((a, b) => a + b, 0) ?? 0) * 5;
     return {
       map: this.map,
       player: this.player,
@@ -567,7 +579,7 @@ export class WorldScene extends Phaser.Scene {
       },
       damageBuilding: (id, dmg) => this.damageBuilding(id, dmg),
       damagePlayer: dmg => this.hurt(dmg),
-      pollution: emitted + burnt,
+      smog: this.smog,
       peaceful: this.peaceful,
     };
   }
@@ -1072,8 +1084,9 @@ export class WorldScene extends Phaser.Scene {
       player: this.player,
       view: corners,
       buildings: engine.layout().map(p => ({ x: p.x, y: p.y, size: engine.PROTO[p.proto]?.size ?? 1, kind: p.proto })),
-      nests: this.combat.nests,
+      nests: this.combat.nests.map(n => ({ x: n.x, y: n.y, stirred: this.smog.at(n.x + 1.5, n.y + 1.5) > 0.01 || (n.absorbed ?? 0) > 0.01, anger: (n.absorbed ?? 0) / (this.combat.groupSize() * ALIEN_COST) })),
       aliens: this.combat.aliens,
+      smog: this.smog,
     };
   }
 
@@ -1311,6 +1324,7 @@ export class WorldScene extends Phaser.Scene {
     if (need === 'river') return !!t.flow;
     if (need === 'shore') return !navigable(this.map, x, y) && [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => navigable(this.map, x + dx, y + dy));
     if (need === 'water') return t.resource === ResourceType.WATER || t.terrain === TerrainType.SHALLOW_WATER || t.terrain === TerrainType.ICE;
+    if (need === 'oil') return t.resource === ResourceType.OIL;
     if (need === 'methane') return t.resource === ResourceType.METHANE || t.terrain === TerrainType.METHANE_LAKE;
     if (need === 'ore') return !!MINED_ITEM[t.resource] && this.factory.oreLeft(this.map, x, y) > 0;
     return false;
@@ -1349,7 +1363,7 @@ export class WorldScene extends Phaser.Scene {
       const on = tiles.filter(([tx, ty]) => this.tileHas(need, tx, ty)).length;
       if (need === 'shore' ? !on : on < Math.ceil(tiles.length / 2)) {
         if (need === 'shore') return `${p.name} must stand on the shore, beside water a ship can reach.`;
-        const what = need === 'ore' ? 'an ore deposit' : need === 'water' ? 'water' : need === 'river' ? 'a river' : 'a methane deposit';
+        const what = need === 'ore' ? 'an ore deposit' : need === 'water' ? 'water' : need === 'river' ? 'a river' : need === 'oil' ? 'an oil field' : 'a methane deposit';
         return `${p.name} must stand mostly on ${what} (${on} of ${tiles.length} tiles are).`;
       }
     }
@@ -1558,6 +1572,7 @@ export class WorldScene extends Phaser.Scene {
           ? `<b>${ITEMS[ore].name}</b> · ${this.factory.oreLeft(this.map, tx, ty)} left<br><small>Mine by hand (hold right-click) or with a drill</small>`
           : t.resource === ResourceType.WATER ? '<b>Groundwater</b><br><small>A water well goes here</small>'
           : t.resource === ResourceType.METHANE ? '<b>Natural gas</b><br><small>A gas well goes here</small>'
+          : t.resource === ResourceType.OIL ? '<b>Crude oil</b><br><small>A pumpjack goes here</small>'
           : `<b>${name[0].toUpperCase()}${name.slice(1).replace(/_/g, ' ')}</b>`;
       }
     }

@@ -38,13 +38,14 @@ export const BUILDING_SPRITES = [
   'ammonia_converter', 'methanol_reactor', 'cracker_furnace', 'electrolyser', 'power_pole', 'wreck',
   'burner_drill', 'electric_drill', 'stone_furnace', 'electric_furnace', 'assembler', 'lab', 'chemical_plant',
   'wooden_chest', 'iron_chest', 'inserter', 'gun_turret', 'laser_turret', 'substation', 'cstr', 'burner_generator',
-  'charcoal_kiln', 'water_wheel', 'dock',
+  'charcoal_kiln', 'water_wheel', 'dock', 'pumpjack',
 ];
 
 /** Colour of a fluid by what dominates it. */
 const SPECIES_COLOUR: Record<string, number> = {
   h2: 0x5fe3ff, o2: 0x8fb8ff, n2: 0xb7a8d9, ch4: 0xff9d3c, co: 0x5a5a64, co2: 0xd8d8d8, h2o: 0x2f7fff,
   nh3: 0xc6e85a, c2h4: 0xff8fd0, c2h6: 0xffbf8f, ch3oh: 0xb48cff,
+  c6h14: 0xf2e6a0, c10h22: 0xe0b860, c16h34: 0xc08a30, c20h42: 0x5a3a22,
 };
 
 /** A fluid's colour washed over grey steel: a hint of what's inside. */
@@ -169,7 +170,7 @@ function heatGlow(t: number): [number, number] {
   return [stops[stops.length - 1][1], a];
 }
 
-const FLAMMABLE = ['h2', 'ch4', 'co', 'c2h4', 'c2h6', 'ch3oh', 'nh3'];
+const FLAMMABLE = ['h2', 'ch4', 'co', 'c2h4', 'c2h6', 'ch3oh', 'nh3', 'c6h14', 'c10h22', 'c16h34', 'c20h42'];
 
 /** Whether a building is doing something worth animating. */
 function isRunning(e: EntityView, snap: Snapshot): boolean {

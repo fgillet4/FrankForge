@@ -138,6 +138,33 @@ pub const SPECIES: &[Species] = &[
         cp: &[sh(298.0, 1500.0, [14.19760, 168.7798, -146.7254, 59.36550, 0.026005])],
         mu_gas: 1.0e-5, mu_liq: 5.9e-4, mu_liq_b: 1250.0, atoms: [1, 4, 1, 0],
     },
+    // Crude oil, lumped into one n-alkane per cut: naphtha, kerosene, diesel and heavy residue.
+    // Ideal-gas Cp from Poling, Prausnitz & O'Connell's cubic fits (valid to 1500 K) rewritten in
+    // Shomate form; formation enthalpy and entropy by CH₂ group increments from n-hexane.
+    Species {
+        id: "c6h14", name: "Naphtha (hexane)", formula: "C₆H₁₄", mw: 86.177, tc: 507.6, pc: 30.25e5, omega: 0.301,
+        hf: -167_100.0, s0: 388.8,
+        cp: &[sh(200.0, 1500.0, [-4.413, 582.0, -311.9, 64.94, 0.0])],
+        mu_gas: 6.3e-6, mu_liq: 3.1e-4, mu_liq_b: 900.0, atoms: [6, 14, 0, 0],
+    },
+    Species {
+        id: "c10h22", name: "Kerosene (decane)", formula: "C₁₀H₂₂", mw: 142.285, tc: 617.7, pc: 21.1e5, omega: 0.490,
+        hf: -249_600.0, s0: 545.2,
+        cp: &[sh(200.0, 1500.0, [-7.913, 960.9, -528.8, 113.1, 0.0])],
+        mu_gas: 5.0e-6, mu_liq: 9.2e-4, mu_liq_b: 1250.0, atoms: [10, 22, 0, 0],
+    },
+    Species {
+        id: "c16h34", name: "Diesel (hexadecane)", formula: "C₁₆H₃₄", mw: 226.446, tc: 723.0, pc: 14.0e5, omega: 0.718,
+        hf: -373_400.0, s0: 779.8,
+        cp: &[sh(200.0, 1500.0, [-13.02, 1529.0, -853.7, 185.0, 0.0])],
+        mu_gas: 4.0e-6, mu_liq: 3.45e-3, mu_liq_b: 1700.0, atoms: [16, 34, 0, 0],
+    },
+    Species {
+        id: "c20h42", name: "Heavy oil (eicosane)", formula: "C₂₀H₄₂", mw: 282.553, tc: 768.0, pc: 11.6e5, omega: 0.907,
+        hf: -455_900.0, s0: 936.2,
+        cp: &[sh(200.0, 1500.0, [-16.42, 1908.0, -1070.3, 232.9, 0.0])],
+        mu_gas: 3.5e-6, mu_liq: 8.0e-3, mu_liq_b: 2000.0, atoms: [20, 42, 0, 0],
+    },
 ];
 
 pub const NS: usize = SPECIES.len();

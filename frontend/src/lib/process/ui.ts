@@ -78,6 +78,7 @@ export function cssColour(id: string): string {
   const c: Record<string, string> = {
     h2: '#5fe3ff', o2: '#8fb8ff', n2: '#b7a8d9', ch4: '#ff9d3c', co: '#6b6b78', co2: '#d8d8d8', h2o: '#2f7fff',
     nh3: '#c6e85a', c2h4: '#ff8fd0', c2h6: '#ffbf8f', ch3oh: '#b48cff',
+    c6h14: '#f2e6a0', c10h22: '#e0b860', c16h34: '#c08a30', c20h42: '#5a3a22',
   };
   return c[id] ?? '#999';
 }
