@@ -10,6 +10,7 @@ import { ITEMS, RECIPES, TECH, TECHS, iconUrl, type Recipe } from '../lib/game/i
 import { Inventory } from '../lib/game/inventory';
 import { MAX_HEALTH, type Engineer, type Series } from '../lib/game/game';
 import { isBurner, type FEntity, type Factory } from '../lib/game/factory';
+import { UNTIL_LABEL, voyageText, type Stop } from '../lib/game/ships';
 import { ROUNDS_PER_MAGAZINE } from '../lib/game/combat';
 import { PROTO } from '../lib/process/engine';
 import { TERRAIN_COLORS, RESOURCE_COLORS } from '../lib/phaser/terrainRenderer';
@@ -25,7 +26,7 @@ function slot(item: string | null, count?: number, attrs = '', cls = ''): string
 
 const GROUPS: [string, (r: Recipe) => boolean][] = [
   ['Intermediates', r => !ITEMS[r.out]?.places && !ITEMS[r.out]?.gear && !['repair_pack'].includes(r.out) || r.out === 'pipe'],
-  ['Logistics', r => ['Belts'].includes(PROTO[r.out]?.category ?? '')],
+  ['Logistics', r => ['Belts'].includes(PROTO[r.out]?.category ?? '') || r.out === 'cargo_ship'],
   ['Production', r => ['Production', 'Science'].includes(PROTO[r.out]?.category ?? '')],
   ['Power', r => PROTO[r.out]?.category === 'Power'],
   // Pipe is an ingredient too, so it shows with the intermediates as well as first among the fluids.
@@ -253,7 +254,7 @@ export class Hud {
   private machineHtml() {
     const m = this.machineId !== null ? this.factory.entities.get(this.machineId) : undefined;
     if (!m) { queueMicrotask(() => this.close()); return ''; }
-    const title = PROTO[m.kind]?.name ?? m.kind;
+    const title = m.label ?? PROTO[m.kind]?.name ?? ITEMS[m.kind]?.name ?? m.kind;
     const parts: string[] = [];
     const invRow = (label: string, inv: FEntity['inv'], which: string) => inv
       ? `<h3>${label}</h3><div class="hud-row">${inv.slots.map((s, i) => slot(s?.item ?? null, s?.count, s ? `data-action="take" data-w="${which}" data-i="${i}"` : '')).join('')}</div>` : '';
@@ -274,7 +275,8 @@ export class Hud {
     if (m.input) parts.push(invRow('Input', m.input, 'input'));
     if (m.output) parts.push(invRow('Output', m.output, 'output'));
     if (m.progress !== undefined && m.kind !== 'lab') parts.push(`<div class="hud-bar"><span style="width:${Math.min(1, m.progress) * 100}%;background:var(--h-accent)"></span><em>${m.status ?? 'Working'}</em></div>`);
-    if (m.inv) parts.push(invRow(m.kind.endsWith('_chest') ? 'Contents' : m.kind === 'lab' ? 'Science packs' : 'Magazines', m.inv, 'inv'));
+    if (m.inv) parts.push(invRow(m.kind.endsWith('_chest') ? 'Contents' : m.kind === 'dock' ? 'Cargo' : m.kind === 'cargo_ship' ? 'Hold' : m.kind === 'lab' ? 'Science packs' : 'Magazines', m.inv, 'inv'));
+    if (m.kind === 'cargo_ship') parts.push(this.scheduleHtml(m));
     if (m.kind === 'lab') parts.push(`<p class="hud-note">${m.status ?? 'Researching'}</p>`);
     if (m.kind.endsWith('_drill')) {
       const ore = this.factory.oreTiles(m, { map: this.host.map }).length;
@@ -285,6 +287,44 @@ export class Hud {
     return `<header><img src="${iconUrl(m.kind)}" width="32" height="32" alt=""><h2>${title}</h2><small>${Math.ceil(m.hp)}/${m.maxHp} HP</small><button class="x" data-action="close">✕</button></header>
       <div class="hud-cols"><div class="hud-machine">${parts.join('')}</div>
       <div><h3 style="margin-top:0">Your inventory</h3>${this.pocketsHtml('put')}</div></div>`;
+  }
+
+  /** A ship's round of docks: click a stop's parts to change them. */
+  private scheduleHtml(m: FEntity) {
+    const docks = [...this.factory.entities.values()].filter(d => d.kind === 'dock');
+    const stops = (m.schedule ?? []).map((s, i) => `<div class="hud-stop${m.auto && i === m.stop ? ' on' : ''}">
+        <button class="hud-btn" data-action="stop-dock" data-i="${i}">${this.factory.entities.get(s.dock)?.label ?? 'Dock gone'}</button>
+        <button class="hud-btn" data-action="stop-act" data-i="${i}">${s.action === 'load' ? 'Load' : 'Unload'}</button>
+        <button class="hud-btn" data-action="stop-until" data-i="${i}">${UNTIL_LABEL[s.until]}</button>
+        <button class="hud-btn" data-action="stop-del" data-i="${i}">✕</button></div>`).join('');
+    return `<h3>Schedule</h3>${stops}
+      <div class="hud-stop">${docks.length ? '<button class="hud-btn" data-action="stop-add">Add stop</button>' : '<span class="hud-note">No docks yet</span>'}
+      ${m.schedule?.length ? `<button class="hud-btn" data-action="ship-go">${m.auto ? 'Moor' : 'Set sail'}</button>` : ''}</div>
+      <p class="hud-note">${m.status ? `${m.status} · ` : ''}${voyageText(this.factory, m)}</p>`;
+  }
+
+  private shipAction(a: string, i: number) {
+    const m = this.machineId !== null ? this.factory.entities.get(this.machineId) : undefined;
+    if (!m || m.kind !== 'cargo_ship') return;
+    const docks = [...this.factory.entities.values()].filter(d => d.kind === 'dock');
+    const sch = m.schedule ??= [];
+    const s = sch[i];
+    if (a === 'stop-add') {
+      const last = sch[sch.length - 1];
+      const dock = docks.find(d => d.id !== last?.dock) ?? docks[0];
+      const action = last?.action === 'load' ? 'unload' : 'load';
+      if (dock) sch.push({ dock: dock.id, action, until: action === 'load' ? 'full' : 'empty' });
+    } else if (a === 'stop-dock' && s && docks.length) {
+      const k = docks.findIndex(d => d.id === s.dock);
+      s.dock = docks[(k + 1) % docks.length].id;
+    } else if (a === 'stop-act' && s) s.action = s.action === 'load' ? 'unload' : 'load';
+    else if (a === 'stop-until' && s) {
+      const order: Stop['until'][] = ['full', 'empty', 'idle', 'time'];
+      s.until = order[(order.indexOf(s.until) + 1) % order.length];
+    } else if (a === 'stop-del' && s) sch.splice(i, 1);
+    else if (a === 'ship-go') m.auto = !m.auto;
+    // A changed route is sailed afresh from the stop it's on.
+    if (a !== 'ship-go') { m.voyage = 'idle'; m.path = null; if ((m.stop ?? 0) >= sch.length) m.stop = 0; }
   }
 
   private techHtml() {
@@ -475,6 +515,7 @@ export class Hud {
     } else if (a === 'put') this.putIntoMachine(i);
     else if (a === 'take') this.takeFromMachine(t.dataset.w as 'inv' | 'fuel' | 'input' | 'output', i);
     else if (a === 'recipe') this.setRecipe(t.dataset.r!);
+    else if (a?.startsWith('stop-') || a === 'ship-go') this.shipAction(a, i);
     this.lastWin = '';
     this.lastStatus = '';
     this.render();

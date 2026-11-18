@@ -478,6 +478,22 @@ function carveWater(map: PlanetMap, seed: number): void {
     t.decorations = [];
   };
 
+  // The sea, along whichever coast drowns the fewest deposits: open water for ships, shallow
+  // near the shore and deep beyond.
+  const reach = Math.round(span * 0.22);
+  const fromEdge = (side: number, x: number, y: number) => [y, map.width - 1 - x, map.height - 1 - y, x][side];
+  const coast = (side: number, x: number, y: number) => reach + edge((side % 2 ? y : x) * 0.07, side * 13.1) * 6;
+  const seaTiles = (side: number) => {
+    const out: [number, number, boolean][] = [];
+    for (let y = 0; y < map.height; y++) for (let x = 0; x < map.width; x++) {
+      const d = fromEdge(side, x, y), c = coast(side, x, y);
+      if (d < c) out.push([x, y, d < c - 4]);
+    }
+    return out;
+  };
+  const side = [0, 1, 2, 3].map(sd => ({ sd, c: cost(seaTiles(sd).map(([x, y]) => [x, y] as [number, number])) })).sort((a, b) => a.c - b.c)[0].sd;
+  for (const [x, y, deep] of seaTiles(side)) drown(map.tiles[y][x], deep);
+
   // Lakes: a deep middle you can't wade into, shallows round the edge.
   const lakeTiles = (lx: number, ly: number, r: number) => {
     const out: [number, number, boolean][] = [];
@@ -709,6 +725,10 @@ export function generatePlanetMap(params: MapGeneratorParams): PlanetMap {
   // Place ore patches (after tile generation, before special features)
   placeOrePatches(map, seed);
   if ([PlanetType.EARTH_LIKE, PlanetType.OCEAN, PlanetType.ALIEN].includes(planetType as PlanetType)) carveWater(map, seed);
+  // Nothing to mine under water: patches that spilled into the shallows stop at the shore.
+  for (const row of map.tiles) for (const t of row) {
+    if (t.terrain === TerrainType.SHALLOW_WATER || t.terrain === TerrainType.DEEP_WATER) { t.resource = ResourceType.NONE; t.resourceDensity = 0; }
+  }
 
   // Add special features and points of interest
   addSpecialFeatures(map, specialFeatureCount);

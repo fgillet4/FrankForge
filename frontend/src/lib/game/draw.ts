@@ -48,7 +48,7 @@ class Pool<T extends Phaser.GameObjects.GameObject> {
 }
 
 /** Buildings the process layer doesn't draw (they're not in the engine's snapshot). */
-const SPRITED = new Set(['wooden_chest', 'iron_chest', 'burner_drill', 'stone_furnace', 'gun_turret', 'charcoal_kiln']);
+const SPRITED = new Set(['wooden_chest', 'iron_chest', 'burner_drill', 'stone_furnace', 'gun_turret', 'charcoal_kiln', 'dock']);
 /** Problems worth a badge over the building, Factorio-style: colour and the item to show. */
 const ALERTS: Record<string, [number, (e: FEntity) => string | null]> = {
   'Out of fuel': [0xff5a4f, () => 'wood'],
@@ -191,7 +191,13 @@ export class WorldRenderer {
     });
 
     for (const e of f.entities.values()) {
-      if (!inView(e.x, e.y, e.size)) continue;
+      if (!inView(e.x - 1, e.y - 1, 2)) continue;
+      if (e.kind === 'cargo_ship') {
+        this.drawShip(v, e, time, `s${e.id}`);
+        const alert = e.status ? ALERTS[e.status] : undefined;
+        if (alert) this.alertBadge(v, e, alert[0], alert[1](e), time);
+        continue;
+      }
       if (e.kind === 'transport_belt' || e.kind === 'underground_belt' || e.kind === 'splitter') this.drawBelt(v, e, f, time);
       else if (e.kind === 'inserter' || e.kind === 'burner_inserter') {
         this.drawInserter(v, e, time);
@@ -246,6 +252,12 @@ export class WorldRenderer {
         const dx = Math.cos(e.aim!) - Math.sin(e.aim!), dy = (Math.cos(e.aim!) + Math.sin(e.aim!)) / 2;
         this.overlay.fillStyle(0xffe08a, 0.9).fillCircle(c.x + dx * 26 * v.zoom, c.y - 40 * v.zoom + dy * 26 * v.zoom, 6 * v.zoom);
       }
+    }
+
+    if (this.shipGhost) {
+      const g = this.shipGhost;
+      const s = this.drawShip(v, { x: g.x, y: g.y, heading: Math.PI / 4, id: 0, active: false }, time, 'ghost');
+      s.setAlpha(0.6).setTint(g.ok ? 0xffffff : 0xff8080);
     }
 
     if (this.drillGhost) {
@@ -311,6 +323,8 @@ export class WorldRenderer {
   drillsFor: number | 'all' | null = null;
   /** A drill being placed: where its ore will come out. */
   drillGhost: { x: number; y: number; size: number; rot: number } | null = null;
+  /** A ship being put in the water. */
+  shipGhost: { x: number; y: number; ok: boolean } | null = null;
   /** The tree or rock being mined, which shakes: its tile as "x,y". */
   wobble: string | null = null;
   /** Alt mode: what each machine is making, shown over it. */
@@ -504,6 +518,37 @@ export class WorldRenderer {
     const ground = this.at(v, e.x + e.size / 2, e.y + e.size / 2);
     const t = screenToIso(p.x, ground.y, v.x, v.y, v.zoom);
     return { x: t.x, y: t.y, z: (ground.y - p.y) / v.zoom };
+  }
+
+  /**
+   * A ship riding the water: the painting facing nearest its heading, bobbing and rolling a
+   * little, with a wake spreading behind it and smoke from its funnel while under way.
+   */
+  private drawShip(v: View, e: { x: number; y: number; heading?: number; id: number; active?: boolean }, time: number, key: string) {
+    const h = e.heading ?? 0;
+    const hx = Math.cos(h), hy = Math.sin(h);
+    // On screen a tile step (hx, hy) goes (hx − hy, (hx + hy) / 2).
+    const sx = hx - hy, sy = (hx + hy) / 2;
+    const tex = sy >= 0 ? 'pb_cargo_ship_se' : 'pb_cargo_ship_ne';
+    const s = this.sprites.get(key);
+    if (s.anims.isPlaying) s.stop();
+    if (s.texture.key !== tex) s.setTexture(tex);
+    const p = this.at(v, e.x, e.y);
+    const bob = Math.sin(time * 0.0021 + e.id) * 1.6 * v.zoom;
+    s.setOrigin(0.5, 0.7).setPosition(p.x, p.y + bob).setFlipX(sx < 0).setRotation(Math.sin(time * 0.0017 + e.id * 2) * 0.025)
+      .setScale(2 * TILE_W * v.zoom / s.width * popScale(e.id, time)).setDepth(10 + (e.x + e.y + 0.5) * 0.01).setAlpha(1).clearTint();
+    if (e.active) {
+      // The wake: pale arcs trailing from the stern, widening as they fall behind.
+      const g = this.ground;
+      for (let k = 1; k <= 4; k++) {
+        const t = (time * 0.002 + k / 4) % 1;
+        const back = 0.6 + t * 1.6;
+        const c = this.at(v, e.x - hx * back, e.y - hy * back);
+        g.lineStyle(1.4 * v.zoom, 0xeaf6ff, 0.45 * (1 - t)).strokeEllipse(c.x, c.y, (10 + t * 34) * v.zoom, (5 + t * 17) * v.zoom);
+      }
+      if (this.fx && Math.random() < 0.12) this.fx.smoke(e.x - hx * 0.35, e.y - hy * 0.35, 46);
+    }
+    return s;
   }
 
   /** A painted body anchored on its footprint like any building. */

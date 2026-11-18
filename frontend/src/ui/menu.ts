@@ -62,6 +62,7 @@ export const HOW_TO_PLAY = `
     <li>Coal (the black deposits) burns longer than wood: a lump of coal gives about 1⅔ times the heat of a log, and charcoal twice. A charcoal kiln (a kolmila) smoulders four logs down to one lump of charcoal, losing half the heat but packing the rest densely.</li>
     <li>Rivers flow: a water wheel standing mostly in one makes up to 100 kW, more where the current runs fast (hover the water to see). Enough for an air blower before you have a boiler.</li>
     <li>Lakes and the shallows along rivers take a water well for boiler feed; deep water you can't wade into or build on.</li>
+    <li>Shipping (research it after steel): build docks on the shore, put a cargo ship in the water and click it to give it a schedule — which dock to call at, whether to load or unload there, and when to sail on. Ships burn coal or other fuel under way and refuel from fuel left on a dock; inserters fill and empty docks like chests.</li>
     <li>Craft red science packs and a lab, choose a research (T), and the lab will unlock new buildings.</li>
     <li>Electric buildings need a power pole whose blue area covers them; poles wire to each other within reach.</li>
     <li>Wells, drills and other extraction buildings must stand mostly on their deposit; it lights up green while you place one.</li>

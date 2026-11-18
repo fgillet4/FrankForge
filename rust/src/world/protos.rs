@@ -358,6 +358,11 @@ pub const PROTOS: &[Proto] = &[
     Proto { id: "inserter", name: "Inserter", category: "Belts", description: "Moves items from the tile behind it to the tile in front. 13 kW.", power_w: 13e3, ..BASE },
     Proto { id: "wooden_chest", name: "Wooden chest", category: "Belts", description: "16 slots of storage.", ..BASE },
     Proto { id: "iron_chest", name: "Iron chest", category: "Belts", description: "32 slots of storage.", ..BASE },
+    Proto {
+        id: "dock", name: "Dock", category: "Belts",
+        description: "A pier on the shore where cargo ships tie up. 24 slots: inserters fill and empty it like a chest, and ships load from it or unload into it on their schedules.",
+        size: 2, needs: Some("shore"), ..BASE
+    },
     Proto { id: "burner_drill", name: "Burner mining drill", category: "Production", description: "Mines ore under it, burning wood, coal, charcoal or solid fuel. 0.25 ore/s.", size: 2, ..BASE },
     Proto { id: "electric_drill", name: "Electric mining drill", category: "Production", description: "Mines ore under it. 0.5 ore/s, 90 kW.", size: 3, power_w: 90e3, ..BASE },
     Proto { id: "stone_furnace", name: "Stone furnace", category: "Production", description: "Smelts ore into plates, burning wood, coal, charcoal or solid fuel.", size: 2, ..BASE },

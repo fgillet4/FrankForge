@@ -41,6 +41,7 @@ import { NATURE, scatterNature, tileKey, type NatureObject } from '../game/natur
 import { WorldRenderer, type View } from '../game/draw';
 import { GOALS, type GoalWorld } from '../game/goals';
 import { Juice, pop } from '../game/juice';
+import { navigable, newShip, voyageText } from '../game/ships';
 
 const MIN_ZOOM = 0.3;
 const MAX_ZOOM = 4;
@@ -751,6 +752,16 @@ export class WorldScene extends Phaser.Scene {
 
   /** What holding the right button over a tile would mine. */
   private mineTarget(tx: number, ty: number): MiningTarget | null {
+    const ship = this.shipOnTile(tx, ty);
+    if (ship) {
+      return {
+        key: `s${ship.id}`, label: 'Cargo ship', time: this.sandbox ? 0.15 : 1, x: ship.x, y: ship.y, done: () => {
+          for (const s of this.factory.remove(ship.id)) this.gain(s.item, s.count);
+          if (!this.sandbox) this.gain('cargo_ship', 1);
+          if (this.hud?.openMachine === ship.id) this.hud.close();
+        },
+      };
+    }
     const id = this.idAt(tx, ty);
     if (id >= 0) {
       const p = engine.layout().find(x => x.id === id);
@@ -841,6 +852,48 @@ export class WorldScene extends Phaser.Scene {
   }
 
   /** The pile under a screen point, if any. */
+  /** The ship under a point on screen, if any. */
+  private shipAt(sx: number, sy: number) {
+    const v = this.viewInfo();
+    const iso = screenToIso(sx, sy, v.x, v.y, this.zoom);
+    let best: ReturnType<Factory['entities']['get']>, d = 0.9;
+    for (const e of this.factory.entities.values()) {
+      if (e.kind !== 'cargo_ship') continue;
+      // The hull stands up off the water: aim a little above where it floats.
+      const k = Math.hypot(e.x - 0.3 - iso.x, e.y - 0.3 - iso.y);
+      if (k < d) { d = k; best = e; }
+    }
+    return best;
+  }
+
+  private shipOnTile(tx: number, ty: number) {
+    for (const e of this.factory.entities.values()) if (e.kind === 'cargo_ship' && Math.floor(e.x) === tx && Math.floor(e.y) === ty) return e;
+    return undefined;
+  }
+
+  /** Why a ship can't be put in the water here, or null if it can. */
+  private launchError(tx: number, ty: number): string | null {
+    if (!navigable(this.map, tx, ty)) return 'Ships go in water: a river, a lake or the sea.';
+    if (this.shipOnTile(tx, ty)) return 'There is a ship there already.';
+    if (!this.sandbox) {
+      if (this.distanceTo(tx + 0.5, ty + 0.5) > this.eng.reach + 1) return 'Too far away. Walk closer.';
+      if (!this.eng.inv.count('cargo_ship')) return 'You have no Cargo ship.';
+    }
+    return null;
+  }
+
+  private launch(tx: number, ty: number) {
+    const err = this.launchError(tx, ty);
+    if (err) { this.processUI?.alert(err); return; }
+    const id = Math.min(-1, ...[...this.factory.entities.keys()].map(k => k - 1));
+    this.factory.entities.set(id, newShip(id, tx + 0.5, ty + 0.5));
+    if (!this.sandbox) this.eng.inv.remove('cargo_ship', 1);
+    pop(id, this.time.now);
+    this.playSound('place', 0.35);
+    for (let k = 0; k < 6; k++) this.juice.dust(tx + Math.random(), ty + Math.random(), 0xd8ecff, 2);
+    if (this.sandbox || !this.eng.inv.count('cargo_ship')) this.choose(null);
+  }
+
   private pileAt(sx: number, sy: number): GroundPile | undefined {
     const v = this.viewInfo();
     const iso = screenToIso(sx, sy, v.x, v.y, this.zoom);
@@ -1041,6 +1094,7 @@ export class WorldScene extends Phaser.Scene {
       this.layTo(tile.x, tile.y);
       return;
     }
+    if (this.placementType === 'cargo_ship') { this.launch(tile.x, tile.y); return; }
     if (this.placementType) { this.stampAt(tile.x, tile.y); return; }
     this.drag = { x: p.x, y: p.y, panX: this.pan.x, panY: this.pan.y };
   }
@@ -1070,6 +1124,8 @@ export class WorldScene extends Phaser.Scene {
     if (this.placementType) { this.placeAt(this.placementType, tile.x, tile.y); return; }
     this.updateAim();
     // Clicking a pile in reach takes it.
+    const ship = this.level ? undefined : this.shipAt(p.x, p.y);
+    if (ship) { this.select(null); this.hud?.showMachine(ship.id); return; }
     const pile = this.level ? undefined : this.pileAt(p.x, p.y);
     if (pile && Math.hypot(pile.x - this.player.x, pile.y - this.player.y) <= this.eng.reach) { this.take(pile); return; }
     const id = this.idAt(this.aimTX, this.aimTY);
@@ -1253,6 +1309,7 @@ export class WorldScene extends Phaser.Scene {
     const t = this.map.tiles[y]?.[x];
     if (!t) return false;
     if (need === 'river') return !!t.flow;
+    if (need === 'shore') return !navigable(this.map, x, y) && [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => navigable(this.map, x + dx, y + dy));
     if (need === 'water') return t.resource === ResourceType.WATER || t.terrain === TerrainType.SHALLOW_WATER || t.terrain === TerrainType.ICE;
     if (need === 'methane') return t.resource === ResourceType.METHANE || t.terrain === TerrainType.METHANE_LAKE;
     if (need === 'ore') return !!MINED_ITEM[t.resource] && this.factory.oreLeft(this.map, x, y) > 0;
@@ -1290,7 +1347,8 @@ export class WorldScene extends Phaser.Scene {
     const need = this.needOf(proto);
     if (need) {
       const on = tiles.filter(([tx, ty]) => this.tileHas(need, tx, ty)).length;
-      if (on < Math.ceil(tiles.length / 2)) {
+      if (need === 'shore' ? !on : on < Math.ceil(tiles.length / 2)) {
+        if (need === 'shore') return `${p.name} must stand on the shore, beside water a ship can reach.`;
         const what = need === 'ore' ? 'an ore deposit' : need === 'water' ? 'water' : need === 'river' ? 'a river' : 'a methane deposit';
         return `${p.name} must stand mostly on ${what} (${on} of ${tiles.length} tiles are).`;
       }
@@ -1469,6 +1527,8 @@ export class WorldScene extends Phaser.Scene {
       const si = this.processLayer?.segmentAt(tx, ty, this.level);
       return si === undefined ? null : segmentTooltip(this.snapshot.segments[si].vessel, this.processLayer?.flowAt(this.snapshot, tx, ty, this.level));
     }
+    const ship = this.shipOnTile(tx, ty);
+    if (ship) return `<b>Cargo ship</b>${ship.status ? ` · ${ship.status}` : ''}<br><small>${voyageText(this.factory, ship)}</small>`;
     const id = engine.entityAt(tx, ty);
     const f = id >= 0 ? this.factory.entities.get(id) : undefined;
     const snapE = id >= 0 ? this.snapshot?.entities.find(x => x.id === id) : undefined;
@@ -1543,7 +1603,9 @@ export class WorldScene extends Phaser.Scene {
   private drawProcess(time: number) {
     if (!this.processLayer) return;
     let ghost = null;
-    if (this.placementType && this.hoverTX >= 0 && !this.menu.open) {
+    this.worldDraw.shipGhost = this.placementType === 'cargo_ship' && this.hoverTX >= 0 && !this.menu.open
+      ? { x: this.hoverTX + 0.5, y: this.hoverTY + 0.5, ok: !this.launchError(this.hoverTX, this.hoverTY) } : null;
+    if (this.placementType && this.placementType !== 'cargo_ship' && this.hoverTX >= 0 && !this.menu.open) {
       const o = this.placementType === 'splitter' ? { x: this.hoverTX, y: this.hoverTY } : this.originFor(this.placementType, this.hoverTX, this.hoverTY);
       ghost = { proto: this.placementType, x: o.x, y: o.y, rot: this.placementRot, ok: !this.placementError(this.placementType, o.x, o.y, this.placementRot) };
     }

@@ -23,7 +23,7 @@ SIZES = {
     "methanol_reactor": 2, "cracker_furnace": 3, "electrolyser": 3, "power_pole": 1, "wreck": 2,
     "burner_drill": 2, "electric_drill": 3, "stone_furnace": 2, "electric_furnace": 3, "assembler": 3, "lab": 3,
     "chemical_plant": 3, "wooden_chest": 1, "iron_chest": 1, "inserter": 1, "gun_turret": 2, "laser_turret": 2,
-    "substation": 2, "cstr": 3, "burner_generator": 2, "charcoal_kiln": 3, "water_wheel": 2,
+    "substation": 2, "cstr": 3, "burner_generator": 2, "charcoal_kiln": 3, "water_wheel": 2, "dock": 2,
 }
 
 # Nature objects: width in tiles (they stand on a tile and may overhang it).

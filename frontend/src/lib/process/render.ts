@@ -38,7 +38,7 @@ export const BUILDING_SPRITES = [
   'ammonia_converter', 'methanol_reactor', 'cracker_furnace', 'electrolyser', 'power_pole', 'wreck',
   'burner_drill', 'electric_drill', 'stone_furnace', 'electric_furnace', 'assembler', 'lab', 'chemical_plant',
   'wooden_chest', 'iron_chest', 'inserter', 'gun_turret', 'laser_turret', 'substation', 'cstr', 'burner_generator',
-  'charcoal_kiln', 'water_wheel',
+  'charcoal_kiln', 'water_wheel', 'dock',
 ];
 
 /** Colour of a fluid by what dominates it. */
@@ -73,6 +73,8 @@ export function preloadProcessAssets(scene: Phaser.Scene) {
   for (const id of BUILDING_SPRITES) {
     scene.load.image(`pb_${id}`, `assets/process/buildings/${id}.png`);
   }
+  // Ships, bow toward the viewer and bow away; mirrored for the other two headings.
+  for (const v of ['se', 'ne']) scene.load.image(`pb_cargo_ship_${v}`, `assets/process/buildings/cargo_ship_${v}.png`);
   // Inserter parts, assembled and moved by the world renderer.
   for (const kind of ['inserter', 'burner_inserter']) {
     for (const part of ['base', 'arm', 'hand']) scene.load.image(`ip_${kind}_${part}`, `assets/process/parts/${kind}_${part}.png`);

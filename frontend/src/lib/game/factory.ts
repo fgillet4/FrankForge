@@ -9,6 +9,7 @@
 import { ResourceType, type PlanetMap } from '../types';
 import { Inventory, type Stack } from './inventory';
 import { ITEMS, RECIPES, TECH, type Recipe } from './items';
+import { SHIP_POWER, tickShip, type Stop } from './ships';
 
 /** Rotation 0..3 faces north, east, south, west (−y, +x, +y, −x). */
 export const DIRS: [number, number][] = [[0, -1], [1, 0], [0, 1], [-1, 0]];
@@ -32,11 +33,13 @@ export const MINED_ITEM: Partial<Record<ResourceType, string>> = {
 export const FACTORY_KINDS = new Set([
   'transport_belt', 'underground_belt', 'splitter', 'inserter', 'burner_inserter', 'wooden_chest', 'iron_chest', 'burner_drill',
   'electric_drill', 'stone_furnace', 'electric_furnace', 'assembler', 'chemical_plant', 'lab', 'gun_turret', 'laser_turret',
-  'burner_generator', 'charcoal_kiln',
+  'burner_generator', 'charcoal_kiln', 'dock',
 ]);
 
 const BELTLIKE = new Set(['transport_belt', 'underground_belt', 'splitter']);
-const BURNER: Record<string, number> = { burner_drill: 150e3, stone_furnace: 90e3, burner_generator: 0, burner_inserter: 50e3 };
+const BURNER: Record<string, number> = { burner_drill: 150e3, stone_furnace: 90e3, burner_generator: 0, burner_inserter: 50e3, cargo_ship: SHIP_POWER };
+/** Things inserters fill and empty like chests. */
+const isStore = (kind: string) => kind.endsWith('_chest') || kind === 'dock';
 /** Burner generators turn this much of their fuel into electricity. */
 const GENERATOR_EFFICIENCY = 0.35;
 const ELECTRIC = new Set(['inserter', 'electric_drill', 'electric_furnace', 'assembler', 'chemical_plant', 'lab', 'laser_turret']);
@@ -83,6 +86,22 @@ export interface FEntity {
   active?: boolean;
   /** What stops it, shown in its tooltip. */
   status?: string;
+  /** Docks: their name, for ships' schedules. */
+  label?: string;
+  /** Ships: where they call, which stop is next and whether they're following the schedule. */
+  schedule?: Stop[];
+  stop?: number;
+  auto?: boolean;
+  /** Ships: which way the bow points [rad, tile space] and the tiles still to sail through. */
+  heading?: number;
+  path?: [number, number][] | null;
+  voyage?: 'idle' | 'sailing' | 'docked';
+  /** Ships at a dock: time there, time since anything moved, and items it may move now. */
+  waited?: number;
+  idle?: number;
+  moved?: number;
+  /** Ships: when to look for a way to the dock again [s]. */
+  retry?: number;
 }
 
 export interface FactoryContext {
@@ -132,6 +151,13 @@ export class Factory {
     if (kind === 'inserter' || kind === 'burner_inserter') { e.hand = null; e.swing = 0; }
     if (kind === 'wooden_chest') e.inv = new Inventory(16);
     if (kind === 'iron_chest') e.inv = new Inventory(32);
+    if (kind === 'dock') {
+      e.inv = new Inventory(24);
+      const names = new Set([...this.entities.values()].map(d => d.label));
+      let k = 0;
+      while (names.has(dockName(k))) k++;
+      e.label = dockName(k);
+    }
     if (kind in BURNER) { e.fuel = new Inventory(1); e.burn = 0; }
     if (kind.endsWith('_furnace') || kind === 'assembler' || kind === 'chemical_plant' || kind === 'charcoal_kiln') {
       e.input = new Inventory(kind === 'assembler' ? 6 : 1);
@@ -210,7 +236,7 @@ export class Factory {
   /** Whether `e` will take `item` now (inserters and drills feeding it). */
   wants(e: FEntity, item: string, ctx: FactoryContext): boolean {
     if (BELTLIKE.has(e.kind)) return this.beltRoom(e, 0.5);
-    if (e.inv && (e.kind.endsWith('_chest'))) return e.inv.room(item) > 0;
+    if (e.inv && isStore(e.kind)) return e.inv.room(item) > 0;
     if (e.fuel && ITEMS[item]?.fuel && e.fuel.count(item) < 10 && e.fuel.room(item) > 0) return true;
     if (e.kind === 'charcoal_kiln') {
       const r = kilnRecipe(item, ctx);
@@ -234,7 +260,8 @@ export class Factory {
 
   /** The inventory of `e` a player's item goes into by hand, if any. */
   slotFor(e: FEntity, item: string, smeltable: (item: string) => boolean): Inventory | undefined {
-    if (e.kind.endsWith('_chest')) return e.inv;
+    if (isStore(e.kind)) return e.inv;
+    if (e.kind === 'cargo_ship') return ITEMS[item]?.fuel && e.fuel!.room(item) > 0 ? e.fuel : e.inv;
     if (e.kind === 'lab') return item.startsWith('science_') ? e.inv : undefined;
     if (e.kind === 'gun_turret') return ITEMS[item]?.gear === 'ammo' ? e.inv : undefined;
     if (e.kind.endsWith('_furnace') && smeltable(item)) return e.input;
@@ -259,7 +286,7 @@ export class Factory {
       return b?.item ?? null;
     }
     if (e.output) return e.output.first(i => this.wants(target, i, ctx));
-    if (e.kind.endsWith('_chest')) return e.inv!.first(i => this.wants(target, i, ctx));
+    if (isStore(e.kind)) return e.inv!.first(i => this.wants(target, i, ctx));
     return null;
   }
 
@@ -317,6 +344,7 @@ export class Factory {
         case 'stone_furnace': case 'electric_furnace': case 'assembler': case 'chemical_plant': case 'charcoal_kiln': this.tickCrafter(e, dt, ctx); break;
         case 'lab': this.tickLab(e, dt, ctx); break;
         case 'burner_generator': this.tickGenerator(e, dt, ctx); break;
+        case 'cargo_ship': tickShip(this, e, dt, ctx); break;
       }
     }
   }
@@ -410,7 +438,7 @@ export class Factory {
   }
 
   /** Burns fuel for `watts` over dt; returns the fraction of dt it ran. */
-  private burnFuel(e: FEntity, watts: number, dt: number, ctx: FactoryContext): number {
+  burnFuel(e: FEntity, watts: number, dt: number, ctx: FactoryContext): number {
     const need = watts * dt;
     if (e.burn! < need) {
       const f = e.fuel!.first();
@@ -589,4 +617,6 @@ export function smeltRecipe(item: string, ctx: FactoryContext): Recipe | undefin
 }
 
 export const isBurner = (kind: string) => kind in BURNER;
+/** Docks are named A, B, … Z, then AA, AB, … */
+const dockName = (k: number): string => `Dock ${k >= 26 ? String.fromCharCode(64 + Math.floor(k / 26)) : ''}${String.fromCharCode(65 + k % 26)}`;
 export const isElectricMachine = (kind: string) => ELECTRIC.has(kind) || kind === 'burner_generator';

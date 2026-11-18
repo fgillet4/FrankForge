@@ -65,6 +65,8 @@ button.slot:hover { border-color: #5a6a80; }
 .hud-btn { background: #2a323d; border: 1px solid #435063; border-radius: 6px; padding: 4px 10px; }
 .hud-btn:hover { border-color: #607089; }
 .hud-btn.on { border-color: var(--h-accent); background: #3a2f1c; }
+.hud-stop { display: flex; gap: 6px; align-items: center; margin: 4px 0; padding: 3px 4px; border-radius: 6px; border: 1px solid transparent; }
+.hud-stop.on { border-color: var(--h-accent); }
 .hud-note { color: var(--h-dim); font-size: 12px; margin: 4px 0; }
 .hud-warn { color: var(--h-bad); }
 
