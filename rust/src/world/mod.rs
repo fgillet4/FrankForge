@@ -136,6 +136,14 @@ pub struct World {
 /// The four sides of a tile, in the order of a pipe's join bits.
 const PIPE_SIDES: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
 
+/// The join bit of an inclined pipe's end: its higher end faces the way it's turned (rotation 0
+/// climbs toward +x, each turn a quarter clockwise), its lower end the other way.
+fn slope_side(rot: u8, high: bool) -> u8 {
+    // Facings in rotation order, as join bits (+x, +y, -x, -y).
+    const AHEAD: [u8; 4] = [0b0001, 0b0100, 0b0010, 0b1000];
+    AHEAD[((rot + if high { 0 } else { 2 }) % 4) as usize]
+}
+
 /// Whether two pipe nodes side by side (b on side k of a) are joined: both must allow it.
 fn joined(joins: &HashMap<Node, u8>, a: Node, k: usize, b: Node) -> bool {
     let back = k ^ 1;
@@ -489,17 +497,21 @@ impl World {
         self.node_seg.clear();
         let mut bore: HashMap<Node, f64> = HashMap::new();
         let mut joins: HashMap<Node, u8> = HashMap::new();
-        let mut risers: std::collections::HashSet<Tile> = std::collections::HashSet::new();
+        // Risers and inclined pipe join the heights they carry on their tile.
+        let mut climbs: HashMap<Tile, &'static [u8]> = HashMap::new();
         for e in self.entities.values() {
             let levels = e.proto().levels;
-            for &l in levels {
+            for (i, &l) in levels.iter().enumerate() {
                 bore.insert((l, (e.x, e.y)), e.diameter);
-                joins.insert((l, (e.x, e.y)), e.joins);
+                joins.insert((l, (e.x, e.y)), if e.proto().slope { e.joins & slope_side(e.rot, i > 0) } else { e.joins });
             }
             if levels.len() > 1 {
-                risers.insert((e.x, e.y));
+                climbs.insert((e.x, e.y), levels);
             }
         }
+        let climb = |(l, t): Node| -> Vec<Node> {
+            climbs.get(&t).filter(|ls| ls.contains(&l)).map(|ls| ls.iter().filter(|&&m| m != l).map(|&m| (m, t)).collect()).unwrap_or_default()
+        };
         let mut starts: Vec<Node> = bore.keys().copied().collect();
         starts.sort();
         for &start in &starts {
@@ -518,9 +530,7 @@ impl World {
                     .filter(|&(k, d)| joined(&joins, (l, t), k, (l, (t.0 + d.0, t.1 + d.1))))
                     .map(|(_, d)| (l, (t.0 + d.0, t.1 + d.1)))
                     .collect();
-                if risers.contains(&t) {
-                    next.extend((0..=2).filter(|&m| m != l).map(|m| (m, t)));
-                }
+                next.extend(climb((l, t)));
                 for nb in next {
                     if bore.contains_key(&nb) && !self.node_seg.contains_key(&nb) {
                         self.node_seg.insert(nb, si);
@@ -624,6 +634,8 @@ impl World {
             id: u32,
             port: usize,
             seg: usize,
+            /// The pipe node it opens onto.
+            node: Node,
         }
         let mut attaches: Vec<Attach> = vec![];
         let mut direct: Vec<(u32, usize, u32, usize)> = vec![];
@@ -634,8 +646,11 @@ impl World {
             }
             for k in 0..e.proto().ports.len() {
                 let (outside, inside) = e.port_tile(k);
-                if let Some(&si) = self.segment_of.get(&outside) {
-                    attaches.push(Attach { id: *id, port: k, seg: si });
+                let level = e.proto().ports[k].level;
+                if let Some(&si) = self.node_seg.get(&(level, outside)).filter(|_| level > 0) {
+                    attaches.push(Attach { id: *id, port: k, seg: si, node: (level, outside) });
+                } else if let Some(&si) = self.segment_of.get(&outside) {
+                    attaches.push(Attach { id: *id, port: k, seg: si, node: (0, outside) });
                 } else if let Some(&other) = self.occupied.get(&outside) {
                     let o = &self.entities[&other];
                     if let Some(ok) = (0..o.proto().ports.len()).find(|&ok| o.port_tile(ok).0 == inside) {
@@ -646,7 +661,7 @@ impl World {
                 }
             }
         }
-        // Each segment's hub is the attached port tile nearest the middle of them; a port's pipe
+        // Each segment's hub is the node nearest the middle of its attached ports; a port's pipe
         // length is its walking distance to the hub (plus one tile).
         let mut lengths: HashMap<(u32, usize), f64> = HashMap::new();
         for (si, seg) in self.segments.iter().enumerate() {
@@ -654,24 +669,13 @@ impl World {
             if ports.is_empty() {
                 continue;
             }
-            let tile_of = |a: &Attach| self.entities[&a.id].port_tile(a.port).0;
-            let (mx, my) = ports.iter().fold((0.0, 0.0), |acc, a| {
-                let t = tile_of(a);
-                (acc.0 + t.0 as f64, acc.1 + t.1 as f64)
-            });
+            let (mx, my) = ports.iter().fold((0.0, 0.0), |acc, a| (acc.0 + a.node.1 .0 as f64, acc.1 + a.node.1 .1 as f64));
             let c = (mx / ports.len() as f64, my / ports.len() as f64);
-            let hub = *seg
-                .tiles
-                .iter()
-                .min_by(|a, b| {
-                    let da = (a.0 as f64 - c.0).powi(2) + (a.1 as f64 - c.1).powi(2);
-                    let db = (b.0 as f64 - c.0).powi(2) + (b.1 as f64 - c.1).powi(2);
-                    da.partial_cmp(&db).unwrap()
-                })
-                .unwrap();
+            let far = |n: &Node| (n.1 .0 as f64 - c.0).powi(2) + (n.1 .1 as f64 - c.1).powi(2);
+            let hub = seg.tiles.iter().map(|&t| (0u8, t)).chain(seg.racks.iter().copied()).min_by(|a, b| far(a).partial_cmp(&far(b)).unwrap()).unwrap();
             // Walking the run, up and over racks included.
-            let mut dist: HashMap<Node, i32> = HashMap::from([((0, hub), 0)]);
-            let mut queue = VecDeque::from([(0u8, hub)]);
+            let mut dist: HashMap<Node, i32> = HashMap::from([(hub, 0)]);
+            let mut queue = VecDeque::from([hub]);
             while let Some((l, t)) = queue.pop_front() {
                 let mut next: Vec<Node> = PIPE_SIDES
                     .iter()
@@ -679,9 +683,7 @@ impl World {
                     .filter(|&(k, d)| joined(&joins, (l, t), k, (l, (t.0 + d.0, t.1 + d.1))))
                     .map(|(_, d)| (l, (t.0 + d.0, t.1 + d.1)))
                     .collect();
-                if risers.contains(&t) {
-                    next.extend((0..=2).filter(|&m| m != l).map(|m| (m, t)));
-                }
+                next.extend(climb((l, t)));
                 for nb in next {
                     if self.node_seg.get(&nb) == Some(&si) && !dist.contains_key(&nb) {
                         // Climbing a riser is a few metres of pipe.
@@ -691,7 +693,7 @@ impl World {
                 }
             }
             for a in ports {
-                lengths.insert((a.id, a.port), 1.0 + *dist.get(&(0, tile_of(a))).unwrap_or(&0) as f64);
+                lengths.insert((a.id, a.port), 1.0 + *dist.get(&a.node).unwrap_or(&0) as f64);
             }
         }
 

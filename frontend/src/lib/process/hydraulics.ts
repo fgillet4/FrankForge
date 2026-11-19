@@ -10,7 +10,7 @@
  * for runs without loops; in a loop the closing edge is shown carrying nothing.
  */
 
-import { PROTO, layout, portTiles, type EntityView, type Snapshot, type VesselView } from './engine';
+import { PROTO, climbs as climbsNow, layout, portTiles, type EntityView, type Snapshot, type VesselView } from './engine';
 
 /** A pipe node: height (0 ground, 1 low rack, 2 high rack) and tile. */
 export type PipeNode = [number, number, number];
@@ -97,8 +97,8 @@ export interface RunFlows {
   fluid: RunFluid;
   /** Mass flow between neighbouring pipe nodes (beside each other, or up and down a riser), positive from a to b [kg/s]. */
   edges: { a: PipeNode; b: PipeNode; m: number }[];
-  /** Where buildings' ports open onto the run: tile, the step into the building, and flow into the run [kg/s]. */
-  ports: { x: number; y: number; dx: number; dy: number; mdot: number }[];
+  /** Where buildings' ports open onto the run: height, tile, the step into the building, and flow into the run [kg/s]. */
+  ports: { l: number; x: number; y: number; dx: number; dy: number; mdot: number }[];
   /** The biggest flow at each node, by nodeKey [kg/s]. */
   tile: Map<string, number>;
 }
@@ -107,11 +107,17 @@ export interface Hydraulics {
   runs: RunFlows[];
   /** Which run a node belongs to, by nodeKey. */
   runAt: Map<string, number>;
-  /** Tiles with a riser on them, "x,y". */
-  risers: Set<string>;
+  /** Heights joined on a tile (risers and inclined pipe), by "x,y". */
+  climbs: Map<string, number[]>;
 }
 
 const cache = new WeakMap<Snapshot, Hydraulics>();
+
+/** The pipe node a port opens onto, as the engine picks it: its rack height if a pipe is there, else the ground. */
+export function portNode(runAt: Map<string, number>, level: number, x: number, y: number): string | null {
+  if (level && runAt.has(nodeKey(level, x, y))) return nodeKey(level, x, y);
+  return runAt.has(`${x},${y}`) ? `${x},${y}` : null;
+}
 
 /** Flows along every pipe run of a snapshot. */
 export function hydraulics(snap: Snapshot): Hydraulics {
@@ -121,7 +127,7 @@ export function hydraulics(snap: Snapshot): Hydraulics {
   const nodesOf = (seg: Snapshot['segments'][number]): PipeNode[] =>
     [...seg.tiles.map(([x, y]) => [0, x, y] as PipeNode), ...(seg.racks ?? []).map(([l, [x, y]]) => [l, x, y] as PipeNode)];
   snap.segments.forEach((seg, si) => nodesOf(seg).forEach(([l, x, y]) => runAt.set(nodeKey(l, x, y), si)));
-  const risers = new Set(layout().filter(p => p.proto === 'pipe_riser').map(p => `${p.x},${p.y}`));
+  const climbs = climbsNow();
   const runs: RunFlows[] = snap.segments.map(seg => ({
     service: 'liquid', d: seg.diameter || PIPE_D, fluid: runFluid(seg.vessel), edges: [], ports: [], tile: new Map(),
   }));
@@ -134,11 +140,12 @@ export function hydraulics(snap: Snapshot): Hydraulics {
       p.ports?.forEach((k, end) => {
         if (k === null || k === undefined || !tiles[k]) return;
         const [x, y] = tiles[k].outside;
-        const si = runAt.get(`${x},${y}`);
-        if (si === undefined) return;
+        const node = portNode(runAt, tiles[k].port.level, x, y);
+        if (!node) return;
+        const si = runAt.get(node)!;
         // a → b is positive: the run is end a, so flow leaves it; or end b, so flow arrives.
         const mdot = end === 0 ? -p.mdot : p.mdot;
-        runs[si].ports.push({ x, y, dx: tiles[k].inside[0] - x, dy: tiles[k].inside[1] - y, mdot });
+        runs[si].ports.push({ l: node === `${x},${y}` ? 0 : tiles[k].port.level, x, y, dx: tiles[k].inside[0] - x, dy: tiles[k].inside[1] - y, mdot });
         if (p.kind.kind === 'Pump') pumps.push([si, end as 0 | 1]);
       });
     }
@@ -150,7 +157,7 @@ export function hydraulics(snap: Snapshot): Hydraulics {
     const nodes = nodesOf(seg);
     if (!nodes.length) return;
     const net = new Map<string, number>();
-    for (const p of run.ports) net.set(`${p.x},${p.y}`, (net.get(`${p.x},${p.y}`) ?? 0) + p.mdot);
+    for (const p of run.ports) net.set(nodeKey(p.l, p.x, p.y), (net.get(nodeKey(p.l, p.x, p.y)) ?? 0) + p.mdot);
     // Spanning tree from the first node; then each node's subtree inflow crosses to its parent.
     const parent = new Map<string, PipeNode | null>();
     const order: PipeNode[] = [];
@@ -160,7 +167,8 @@ export function hydraulics(snap: Snapshot): Hydraulics {
       const [l, x, y] = queue.shift()!;
       order.push([l, x, y]);
       const next: PipeNode[] = [[l, x + 1, y], [l, x - 1, y], [l, x, y + 1], [l, x, y - 1]];
-      if (risers.has(`${x},${y}`)) for (const m of [0, 1, 2]) if (m !== l) next.push([m, x, y]);
+      const up = climbs.get(`${x},${y}`);
+      if (up?.includes(l)) for (const m of up) if (m !== l) next.push([m, x, y]);
       for (const n of next) {
         const k = nodeKey(...n);
         if (runAt.get(k) === si && !parent.has(k)) { parent.set(k, [l, x, y]); queue.push(n); }
@@ -179,9 +187,9 @@ export function hydraulics(snap: Snapshot): Hydraulics {
     }
     const bump = (k: string, m: number) => run.tile.set(k, Math.max(run.tile.get(k) ?? 0, Math.abs(m)));
     for (const e of run.edges) { bump(nodeKey(...e.a), e.m); bump(nodeKey(...e.b), e.m); }
-    for (const p of run.ports) bump(`${p.x},${p.y}`, p.mdot);
+    for (const p of run.ports) bump(nodeKey(p.l, p.x, p.y), p.mdot);
   });
-  const h = { runs, runAt, risers };
+  const h = { runs, runAt, climbs };
   cache.set(snap, h);
   return h;
 }
@@ -196,8 +204,9 @@ export function pumpSides(snap: Snapshot, e: EntityView): { suction: VesselView 
   const tiles = portTiles(proto, e.x, e.y, e.rot);
   pipe.ports.forEach((k, end) => {
     if (k === null || k === undefined || !tiles[k]) return;
-    const si = runAt.get(`${tiles[k].outside[0]},${tiles[k].outside[1]}`);
-    if (si === undefined) return;
+    const node = portNode(runAt, tiles[k].port.level, tiles[k].outside[0], tiles[k].outside[1]);
+    if (!node) return;
+    const si = runAt.get(node)!;
     if (end === 0) out.suction = snap.segments[si].vessel; else out.discharge = snap.segments[si].vessel;
   });
   return out;

@@ -40,7 +40,7 @@ export const HOW_TO_PLAY = `
     <kbd>P</kbd><span>Production graphs</span>
     <kbd>M</kbd><span>Enlarge the minimap; click it to look somewhere</span>
     <kbd>V</kbd><span>Flow view: colours every pipe by how fast it's flowing against the limit for that kind of line (red means too fast, which erodes and wastes pumping), with chevrons running the way it flows. Press again to colour by pressure instead, and again to turn it off</span>
-    <kbd>H / Shift-H</kbd><span>Work a height up or down: ground, low pipe rack, high pipe rack. The gauge at the top left shows where you are; click a height on it to go there, or Esc to drop back to the ground. Pipe goes on the rack you're at, and risers join the heights</span>
+    <kbd>H / Shift-H</kbd><span>Work a height up or down: ground, low pipe rack, high pipe rack. The gauge at the top left shows where you are; click a height on it to go there, or Esc to drop back to the ground. Pipe goes on the rack you're at; risers join the heights straight up, and inclined pipe slopes from one height to the next the way it faces (R turns it), so a rack run can come down to the ground. A crude column's side draws open onto the low rack and its top draws onto the high rack</span>
     <kbd>Click</kbd><span>Place the building in hand. Take one from your pockets in the E menu (in sandbox, straight from its crafting list)</span>
     <kbd>Drag</kbd><span>While placing, lay a line of pipe or belt, or a row of buildings (poles space themselves)</span>
     <kbd>R</kbd><span>Rotate what you're placing, or the belt or inserter under the cursor</span>

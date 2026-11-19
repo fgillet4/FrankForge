@@ -20,6 +20,9 @@ pub struct PortDef {
     pub vessel: usize,
     pub at: At,
     pub label: &'static str,
+    /// The height it opens at outside: 0 on the ground, or a rack height, where it takes a rack
+    /// pipe on its tile and falls back to the ground when there is none.
+    pub level: u8,
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -141,18 +144,26 @@ pub struct Proto {
     /// Pipes: the heights it carries a line at (0 ground, 1 low rack, 2 high rack). A riser
     /// carries one at every height and joins them.
     pub levels: &'static [u8],
+    /// Inclined pipe: it climbs from its lower height to its higher one along its facing, joining
+    /// the run behind it at the lower height and the run ahead at the higher.
+    pub slope: bool,
     /// Pipes between its own vessels.
     pub internal: &'static [InternalDef],
 }
 
 const fn port(dx: i32, dy: i32, vessel: usize, at: At, label: &'static str) -> PortDef {
-    PortDef { dx, dy, vessel, at, label }
+    PortDef { dx, dy, vessel, at, label, level: 0 }
+}
+
+/// A port that opens onto a rack at a height.
+const fn up(p: PortDef, level: u8) -> PortDef {
+    PortDef { level, ..p }
 }
 
 const BASE: Proto = Proto {
     id: "", name: "", category: "", description: "", size: 1, vessels: &[], ports: &[], thermal: &[], link: None,
     source: None, power_w: 0.0, generator_w: 0.0, battery_j: 0.0, heater: false, electrolyser: false, fans: false, needs: None,
-    wire: 0.0, supply: 0.0, burns: false, agitated: false, selectable: false, fueled: false, levels: &[], internal: &[],
+    wire: 0.0, supply: 0.0, burns: false, agitated: false, selectable: false, fueled: false, levels: &[], slope: false, internal: &[],
 };
 
 use At::*;
@@ -180,6 +191,18 @@ pub const PROTOS: &[Proto] = &[
         id: "pipe_riser", name: "Pipe riser", category: "Logistics",
         description: "A vertical pipe that joins the ground and both rack heights on its tile.",
         levels: &[0, 1, 2],
+        ..BASE
+    },
+    Proto {
+        id: "pipe_incline", name: "Inclined pipe", category: "Logistics",
+        description: "A length of pipe sloping from the ground up to the low rack along its facing, so a run can come down off the rack without a riser.",
+        levels: &[0, 1], slope: true,
+        ..BASE
+    },
+    Proto {
+        id: "pipe_incline_high", name: "Inclined pipe, high", category: "Logistics",
+        description: "Pipe sloping from the low rack up to the high rack along its facing. It stands on the rack, so the ground beneath stays free.",
+        levels: &[1, 2], slope: true,
         ..BASE
     },
     Proto {
@@ -317,7 +340,7 @@ pub const PROTOS: &[Proto] = &[
     },
     Proto {
         id: "crude_column", name: "Crude distillation column", category: "Processing",
-        description: "An atmospheric column of equilibrium trays over a fired reboiler: vapour rises through the trays, liquid runs back down, and the crude sorts itself by boiling point. Fuel gas and air fire the reboiler; the top is an air-cooled condenser. Draws: gas and naphtha at the top, kerosene and diesel from the side, heavy oil from the bottom.",
+        description: "An atmospheric column of equilibrium trays over a fired reboiler: vapour rises through the trays, liquid runs back down, and the crude sorts itself by boiling point. Fuel gas and air fire the reboiler; the top is an air-cooled condenser. Draws: gas and naphtha at the top, kerosene and diesel from the side, heavy oil from the bottom. The side draws open onto the low rack and the top draws onto the high rack where a rack pipe meets them, and onto the ground otherwise.",
         size: 3,
         // 0 fired reboiler, 1 sump, 2 flash zone (feed), 3 diesel tray, 4 tray, 5 kerosene tray,
         // 6 tray, 7 overhead condenser drum.
@@ -334,8 +357,8 @@ pub const PROTOS: &[Proto] = &[
         ],
         ports: &[
             port(-1, 0, 2, Middle, "crude in"), port(-1, 1, 0, Bottom, "fuel"), port(-1, 2, 0, Bottom, "air"), port(0, 3, 0, Top, "flue"),
-            port(1, 3, 1, Bottom, "heavy oil"), port(2, 3, 3, Bottom, "diesel"), port(3, 2, 5, Bottom, "kerosene"),
-            port(3, 1, 7, Bottom, "naphtha"), port(3, 0, 7, Top, "gas"),
+            port(1, 3, 1, Bottom, "heavy oil"), up(port(2, 3, 3, Bottom, "diesel"), 1), up(port(3, 2, 5, Bottom, "kerosene"), 1),
+            up(port(3, 1, 7, Bottom, "naphtha"), 2), up(port(3, 0, 7, Top, "gas"), 2),
         ],
         ..BASE
     },

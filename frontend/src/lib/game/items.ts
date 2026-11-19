@@ -57,6 +57,7 @@ export const ITEMS: Record<string, Item> = Object.fromEntries([
   { ...item('pipe', 'Pipe'), places: 'pipe' },
   { ...item('cargo_ship', 'Cargo ship', 5), icon: 'b_cargo_ship', places: 'cargo_ship' },
   building('pipe_rack', 'Pipe on a low rack'), building('pipe_rack_high', 'Pipe on a high rack'), building('pipe_riser', 'Pipe riser'),
+  building('pipe_incline', 'Inclined pipe'), building('pipe_incline_high', 'Inclined pipe, high'),
   ...[
     ['transport_belt', 'Transport belt'], ['underground_belt', 'Underground belt'], ['splitter', 'Splitter'],
     ['inserter', 'Inserter'], ['burner_inserter', 'Burner inserter'], ['wooden_chest', 'Wooden chest'], ['iron_chest', 'Iron chest'], ['dock', 'Dock'],
@@ -109,6 +110,8 @@ export const RECIPES: Record<string, Recipe> = Object.fromEntries(([
   r('pipe_rack', 1, { pipe: 1, iron_plate: 1 }, 0.5),
   r('pipe_rack_high', 1, { pipe: 1, iron_plate: 2 }, 0.5),
   r('pipe_riser', 1, { pipe: 3 }, 0.5),
+  r('pipe_incline', 1, { pipe: 2, iron_plate: 1 }, 0.5),
+  r('pipe_incline_high', 1, { pipe: 2, iron_plate: 2 }, 0.5),
   // From the process plant: ~1 kg of product per batch of feed gas.
   { id: 'plastic', out: 'plastic', count: 1, in: {}, fluids: { c2h4: 36 }, time: 1, station: 'chem' },
   { id: 'solid_fuel', out: 'solid_fuel', count: 1, in: {}, fluids: { ch4: 60 }, time: 2, station: 'chem' },

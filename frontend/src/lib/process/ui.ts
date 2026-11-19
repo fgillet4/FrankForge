@@ -273,8 +273,8 @@ export class ProcessUI {
   private renderPipe(pipe: Placed, snap: Snapshot) {
     const h = hydraulics(snap);
     const levels = PROTO[pipe.proto]?.levels ?? [0];
-    const level = levels.length === 1 ? levels[0] : 0;
-    const key = nodeKey(level, pipe.x, pipe.y);
+    // Its lowest height: the ground for a riser, the low end of a slope.
+    const key = nodeKey(levels[0], pipe.x, pipe.y);
     const si = h.runAt.get(key);
     if (si === undefined) { this.showInspector(null); return; }
     const run = h.runs[si], v = snap.segments[si].vessel;

@@ -466,6 +466,55 @@ fn rack_pipe_crosses_over_ground_pipe_and_joins_it_only_at_risers() {
 }
 
 #[test]
+fn inclined_pipe_carries_a_run_between_the_ground_and_the_racks_along_its_facing() {
+    let mut w = world();
+    // Ground pipe at x 0..1, y 0; a slope up at x 2 (facing +x); low rack at x 3..4; a high slope
+    // at x 5; high rack at x 6..7. A ground line along x 5 passes under the high slope.
+    let mut id = 100;
+    pipe_line(&mut w, &mut id, (0, 0), (1, 0));
+    w.place(200, "pipe_incline", 2, 0, 0).unwrap();
+    w.place(201, "pipe_rack", 3, 0, 0).unwrap();
+    w.place(202, "pipe_rack", 4, 0, 0).unwrap();
+    w.place(203, "pipe_incline_high", 5, 0, 0).unwrap();
+    w.place(204, "pipe_rack_high", 6, 0, 0).unwrap();
+    w.place(205, "pipe_rack_high", 7, 0, 0).unwrap();
+    let mut id = 300;
+    pipe_line(&mut w, &mut id, (5, -2), (5, 2));
+    assert!(w.place(400, "pipe", 2, 0, 0).is_err(), "the low slope stands on the ground");
+    w.advance(0.0);
+    let seg = |w: &World, n: Node| w.node_seg[&n];
+    let run = seg(&w, (0, (0, 0)));
+    assert_eq!(seg(&w, (1, (4, 0))), run, "up the slope to the low rack");
+    assert_eq!(seg(&w, (2, (7, 0))), run, "and on up to the high rack");
+    assert_ne!(seg(&w, (0, (5, 0))), run, "the ground line under the high slope stays apart");
+
+    // Turned the other way, the slope's low end faces the ground pipe's far side: no join.
+    w.remove(200);
+    w.place(200, "pipe_incline", 2, 0, 2).unwrap();
+    w.advance(0.0);
+    assert_ne!(seg(&w, (0, (0, 0))), seg(&w, (1, (4, 0))), "a slope joins only at its two ends");
+}
+
+#[test]
+fn a_column_side_draw_opens_onto_a_rack_pipe_and_onto_the_ground_without_one() {
+    let mut w = world();
+    w.place(1, "crude_column", 0, 0, 0).unwrap();
+    // The gas draw (high rack) and naphtha draw (high rack) sit just east of the column at x 3.
+    w.place(10, "pipe_rack_high", 3, 0, 0).unwrap();
+    w.set_pipe_joins(10, 0b0001);
+    w.place(11, "pipe_rack_high", 4, 0, 0).unwrap();
+    w.place(20, "pipe", 3, 1, 0).unwrap();
+    w.set_pipe_joins(20, 0b0001);
+    w.place(21, "pipe", 4, 1, 0).unwrap();
+    w.advance(0.0);
+    let column = &w.entities[&1];
+    let gas = column.net_pipes.iter().map(|&pi| &w.net.pipes[pi]).find(|p| p.ports[1] == Some(8)).expect("gas draw connected");
+    assert_eq!(gas.b, w.segments[w.node_seg[&(2, (4, 0))]].vessel, "the gas draw opens onto the high rack");
+    let naphtha = column.net_pipes.iter().map(|&pi| &w.net.pipes[pi]).find(|p| p.ports[1] == Some(7)).expect("naphtha draw connected");
+    assert_eq!(naphtha.b, w.segments[w.node_seg[&(0, (4, 1))]].vessel, "no rack pipe there, so the naphtha draw falls back to the ground");
+}
+
+#[test]
 fn rotating_a_building_turns_its_ports_and_keeps_its_contents() {
     let mut w = world();
     w.place(1, "storage_tank", 0, 0, 0).unwrap();

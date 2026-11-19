@@ -11,8 +11,8 @@ import { TILE_W, TILE_H, isoToScreen } from '../phaser/isoMath';
 import { ITEMS, iconUrl } from '../game/items';
 import { popScale } from '../game/juice';
 import { drillPainting } from '../game/draw';
-import { JOIN_BIT, PROTO, layout, placedById, portTiles, type EntityView, type Snapshot, type VesselView } from './engine';
-import { LIMITS, OVER, RAMP_CSS, hydraulics, nodeKey, problems, ramp, stats, type PipeNode } from './hydraulics';
+import { JOIN_BIT, PROTO, SLOPE_DIR, layout, nodeJoins, placedById, portTiles, type EntityView, type Snapshot, type VesselView } from './engine';
+import { LIMITS, OVER, RAMP_CSS, hydraulics, nodeKey, portNode, problems, ramp, stats, type PipeNode } from './hydraulics';
 
 /**
  * The painted rack trestles: where their beams sit and their feet stand, as fractions of the
@@ -475,28 +475,49 @@ export class ProcessLayer {
     const lift1 = (TRESTLE.low.foot - TRESTLE.low.beam) * lowH;
     const highH = lift1 / (TRESTLE.high.foot - TRESTLE.high.mid);
     const lifts = [0, rackLift(1, zoom), rackLift(2, zoom)];
-    const nc = (l: number, x: number, y: number) => { const c = centre(x, y); return { x: c.x, y: c.y - lifts[l] }; };
+    // Inclined pipe: its low node sits at the edge behind it, its high node at the edge ahead.
+    const slopeEnds = new Map<string, { x: number; y: number }>();
+    for (const p of layout()) {
+      const proto = PROTO[p.proto];
+      if (!proto?.slope) continue;
+      const [dx, dy] = SLOPE_DIR[p.rot % 4], [lo, hi] = proto.levels;
+      const back = centre(p.x - dx * 0.5, p.y - dy * 0.5), ahead = centre(p.x + dx * 0.5, p.y + dy * 0.5);
+      slopeEnds.set(nodeKey(lo, p.x, p.y), { x: back.x, y: back.y - lifts[lo] });
+      slopeEnds.set(nodeKey(hi, p.x, p.y), { x: ahead.x, y: ahead.y - lifts[hi] });
+    }
+    const nc = (l: number, x: number, y: number) => {
+      const s = slopeEnds.get(nodeKey(l, x, y));
+      if (s) return s;
+      const c = centre(x, y);
+      return { x: c.x, y: c.y - lifts[l] };
+    };
     const has = (l: number, x: number, y: number) => (l ? this.rackNodes.has(nodeKey(l, x, y)) : this.pipeTiles.has(`${x},${y}`));
     // Pipe beside pipe joins only where both allow it; runs laid apart pass side by side.
     const joinsAt = new Map<string, number>();
-    for (const p of layout()) for (const l of PROTO[p.proto]?.levels ?? []) joinsAt.set(nodeKey(l, p.x, p.y), p.joins ?? 0b1111);
+    for (const p of layout()) {
+      const proto = PROTO[p.proto];
+      if (!proto?.levels?.length) continue;
+      const bits = nodeJoins(proto, p.rot, p.joins ?? 0b1111);
+      proto.levels.forEach((l, i) => joinsAt.set(nodeKey(l, p.x, p.y), bits[i]));
+    }
     const linked = (l: number, x: number, y: number, dx: number, dy: number) => has(l, x + dx, y + dy)
       && ((joinsAt.get(nodeKey(l, x, y)) ?? 15) & JOIN_BIT[`${dx},${dy}`]) !== 0
       && ((joinsAt.get(nodeKey(l, x + dx, y + dy)) ?? 15) & JOIN_BIT[`${-dx},${-dy}`]) !== 0;
-    const risers = hydraulics(snap).risers;
+    const { climbs, runAt } = hydraulics(snap);
     const fade = (l: number) => (l > this.viewLevel ? 0.3 : 1);
     // Where pipes meet buildings: the pipe tile outside a port, and which way the port lies.
-    const portLinks: { x: number; y: number; dx: number; dy: number; si: number; inline: boolean }[] = [];
+    const portLinks: { l: number; x: number; y: number; dx: number; dy: number; si: number; inline: boolean }[] = [];
     const opens = new Set<string>();
     for (const e of snap.entities) {
       const proto = PROTO[e.proto];
       if (!proto) continue;
       for (const pt of portTiles(proto, e.x, e.y, e.rot)) {
-        const si = this.pipeTiles.get(`${pt.outside[0]},${pt.outside[1]}`);
-        if (si === undefined) continue;
         const [x, y] = pt.outside;
-        portLinks.push({ x, y, dx: pt.inside[0] - x, dy: pt.inside[1] - y, si, inline: e.proto in INLINE });
-        opens.add(`${x},${y},${pt.inside[0] - x},${pt.inside[1] - y}`);
+        const node = portNode(runAt, pt.port.level, x, y);
+        if (!node) continue;
+        const l = node === `${x},${y}` ? 0 : pt.port.level;
+        portLinks.push({ l, x, y, dx: pt.inside[0] - x, dy: pt.inside[1] - y, si: runAt.get(node)!, inline: e.proto in INLINE });
+        opens.add(`${l},${x},${y},${pt.inside[0] - x},${pt.inside[1] - y}`);
       }
     }
     const painted = this.scene.textures.exists('ip_pipe') && this.scene.textures.exists('ip_pipe_joint');
@@ -529,10 +550,18 @@ export class ProcessLayer {
             else this.pipeGfx.lineStyle(6 * zoom, 0x000000, 0.1).lineBetween(centre(x, y).x, centre(x, y).y + TILE_H * zoom * 0.18, centre(x + dx, y + dy).x, centre(x + dx, y + dy).y + TILE_H * zoom * 0.18);
             this.pipeSegment(`p${l},${x},${y},${dx}`, 'ip_pipe', c, n, zoom, depthAt(x + dx, y + dy) - 0.0002 + lift, tint, 13 * fat, 0.035, 0.93).setAlpha(fade(l));
           }
-          const riser = risers.has(`${x},${y}`);
-          const joined = DIRS4.filter(([dx, dy]) => linked(l, x, y, dx, dy) || (!l && opens.has(`${x},${y},${dx},${dy}`)));
+          const climb = climbs.get(`${x},${y}`);
+          const riser = !!climb?.includes(l);
+          const slope = slopeEnds.has(nodeKey(l, x, y));
+          const joined = DIRS4.filter(([dx, dy]) => linked(l, x, y, dx, dy) || opens.has(`${l},${x},${y},${dx},${dy}`));
           const straight = !riser && joined.length === 2 && joined[0][0] === -joined[1][0] && joined[0][1] === -joined[1][1];
-          if (joined.length === 1 && !riser) {
+          if (slope) {
+            // The inclined length, drawn once from its low end.
+            if (l === climb![0]) {
+              const hi = climb![1];
+              this.pipeSegment(`s${x},${y}`, 'ip_pipe', c, nc(hi, x, y), zoom, depthAt(x, y) + 0.003, tint, 13 * fat, 0.035, 0.93).setAlpha(fade(hi));
+            }
+          } else if (joined.length === 1 && !riser) {
             // A dead end: the pipe stops at a blind flange.
             const [dx, dy] = joined[0];
             const n = has(l, x + dx, y + dy) ? nc(l, x + dx, y + dy) : centre(x + dx, y + dy);
@@ -543,7 +572,7 @@ export class ProcessLayer {
             j.setOrigin(0.5, 0.55).setPosition(c.x, c.y).setScale(0.42 * fat * TILE_W * zoom / j.width).setRotation(0).setDepth(depthAt(x, y) + lift + 0.0001).setTint(tint).setAlpha(fade(l));
           }
           // The riser climbs from the ground to the top of the rack.
-          if (riser && l === 0) {
+          if (riser && !slope && l === 0) {
             this.pipeSegment(`r${x},${y}`, 'ip_pipe', c, nc(2, x, y), zoom, depthAt(x, y) + 0.003, tint, 15 * fat, 0.035, 0.93).setAlpha(fade(1));
           }
           if (l > 0) {
@@ -574,18 +603,19 @@ export class ProcessLayer {
       for (const l of portLinks) {
         const tint = wash(fluidColour(snap.segments[l.si].vessel));
         const fat = Math.min(1.7, Math.max(0.6, Math.pow((snap.segments[l.si].diameter || 0.15) / 0.15, 0.6)));
-        const c = centre(l.x, l.y);
+        const c = nc(l.l, l.x, l.y);
         if (off(c)) continue;
-        const inner = centre(l.x + l.dx, l.y + l.dy);
+        const inner0 = centre(l.x + l.dx, l.y + l.dy), inner = { x: inner0.x, y: inner0.y - lifts[l.l] };
         // Half a length out to the building's wall, and the building's own nozzle meeting it there;
         // an inline fitting brings its own flange to meet the pipe.
         const reach = l.inline ? 1 - INLINE_REACH : 0.5;
         const edge = { x: c.x + (inner.x - c.x) * reach, y: c.y + (inner.y - c.y) * reach };
-        shadow(c, edge);
-        this.pipeSegment(`q${l.x},${l.y},${l.dx},${l.dy}`, 'ip_pipe', c, edge, zoom, depthAt(l.x, l.y) - 0.0002, tint, 13 * fat, 0.035, 0.93);
+        if (!l.l) shadow(c, edge);
+        const lift = l.l * 0.002;
+        this.pipeSegment(`q${l.l},${l.x},${l.y},${l.dx},${l.dy}`, 'ip_pipe', c, edge, zoom, depthAt(l.x, l.y) - 0.0002 + lift, tint, 13 * fat, 0.035, 0.93).setAlpha(fade(l.l));
         if (!l.inline) {
           const into = { x: c.x + (inner.x - c.x) * 0.85, y: c.y + (inner.y - c.y) * 0.85 };
-          this.pipeSegment(`n${l.x},${l.y},${l.dx},${l.dy}`, 'ip_pipe_nozzle', into, edge, zoom, depthAt(l.x, l.y) - 0.0001, 0xffffff, 17, 0, 0.88);
+          this.pipeSegment(`n${l.l},${l.x},${l.y},${l.dx},${l.dy}`, 'ip_pipe_nozzle', into, edge, zoom, depthAt(l.x, l.y) - 0.0001 + lift, 0xffffff, 17, 0, 0.88).setAlpha(fade(l.l));
         }
       }
     } else {
@@ -791,12 +821,15 @@ export class ProcessLayer {
     const proto = PROTO[protoId];
     if (!proto) return;
     for (const pt of portTiles(proto, x, y, rot)) {
-      const c = isoToScreen(pt.outside[0] + 0.5, pt.outside[1] + 0.5, camX, camY, zoom);
+      const g = isoToScreen(pt.outside[0] + 0.5, pt.outside[1] + 0.5, camX, camY, zoom);
+      // Rack ports mark their height.
+      const c = { x: g.x, y: g.y - rackLift(pt.port.level ?? 0, zoom) };
+      if (pt.port.level) this.overlayGfx.lineStyle(1.5, 0xffffff, 0.5).lineBetween(g.x, g.y, c.x, c.y);
       const colour = pt.port.at === 'Top' ? 0xffe066 : pt.port.at === 'Bottom' ? 0x4fa3ff : 0x9cff8f;
       this.overlayGfx.lineStyle(2, 0x000000, 0.8).fillStyle(colour, 0.9);
       this.overlayGfx.fillCircle(c.x, c.y, 5 * zoom).strokeCircle(c.x, c.y, 5 * zoom);
       // A ring where a pipe is already there to connect to.
-      if (this.pipeTiles.has(`${pt.outside[0]},${pt.outside[1]}`)) {
+      if ((pt.port.level && this.rackNodes.has(nodeKey(pt.port.level, pt.outside[0], pt.outside[1]))) || this.pipeTiles.has(`${pt.outside[0]},${pt.outside[1]}`)) {
         this.overlayGfx.lineStyle(2.5, 0xffffff, 0.95).strokeCircle(c.x, c.y, 9 * zoom);
       }
     }
@@ -807,7 +840,7 @@ export class ProcessLayer {
     if (!proto) return;
     const n = proto.size;
     // Footprint, up at its height for pipe on a rack.
-    const up = rackLift(proto.levels?.length === 1 ? proto.levels[0] : 0, zoom);
+    const up = rackLift(proto.levels?.length === 1 || proto.slope ? proto.levels[0] : 0, zoom);
     const pts = [
       isoToScreen(g.x, g.y, camX, camY, zoom), isoToScreen(g.x + n, g.y, camX, camY, zoom),
       isoToScreen(g.x + n, g.y + n, camX, camY, zoom), isoToScreen(g.x, g.y + n, camX, camY, zoom),
@@ -816,7 +849,14 @@ export class ProcessLayer {
     this.overlayGfx.fillPoints(pts, true).strokePoints(pts, true);
     // Which way it faces, for anything that has a direction.
     const dir = [[0, -1], [1, 0], [0, 1], [-1, 0]][g.rot % 4];
-    if (g.proto === 'inserter' || g.proto === 'burner_inserter') {
+    if (proto.slope) {
+      // Inclined pipe: an arrow up the slope, from the low end to the high.
+      const [dx, dy] = SLOPE_DIR[g.rot % 4], [lo, hi] = proto.levels;
+      const a = isoToScreen(g.x + 0.5 - dx * 0.5, g.y + 0.5 - dy * 0.5, camX, camY, zoom), b = isoToScreen(g.x + 0.5 + dx * 0.5, g.y + 0.5 + dy * 0.5, camX, camY, zoom);
+      const [ay, by] = [a.y - rackLift(lo, zoom), b.y - rackLift(hi, zoom)];
+      this.overlayGfx.lineStyle(Math.max(3, 6 * zoom), 0xffe066, 0.95).lineBetween(a.x, ay, b.x, by);
+      this.overlayGfx.fillStyle(0xffe066, 0.95).fillCircle(b.x, by, 5 * zoom);
+    } else if (g.proto === 'inserter' || g.proto === 'burner_inserter') {
       drawInserterFlow(this.overlayGfx, g.x, g.y, g.rot, camX, camY, zoom);
     } else if (['transport_belt', 'underground_belt', 'splitter', 'burner_drill', 'electric_drill'].includes(g.proto)) {
       const c = isoToScreen(g.x + n / 2, g.y + n / 2, camX, camY, zoom);
@@ -884,9 +924,9 @@ export class ProcessLayer {
         line(a, b, e.m, si);
       }
       for (const p of run.ports) {
-        const a = centre(p.x, p.y);
+        const a = nc(p.l, p.x, p.y);
         if (off(a)) continue;
-        const into = centre(p.x + p.dx, p.y + p.dy);
+        const into0 = centre(p.x + p.dx, p.y + p.dy), into = { x: into0.x, y: into0.y + a.y - centre(p.x, p.y).y };
         // Into the run is toward a, so the building end comes first.
         line({ x: (a.x + into.x) / 2, y: (a.y + into.y) / 2 }, a, p.mdot, si);
       }

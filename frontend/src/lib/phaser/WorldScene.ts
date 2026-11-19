@@ -1418,6 +1418,7 @@ export class WorldScene extends Phaser.Scene {
       if (err) { ids.forEach(id => engine.remove(id)); this.processUI?.alert(err); return false; }
       ids.push(Math.max(...engine.layout().map(p => p.id)));
     }
+    if (engine.PROTO[proto]?.slope) this.joinSlope(proto, x, y, rot);
     const n = engine.PROTO[proto]?.size ?? 1;
     for (const [tx, ty] of tiles) {
       const key = tileKey(tx, ty);
@@ -1481,6 +1482,17 @@ export class WorldScene extends Phaser.Scene {
       if (piping) this.joinPipe(t.x, t.y);
     }
     this.laying.last = { x: tx, y: ty };
+  }
+
+  /** An inclined pipe just laid joins the pipe at each end: behind it low, ahead of it high. */
+  private joinSlope(proto: string, x: number, y: number, rot: number) {
+    const [dx, dy] = engine.SLOPE_DIR[rot % 4], [lo, hi] = engine.PROTO[proto].levels;
+    for (const [l, sx, sy] of [[lo, -dx, -dy], [hi, dx, dy]]) {
+      const nb = l ? engine.rackAt(x + sx, y + sy, l) : engine.entityAt(x + sx, y + sy);
+      if (nb >= 0 && engine.PROTO[engine.placedById(nb)?.proto ?? '']?.levels?.includes(l)) {
+        engine.setPipeJoins(nb, engine.pipeJoins(nb) | engine.JOIN_BIT[`${-sx},${-sy}`]);
+      }
+    }
   }
 
   /**
@@ -1600,8 +1612,11 @@ export class WorldScene extends Phaser.Scene {
       for (const pt of engine.portTiles(p, e.x, e.y, e.rot)) {
         if (pt.outside[0] !== tx || pt.outside[1] !== ty) continue;
         const where = pt.port.at === 'Top' ? 'top' : pt.port.at === 'Bottom' ? 'bottom' : 'middle';
-        const piped = this.processLayer?.segmentAt(tx, ty) !== undefined;
-        return `<b>${p.name} — ${pt.port.label}</b> port (${where} of the vessel)<br><small>${piped ? 'Connected' : 'Lay a pipe on this tile to connect'}</small>`;
+        const rack = pt.port.level === 2 ? 'high rack' : 'low rack';
+        const onRack = !!pt.port.level && this.processLayer?.segmentAt(tx, ty, pt.port.level) !== undefined;
+        const piped = onRack || this.processLayer?.segmentAt(tx, ty) !== undefined;
+        const how = pt.port.level ? `Lay a pipe on the ${rack} or the ground here to connect` : 'Lay a pipe on this tile to connect';
+        return `<b>${p.name} — ${pt.port.label}</b> port (${where} of the vessel${pt.port.level ? `, opens onto the ${rack}` : ''})<br><small>${piped ? `Connected${onRack ? ` on the ${rack}` : ''}` : how}</small>`;
       }
     }
     return null;
@@ -1627,7 +1642,7 @@ export class WorldScene extends Phaser.Scene {
     const v = this.viewInfo();
     const hoveredId = engine.entityAt(this.aimTX, this.aimTY);
     this.processLayer.draw(this.snapshot, v.x, v.y, this.zoom, ghost, time, {
-      all: LEVEL_PIPES.includes(this.placementType ?? '') || this.placementType === 'pipe_riser' || !!(this.placementType && engine.PROTO[this.placementType]?.ports.length),
+      all: LEVEL_PIPES.includes(this.placementType ?? '') || ['pipe_riser', 'pipe_incline', 'pipe_incline_high'].includes(this.placementType ?? '') || !!(this.placementType && engine.PROTO[this.placementType]?.ports.length),
       hovered: hoveredId >= 0 ? hoveredId : null,
     }, id => this.factory.entities.get(id)?.active);
   }

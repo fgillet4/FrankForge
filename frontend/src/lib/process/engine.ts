@@ -7,7 +7,9 @@ import init, { ProcessWorld, prototypes, species } from '../../../../rust/pkg/fr
 
 export type At = 'Bottom' | 'Middle' | 'Top';
 
-export interface PortDef { dx: number; dy: number; vessel: number; at: At; label: string }
+/** `level`: the height it opens at outside (0 ground, 1 low rack, 2 high rack); a rack port takes
+ *  a rack pipe on its tile and the ground when there is none. */
+export interface PortDef { dx: number; dy: number; vessel: number; at: At; label: string; level: number }
 
 export interface Proto {
   id: string;
@@ -33,6 +35,8 @@ export interface Proto {
   fueled: boolean;
   /** Pipes: the heights it carries a line at (0 ground, 1 low rack, 2 high rack). */
   levels: number[];
+  /** Inclined pipe: climbs from its lower height to its higher one the way it faces. */
+  slope: boolean;
 }
 
 export interface SpeciesInfo { id: string; name: string; formula: string; mw: number }
@@ -304,4 +308,27 @@ export function restore(list: Placed[]) {
     if (p.joins !== undefined) setPipeJoins(p.id, p.joins);
     if (p.relief !== undefined) setRelief(p.id, p.relief);
   }
+}
+
+/** The way an inclined pipe climbs, by rotation (as the engine turns it: 0 toward +x, then clockwise). */
+export const SLOPE_DIR: [number, number][] = [[1, 0], [0, 1], [-1, 0], [0, -1]];
+
+/**
+ * Where pipe joins the heights on one tile: risers every height they carry, inclined pipe its
+ * two ends. By "x,y".
+ */
+export function climbs(): Map<string, number[]> {
+  const out = new Map<string, number[]>();
+  for (const p of layout()) {
+    const levels = PROTO[p.proto]?.levels ?? [];
+    if (levels.length > 1) out.set(`${p.x},${p.y}`, levels);
+  }
+  return out;
+}
+
+/** The join bits each height of a pipe carries: an inclined pipe joins behind it low and ahead high. */
+export function nodeJoins(proto: Proto, rot: number, joins: number): number[] {
+  if (!proto.slope) return proto.levels.map(() => joins);
+  const [dx, dy] = SLOPE_DIR[rot % 4];
+  return [joins & JOIN_BIT[`${-dx},${-dy}`], joins & JOIN_BIT[`${dx},${dy}`]];
 }
