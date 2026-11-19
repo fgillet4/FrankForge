@@ -563,3 +563,92 @@ fn a_pumpjack_lifts_crude_that_settles_as_oil_with_its_gas_flashing_off() {
     assert!(in_liquid("c10h22") > 0.9, "kerosene {}", in_liquid("c10h22"));
     assert!(in_liquid("c20h42") > 0.999, "heavy oil {}", in_liquid("c20h42"));
 }
+
+#[test]
+fn a_crude_column_at_total_reflux_sorts_crude_by_boiling_point() {
+    let mut w = world();
+    w.place(1, "crude_column", 0, 0, 0).unwrap();
+    w.advance(0.0);
+    let vs = w.entities[&1].net_vessels.clone();
+    // Charge the sump with stabilised crude (its gas already off) and boil it: nothing in or out,
+    // so every tray runs at total reflux.
+    let mut n = [0.0; NS];
+    for (id, x) in [("c6h14", 0.466), ("c10h22", 0.170), ("c16h34", 0.176), ("c20h42", 0.188)] {
+        n[index_of(id).unwrap()] = x * 8_000.0;
+    }
+    w.net.fill(vs[1], n, 330.0);
+    w.net.vessels[vs[1]].heat_in = 1.2e6;
+    for _ in 0..12_000 {
+        w.advance(0.1);
+    }
+    let x = |k: usize, id: &str| { let v = &w.net.vessels[vs[k]]; v.state.x[index_of(id).unwrap()] };
+    let report: Vec<String> = (1..8).map(|k| {
+        let v = &w.net.vessels[vs[k]];
+        format!("stage {k}: {:.0} K {:.2} bar beta {:.2} mol {:.0} x6 {:.2} x10 {:.2} x16 {:.2} x20 {:.2}", v.t(), v.p() / 1e5, v.state.beta, v.moles(), x(k, "c6h14"), x(k, "c10h22"), x(k, "c16h34"), x(k, "c20h42"))
+    }).collect();
+    let report = report.join("\n");
+    // Sealed, the column can only sort what it holds: naphtha climbs to the overhead and the
+    // upper trays, the heavy cuts stay in the sump (with what naphtha the small trays can't hold),
+    // and it gets hotter stage by stage down the column.
+    assert!(x(7, "c6h14") > 0.95 && x(5, "c6h14") > 0.95, "{report}");
+    assert!(x(1, "c20h42") > 0.25 && x(1, "c16h34") > 0.2, "{report}");
+    assert!((3..8).all(|k| x(k, "c20h42") < 0.01), "{report}");
+    let t = |k: usize| w.net.vessels[vs[k]].t();
+    assert!((1..7).all(|k| t(k) >= t(k + 1) - 0.5) && t(1) > t(7) + 100.0, "{report}");
+    // Reflux runs back down every downcomer.
+    let seals: Vec<f64> = w.entities[&1].net_pipes.iter().map(|&pi| &w.net.pipes[pi]).filter(|p| matches!(p.kind, PipeKind::Seal)).map(|p| p.mdot).collect();
+    assert!(seals.iter().all(|&m| m > 0.1), "downcomer flows {seals:?}");
+}
+
+#[test]
+fn a_fed_crude_column_draws_naphtha_overhead_and_heavy_oil_from_the_sump() {
+    let mut w = world();
+    let mut id = 100;
+    w.place(1, "crude_column", 0, 0, 0).unwrap();
+    // Feed: a tank of stabilised crude, pumped into the flash zone.
+    w.place(2, "storage_tank", -8, -1, 0).unwrap(); // east port on (-5, 0)
+    w.place(id, "pipe", -5, 0, 0).unwrap();
+    w.place(3, "pump", -4, 0, 0).unwrap();
+    w.place(id + 1, "pipe", -3, 0, 0).unwrap();
+    // The feed control valve.
+    w.place(13, "valve", -2, 0, 0).unwrap();
+    w.place(id + 2, "pipe", -1, 0, 0).unwrap();
+    w.place(4, "battery_bank", -7, 3, 0).unwrap();
+    w.place(5, "power_pole", -4, 2, 0).unwrap();
+    // Heavy oil from the sump into a tank below; naphtha from the overhead drum through a valve.
+    w.place(6, "pipe", 1, 3, 0).unwrap();
+    w.place(7, "storage_tank", 0, 4, 0).unwrap(); // north port on (1, 3)
+    w.place(8, "valve", 4, 1, 0).unwrap();
+    w.place(9, "pipe", 3, 1, 0).unwrap();
+    w.place(10, "pipe", 5, 1, 0).unwrap();
+    w.place(11, "storage_tank", 7, 0, 0).unwrap(); // west port on (6, 1)
+    w.place(12, "pipe", 6, 1, 0).unwrap();
+    w.advance(0.0);
+    let mut n = [0.0; NS];
+    for (s, x) in [("c6h14", 0.466), ("c10h22", 0.170), ("c16h34", 0.176), ("c20h42", 0.188)] {
+        n[index_of(s).unwrap()] = x * 200_000.0;
+    }
+    // Under its nitrogen blanket at atmospheric pressure.
+    n[index_of("n2").unwrap()] = 4_600.0;
+    let feed = w.entities[&2].net_vessels[0];
+    w.net.fill(feed, n, 300.0);
+    // Some crude already in the sump from start-up, and the reboiler firing.
+    let sump = w.entities[&1].net_vessels[1];
+    w.net.fill(sump, n.map(|m| m * 0.04), 330.0);
+    w.net.vessels[sump].heat_in = 2.5e6;
+    w.set_opening(13, 0.55);
+    w.set_opening(8, 0.45);
+    for _ in 0..9_000 {
+        w.advance(0.1);
+    }
+    // What each tank holds of each cut, liquid and vapour alike [kg].
+    let kg = |tank: u32, cut: &str| { let i = index_of(cut).unwrap(); vessel_of(&w, tank).n[i] * SPECIES[i].mw * 1e-3 };
+    let (n6, n16) = (kg(11, "c6h14"), kg(11, "c16h34") + kg(11, "c20h42"));
+    let heavy = vessel_of(&w, 7);
+    let x = |s: &str| heavy.state.x[index_of(s).unwrap()];
+    let msg = format!("naphtha tank: {n6:.0} kg C6, {n16:.1} kg C16+; heavy tank {:.1} m³ liquid, x C6 {:.2}, x C16+ {:.2}", heavy.liquid_volume(), x("c6h14"), x("c16h34") + x("c20h42"));
+    // Naphtha comes off the top clean; the sump gives the heavy end.
+    assert!(n6 > 30.0 && n16 < 0.02 * n6, "{msg}");
+    assert!(heavy.liquid_volume() > 0.2 && x("c16h34") + x("c20h42") > 0.5 && x("c6h14") < 0.25, "{msg}");
+    println!("{msg}");
+}

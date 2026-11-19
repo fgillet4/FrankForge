@@ -38,7 +38,7 @@ export const BUILDING_SPRITES = [
   'ammonia_converter', 'methanol_reactor', 'cracker_furnace', 'electrolyser', 'power_pole', 'wreck',
   'burner_drill', 'electric_drill', 'stone_furnace', 'electric_furnace', 'assembler', 'lab', 'chemical_plant',
   'wooden_chest', 'iron_chest', 'inserter', 'gun_turret', 'laser_turret', 'substation', 'cstr', 'burner_generator',
-  'charcoal_kiln', 'water_wheel', 'dock', 'pumpjack',
+  'charcoal_kiln', 'water_wheel', 'dock', 'pumpjack', 'crude_column',
 ];
 
 /** Colour of a fluid by what dominates it. */

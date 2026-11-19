@@ -191,7 +191,9 @@ export class MenuScene extends Phaser.Scene {
   private buildMenu() {
     this.root = el('div', 'mm');
     this.side = el('div', 'mm-side');
+    // The way back to the FrankStation portal; only here, never over the game.
     this.side.innerHTML = `
+      <a class="mm-home" href="https://frankstation.org/">← FrankStation</a>
       <h1 class="mm-logo">FRANK<span>FORGE</span></h1>
       <div class="mm-stripe"></div>
       <p class="mm-tag">Build a chemical plant on an alien world, with real thermodynamics, real pressure and real explosions.</p>`;

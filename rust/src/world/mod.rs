@@ -215,6 +215,7 @@ impl World {
                 v.pilot = d.pilot;
                 v.ua_ambient = d.ua_ambient;
                 v.radiating_area = d.radiating_area;
+                v.elevation = d.elevation;
                 v
             })
             .collect();
@@ -758,6 +759,15 @@ impl World {
                         pipe.ha = port_height(def.at, &self.net.vessels[vi]);
                         pipe.ports = [None, Some(k)];
                         pipe.mdot = old_flows.get(&(*id, k)).copied().unwrap_or(0.0);
+                        pipes.push(self.net.add_pipe(pipe));
+                    }
+                    // Inside the building: a column's vapour risers and downcomers.
+                    let e = &self.entities[id];
+                    for d in p.internal {
+                        let (a, b) = (e.net_vessels[d.from], e.net_vessels[d.to]);
+                        let mut pipe = Pipe::new(a, b, 1.0, d.diameter, if d.liquid_only { PipeKind::Seal } else { PipeKind::Check });
+                        pipe.ha = port_height(d.from_at, &self.net.vessels[a]);
+                        pipe.hb = port_height(d.to_at, &self.net.vessels[b]);
                         pipes.push(self.net.add_pipe(pipe));
                     }
                 }

@@ -144,6 +144,9 @@ pub enum PipeKind {
     Valve { opening: f64 },
     /// One-way.
     Check,
+    /// A downcomer's liquid seal: one way, and only liquid passes; vapour can't slip back down
+    /// through it.
+    Seal,
     /// Centrifugal pump. Its rated curve (full impeller, full speed) has shut-off pressure `dp_max`
     /// [Pa] falling parabolically to nothing at runout `q_max` [m³/s], with best efficiency `eff`
     /// at half of runout. The impeller can be trimmed and a VFD can slow it; both follow the
@@ -325,7 +328,9 @@ impl Network {
             let (vap_a, pa) = va.port(p.ha);
             let (vap_b, pb) = vb.port(p.hb);
             // The upstream side decides what flows: by current direction, or by pressure from rest.
-            let forward = if p.mdot.abs() > 1e-9 { p.mdot > 0.0 } else { pa >= pb };
+            // One-way pipes can only ever run forward, head and all, so they always draw from their inlet.
+            let one_way = matches!(p.kind, PipeKind::Check | PipeKind::Seal | PipeKind::Relief { .. });
+            let forward = if one_way { true } else if p.mdot.abs() > 1e-9 { p.mdot > 0.0 } else { pa >= pb };
             let (up, up_vap) = if forward { (va, vap_a) } else { (vb, vap_b) };
             if up.moles() <= 0.0 {
                 p.mdot = 0.0;
@@ -407,6 +412,9 @@ impl Network {
                 // A stopped pump or compressor: switched off or without power, the check valve on
                 // its discharge holds and nothing passes, either way.
                 PipeKind::Pump { n, .. } if *n < 0.02 => blocked = true,
+                // Judged by density, not phase: a vessel packed solid with liquid can flash as one dense
+                // "vapour" phase, and its seal must still let it drain.
+                PipeKind::Seal if d.rho < 150.0 => blocked = true,
                 PipeKind::Compressor { power_avail, .. } if *power_avail <= 0.0 => blocked = true,
                 PipeKind::Relief { set_p, lift } => {
                     let reseat = 0.93 * *set_p;
@@ -533,7 +541,7 @@ impl Network {
             let d = l.d.unwrap();
             let area = p.area();
             p.mdot = est[j];
-            if matches!(p.kind, PipeKind::Check | PipeKind::Relief { .. }) && p.mdot < 0.0 {
+            if matches!(p.kind, PipeKind::Check | PipeKind::Seal | PipeKind::Relief { .. }) && p.mdot < 0.0 {
                 p.mdot = 0.0;
             }
             // A gas cannot leave faster than sound.

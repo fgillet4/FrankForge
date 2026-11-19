@@ -32,20 +32,47 @@ pub struct VesselDef {
     pub pilot: bool,
     pub ua_ambient: f64,
     pub radiating_area: f64,
+    /// Height of its bottom above the ground [m]: a column's trays stand one above another.
+    pub elevation: f64,
 }
 
 const fn vessel(volume: f64, height: f64, design_bar: f64) -> VesselDef {
-    VesselDef { volume, height, design_bar, reactions: &[], cat_volume: 0.0, pilot: false, ua_ambient: 20.0, radiating_area: 0.0 }
+    VesselDef { volume, height, design_bar, reactions: &[], cat_volume: 0.0, pilot: false, ua_ambient: 20.0, radiating_area: 0.0, elevation: 0.0 }
+}
+
+/// A column tray: a shallow stage at a height, losing a little heat through the shell.
+const fn tray(volume: f64, height: f64, elevation: f64) -> VesselDef {
+    VesselDef { elevation, ua_ambient: 40.0, ..vessel(volume, height, 10.0) }
+}
+
+/// A pipe inside a building between two of its vessels, one way only: a column's vapour risers,
+/// and its downcomers, which only pass liquid.
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct InternalDef {
+    pub from: usize,
+    pub from_at: At,
+    pub to: usize,
+    pub to_at: At,
+    pub diameter: f64,
+    pub liquid_only: bool,
+}
+
+const fn riser(from: usize, to: usize) -> InternalDef {
+    InternalDef { from, from_at: At::Top, to, to_at: At::Bottom, diameter: 0.35, liquid_only: false }
+}
+
+const fn downcomer(from: usize, to: usize) -> InternalDef {
+    InternalDef { from, from_at: At::Bottom, to, to_at: At::Middle, diameter: 0.12, liquid_only: true }
 }
 
 const fn reactor(volume: f64, height: f64, design_bar: f64, reactions: &'static [&'static str], cat_volume: f64, ua_ambient: f64) -> VesselDef {
-    VesselDef { volume, height, design_bar, reactions, cat_volume, pilot: false, ua_ambient, radiating_area: 0.0 }
+    VesselDef { volume, height, design_bar, reactions, cat_volume, pilot: false, ua_ambient, radiating_area: 0.0, elevation: 0.0 }
 }
 
 const fn firebox(volume: f64, height: f64) -> VesselDef {
     VesselDef {
         volume, height, design_bar: 3.0, reactions: &["burn_ch4", "burn_h2", "burn_co"], cat_volume: volume, pilot: true,
-        ua_ambient: 200.0, radiating_area: 6.0,
+        ua_ambient: 200.0, radiating_area: 6.0, elevation: 0.0,
     }
 }
 
@@ -114,6 +141,8 @@ pub struct Proto {
     /// Pipes: the heights it carries a line at (0 ground, 1 low rack, 2 high rack). A riser
     /// carries one at every height and joins them.
     pub levels: &'static [u8],
+    /// Pipes between its own vessels.
+    pub internal: &'static [InternalDef],
 }
 
 const fn port(dx: i32, dy: i32, vessel: usize, at: At, label: &'static str) -> PortDef {
@@ -123,7 +152,7 @@ const fn port(dx: i32, dy: i32, vessel: usize, at: At, label: &'static str) -> P
 const BASE: Proto = Proto {
     id: "", name: "", category: "", description: "", size: 1, vessels: &[], ports: &[], thermal: &[], link: None,
     source: None, power_w: 0.0, generator_w: 0.0, battery_j: 0.0, heater: false, electrolyser: false, fans: false, needs: None,
-    wire: 0.0, supply: 0.0, burns: false, agitated: false, selectable: false, fueled: false, levels: &[],
+    wire: 0.0, supply: 0.0, burns: false, agitated: false, selectable: false, fueled: false, levels: &[], internal: &[],
 };
 
 use At::*;
@@ -285,6 +314,30 @@ pub const PROTOS: &[Proto] = &[
         description: "Vapour–liquid separator: feed enters mid-height, vapour leaves the top, liquid the bottom. Rated 40 bar.",
         size: 2, vessels: &[vessel(6.0, 5.0, 40.0)],
         ports: &[port(-1, 0, 0, Middle, "feed"), port(0, -1, 0, Top, "vapour"), port(1, 2, 0, Bottom, "liquid")], ..BASE
+    },
+    Proto {
+        id: "crude_column", name: "Crude distillation column", category: "Processing",
+        description: "An atmospheric column of equilibrium trays over a fired reboiler: vapour rises through the trays, liquid runs back down, and the crude sorts itself by boiling point. Fuel gas and air fire the reboiler; the top is an air-cooled condenser. Draws: gas and naphtha at the top, kerosene and diesel from the side, heavy oil from the bottom.",
+        size: 3,
+        // 0 fired reboiler, 1 sump, 2 flash zone (feed), 3 diesel tray, 4 tray, 5 kerosene tray,
+        // 6 tray, 7 overhead condenser drum.
+        vessels: &[
+            firebox(3.0, 2.0),
+            VesselDef { elevation: 0.0, ..tray(5.0, 2.0, 0.0) },
+            tray(2.0, 1.0, 3.0), tray(2.0, 1.0, 5.0), tray(2.0, 1.0, 7.0), tray(2.0, 1.0, 9.0), tray(2.0, 1.0, 11.0),
+            VesselDef { ua_ambient: 2.5e4, ..tray(3.0, 1.5, 13.0) },
+        ],
+        thermal: &[(0, 1, 2.5e4)],
+        internal: &[
+            riser(1, 2), riser(2, 3), riser(3, 4), riser(4, 5), riser(5, 6), riser(6, 7),
+            downcomer(7, 6), downcomer(6, 5), downcomer(5, 4), downcomer(4, 3), downcomer(3, 2), downcomer(2, 1),
+        ],
+        ports: &[
+            port(-1, 0, 2, Middle, "crude in"), port(-1, 1, 0, Bottom, "fuel"), port(-1, 2, 0, Bottom, "air"), port(0, 3, 0, Top, "flue"),
+            port(1, 3, 1, Bottom, "heavy oil"), port(2, 3, 3, Bottom, "diesel"), port(3, 2, 5, Bottom, "kerosene"),
+            port(3, 1, 7, Bottom, "naphtha"), port(3, 0, 7, Top, "gas"),
+        ],
+        ..BASE
     },
     Proto {
         id: "smr_reformer", name: "Steam methane reformer", category: "Reactors",

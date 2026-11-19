@@ -36,7 +36,12 @@ const VESSEL_NAMES: Record<string, string[]> = {
   cracker_furnace: ['Cracking coils', 'Firebox'],
   heat_exchanger: ['Shell side', 'Tube side'],
   electrolyser: ['Cathode — H₂', 'Anode — O₂'],
+  crude_column: ['Fired reboiler'],
 };
+
+/** A crude column's stages, bottom to top, and the cut drawn from each. */
+const COLUMN_STAGES = ['Sump · heavy oil', 'Flash zone · crude in', 'Diesel tray', 'Tray', 'Kerosene tray', 'Tray', 'Overhead · naphtha and gas'];
+
 
 
 /** Reactions a CSTR can run. */
@@ -81,6 +86,19 @@ export function cssColour(id: string): string {
     c6h14: '#f2e6a0', c10h22: '#e0b860', c16h34: '#c08a30', c20h42: '#5a3a22',
   };
   return c[id] ?? '#999';
+}
+
+/**
+ * A column at a glance: each stage from the top down with its temperature, pressure and the
+ * liquid on it, so you can see the cuts sort themselves by boiling point.
+ */
+function columnHtml(stages: VesselView[]): string {
+  const rows = stages.map((v, i) => ({ v, name: COLUMN_STAGES[i] ?? `Stage ${i + 1}` })).reverse().map(({ v, name }) => {
+    const liquid = v.beta < 0.9999;
+    const z = liquid ? v.x : v.y;
+    return `<div class="pp-stage${v.ruptured ? ' ruptured' : ''}"><div class="pp-stage-head"><b>${name}</b><span>${fmt.t(v.t)} · ${fmt.p(v.p)}${liquid ? '' : ' · <i>dry</i>'}</span></div>${compositionBar(z, cssColour).replace(/<div class="pp-legend">.*<\/div>$/s, '')}</div>`;
+  }).join('');
+  return `<div class="pp-section">Column, top to bottom</div><div class="pp-column">${rows}</div>`;
 }
 
 function vesselHtml(v: VesselView, name: string): string {
@@ -322,7 +340,8 @@ export class ProcessUI {
       p.power_w && e.network === null ? '<div class="pp-control pp-bad">Not wired to a power pole</div>' : '',
       e.battery ? `<div class="pp-meter"><span style="width:${(e.battery[0] / e.battery[1]) * 100}%"></span><em>Charge ${fmt.pct(e.battery[0] / e.battery[1])} of ${(e.battery[1] / 3.6e9).toFixed(0)} MWh</em></div>` : '',
     ].join('');
-    const flows = e.pipes.map(pp => {
+    // A column's own risers and downcomers aren't connections to show.
+    const flows = (e.proto === 'crude_column' ? e.pipes.filter(pp => pp.ports.some(k => k !== null)) : e.pipes).map(pp => {
       const extra = pp.kind.power_used ? ` · ${fmt.w(pp.kind.power_used)}` : pp.kind.power_out ? ` · ${fmt.w(pp.kind.power_out)} shaft` : '';
       return `<div class="pp-flow"><span>${pp.vapour ? 'gas' : 'liquid'}${pp.choked ? ' <b class="pp-warn">choked</b>' : ''}</span><b>${fmt.flow(pp.mdot)}</b><small>${Math.abs(pp.velocity).toFixed(1)} m/s${extra}</small></div>`;
     }).join('');
@@ -330,7 +349,8 @@ export class ProcessUI {
       <p class="pp-desc">${p.description}</p>
       ${controls}
       ${e.proto === 'power_pole' || e.proto === 'substation' ? gridHtml(snap, e.network) : ''}
-      ${e.vessels.map((v, i) => vesselHtml(v, names[i] ?? (e.vessels.length > 1 ? `Vessel ${i + 1}` : 'Contents'))).join('')}
+      ${e.proto === 'crude_column' ? vesselHtml(e.vessels[0], names[0]) + columnHtml(e.vessels.slice(1))
+        : e.vessels.map((v, i) => vesselHtml(v, names[i] ?? (e.vessels.length > 1 ? `Vessel ${i + 1}` : 'Contents'))).join('')}
       ${flows ? `<div class="pp-section">Connections</div>${flows}` : p.ports.length ? '<div class="pp-section pp-dim">No pipes connected — ports are the coloured dots.</div>' : ''}`;
     if (dragging) return;
     if (html !== this.lastInspectorHtml) {
